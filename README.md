@@ -24,6 +24,8 @@ Automatic logging is instructed through local agent configuration. It depends on
 
 ## MCP tools
 
+Both tools advertise output schemas and return MCP `structuredContent` with a JSON text fallback. See [MCP validation](docs/mcp-validation.md) for protocol checks and documentation references.
+
 `log_work` accepts an `entry` object:
 
 ```json
@@ -85,6 +87,8 @@ After init, edit your private config to customize mappings or repository ticket 
 Restart the MCP/client after configuration edits. Match prefixes before the first slash, case-insensitively. Explicit classification overrides mappings; unknown prefixes become unclassified. Existing entries retain their classification. Explicit tickets override branch extraction. An extracted ID without configured provider/scope is retained as unresolved metadata, not assigned a guessed provider. For Azure DevOps use provider `azure-devops`, scope `organization/project`, and a numeric ID; custom branch patterns must have a named `id` capture.
 
 ## Development and releases
+
+See [code organization](docs/architecture.md) for component responsibilities and the logging, reporting, and initialization paths.
 
 ```powershell
 dotnet restore --locked-mode
