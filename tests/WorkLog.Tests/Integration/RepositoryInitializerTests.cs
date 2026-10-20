@@ -71,6 +71,10 @@ public sealed class RepositoryInitializerTests
         Assert.Contains("Project instructions", (string)toml["developer_instructions"]);
         Assert.Contains("# Keep this comment", first);
         var local = File.ReadAllText(Path.Combine(box.Repo, "CLAUDE.local.md"));
+        Assert.Contains("updateHint", local);
+        Assert.Contains("once per version per assistant session", local);
+        Assert.Contains("updateHint", first);
+        Assert.Contains("does not authorize installation", first);
         Assert.Contains("@AGENTS.md", local);
         Assert.Equal("Team instructions", File.ReadAllText(Path.Combine(box.Repo, "AGENTS.md")));
         Assert.Equal("Claude team instructions", File.ReadAllText(Path.Combine(box.Repo, "CLAUDE.md")));

@@ -6,6 +6,7 @@ using WorkLog.Cli;
 using WorkLog.Configuration;
 using WorkLog.Journaling;
 using WorkLog.Repositories;
+using WorkLog.Updates;
 
 namespace WorkLog.Mcp;
 
@@ -18,6 +19,9 @@ internal static class McpServerHost
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
         builder.Services.AddSingleton(new Journal(settings, repository));
+        using var http = ReleaseClient.CreateHttpClient();
+        var updates = new UpdateDiscovery(settings, new ReleaseClient(http));
+        builder.Services.AddSingleton(updates);
         builder.Services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation { Name = "worklog", Version = ApplicationInfo.Version };
@@ -37,6 +41,16 @@ internal static class McpServerHost
             }));
 
         using var host = builder.Build();
-        await host.RunAsync(cancellationToken);
+        using var updateCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var updateTask = Task.Run(() => updates.RunAsync(updateCancellation.Token), CancellationToken.None);
+        try
+        {
+            await host.RunAsync(cancellationToken);
+        }
+        finally
+        {
+            await updateCancellation.CancelAsync();
+            await updateTask;
+        }
     }
 }

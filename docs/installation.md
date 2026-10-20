@@ -1,6 +1,6 @@
 # Windows installation and upgrades
 
-1. Download `worklog-VERSION-win-x64.zip` and its `.sha256` file from the project's GitHub Releases page.
+1. Download `worklog-VERSION-win-x64.zip` and its `.sha256` file from [zeusapps/ZeusApps.WorkLog Releases](https://github.com/zeusapps/ZeusApps.WorkLog/releases).
 2. Compare `Get-FileHash .\worklog-VERSION-win-x64.zip -Algorithm SHA256` with the checksum file.
 3. Extract into a stable directory such as `%LOCALAPPDATA%\Programs\WorkLog` and add that directory to your user PATH, or invoke worklog.exe by its full path. Keep data outside that installation directory.
 4. Run `worklog --version`, then `worklog init --repository D:\Code\MyProject --dry-run` to review setup.
@@ -22,7 +22,30 @@ Init can be rerun after an application upgrade to update managed instruction blo
 
 ## Upgrade and restore
 
+Packaged Windows installations support explicit verified updates:
+
+```powershell
+worklog update --check
+# Close Codex/Claude sessions using this installation before continuing.
+worklog update
+worklog update --status
+```
+
+`--check` performs a fresh check and reports the installed/published versions without downloading a package. GitHub errors are reported as failures, rather than as up-to-date. `--status` reads the latest local result without contacting GitHub. The flags cannot be combined. All three modes accept `--data-dir PATH`; use the same directory throughout so status and cache refer to the intended journal.
+
+Plain `update` only selects a strictly newer stable release with the official Windows ZIP and checksum. It verifies SHA-256, validates archive paths and packaged version/runtime, and stages the files outside the installation. It refuses source builds, unsupported layouts, overlapping installation/data directories, unwritable destinations, concurrent updates, and busy installations. It never stops MCP servers or agent sessions for you.
+
+The command prints `staged` and exits so a separate helper can replace its executable. This is not a successful installation report. Run `update --status` after a moment to see `installed` or `failed`. A helper failure leaves a message and recovery location. After `installed`, run `worklog --version`, restart MCP clients, and rerun init in repositories requiring refreshed instructions. The executable's registered path stays the same, and journal data/private configuration are preserved.
+
+Automatic checks run in the background using the public GitHub release feed, without credentials or project/journal data. They are coordinated across processes sharing a data directory, with at most one automatic attempt per 24 hours. Valid cached notices expire after seven days without successful validation. Successful tool responses can include `updateHint`; managed assistant instructions ask that each available version be mentioned once per session. This is best-effort assistant behavior, not a dedicated MCP client notification. Automatic check failures do not interrupt journal operations.
+
+To disable automatic checking and notices, merge `"updates": { "enabled": false }` into private config.json, preserving its other settings, and restart clients. Explicit update commands remain usable. Cache, staging, backup files, and outcome receipts live in the data directory's `updates` subdirectory; they are separate from journal.db and config.json. Retain recovery files until the upgrade is verified. SHA-256 checks detect corruption; distribution authenticity also depends on HTTPS and control of the official GitHub repository.
+
+For bootstrap installation from a source build, or manual recovery:
+
 Stop agent sessions using WorkLog before replacing the executable. Extract the new release to the same stable installation location; registered MCP paths then remain valid. Run `worklog --version`, rerun init for repositories needing updated instructions, and restart clients. Do not replace the data directory with release contents.
+
+If automatic application replacement fails, follow its status message. With all affected clients stopped, restore prior application files from the reported backup directory if necessary. Preserve any unowned installation files. Replacing application files does not roll back a journal schema migration performed on a later startup; use the database restore procedure below for that case.
 
 Journal upgrades run transactionally. Before upgrading an existing schema, WorkLog creates a consistent `journal.db.vN.TIMESTAMP.bak` in the data directory. A binary encountering a newer unsupported schema refuses to migrate it.
 

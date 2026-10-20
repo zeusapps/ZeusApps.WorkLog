@@ -22,7 +22,11 @@ try {
     $actualVersion = & $executable --version
     if ($LASTEXITCODE -ne 0 -or $actualVersion -cne $Version) { throw 'Published version smoke check failed' }
     $archive = Join-Path $releaseRoot "worklog-$Version-win-x64.zip"
-    Compress-Archive -Path (Join-Path $publishPath '*') -DestinationPath $archive -Force
+    # Package only owned release files; reused publish directories can contain local smoke logs.
+    $releaseFiles = @('worklog.exe', 'release.json', 'README.md', 'INSTALL.md') | ForEach-Object { Join-Path $publishPath $_ }
+    $symbols = Join-Path $publishPath 'worklog.pdb'
+    if (Test-Path -LiteralPath $symbols) { $releaseFiles += $symbols }
+    Compress-Archive -LiteralPath $releaseFiles -DestinationPath $archive -Force
     $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $([System.IO.Path]::GetFileName($archive))" | Set-Content ($archive + '.sha256') -Encoding ascii
     Write-Output "Packaged $archive"

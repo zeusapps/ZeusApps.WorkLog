@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using WorkLog.Journaling;
+using WorkLog.Updates;
 
 namespace WorkLog.Reporting;
 
@@ -14,4 +16,9 @@ public sealed record Report(
     [property: Description("Selected compact, flat, grouped, or legacy representation.")] string View,
     [property: Description("Requested maximum observations per page. The byte budget can return fewer.")] int PageSize,
     [property: Description("True when additional matching observations remain in this query snapshot.")] bool HasMore,
-    [property: Description("Opaque continuation token. Supply as period.cursor with unchanged options; null when no observations remain.")] string? NextCursor);
+    [property: Description("Opaque continuation token. Supply as period.cursor with unchanged options; null when no observations remain.")] string? NextCursor)
+{
+    [Description("Optional application update notice, separate from report observations and pagination. Announce once per version per assistant session.")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public UpdateHint? UpdateHint { get; init; }
+}

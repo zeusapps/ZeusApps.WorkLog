@@ -22,6 +22,12 @@ jobs:
       - name: Package and smoke check
         shell: pwsh
         run: ./scripts/package.ps1
+      - name: Packaged update acceptance
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+          dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- --updates-only "artifacts/releases/worklog-$version-win-x64/worklog.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged update acceptance failed' }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

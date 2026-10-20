@@ -4,6 +4,9 @@ using Json.Schema;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using WorkLog.Cli;
+using WorkLog.Configuration;
+using WorkLog.Infrastructure;
+using WorkLog.Updates;
 using WorkLog.Tests.Testing;
 using Xunit;
 
@@ -15,6 +18,9 @@ public sealed class McpTests
     public async Task ServerStopsAfterClientClosesStandardInput()
     {
         using var workspace = new TestWorkspace();
+        var settings = new LocalSettings(workspace.Data);
+        settings.Configuration.Updates.Enabled = false;
+        settings.Save();
         var start = new ProcessStartInfo("dotnet")
         {
             RedirectStandardInput = true,
@@ -62,6 +68,10 @@ public sealed class McpTests
     {
         using var box = new TestWorkspace();
         box.Git("init");
+        var cachedRelease = new ReleaseInfo("999.0.0", ReleaseInfo.ReleasesUrl + "/tag/v999.0.0",
+            ReleaseInfo.DownloadUrl("999.0.0"), ReleaseInfo.DownloadUrl("999.0.0") + ".sha256");
+        AtomicFile.Write(Path.Combine(box.Data, "updates", "release-cache.json"),
+            WorkLog.Infrastructure.Json.Encode(new UpdateCache(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, cachedRelease)));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var assembly = typeof(Program).Assembly.Location;
         await using var client = await McpClient.CreateAsync(new StdioClientTransport(new()
@@ -116,6 +126,7 @@ public sealed class McpTests
         AssertValidOutput(loggingSchema, replayed);
         Assert.False(replayed.StructuredContent!.Value.GetProperty("created").GetBoolean());
         Assert.True(logged.StructuredContent.Value.GetProperty("created").GetBoolean());
+        Assert.Equal("999.0.0", logged.StructuredContent.Value.GetProperty("updateHint").GetProperty("availableVersion").GetString());
         var report = await client.CallToolAsync("query_work", new Dictionary<string, object?>
         {
             ["period"] = new { from = "2026-10-20T00:00:00Z", to = "2026-10-21T00:00:00Z", timezone = "Europe/Warsaw" }
@@ -124,6 +135,7 @@ public sealed class McpTests
         Assert.NotNull(report.StructuredContent);
         AssertValidOutput(reportSchema, report);
         Assert.Single(report.StructuredContent.Value.GetProperty("entries").EnumerateArray());
+        Assert.Equal("worklog update", report.StructuredContent.Value.GetProperty("updateHint").GetProperty("command").GetString());
         var text = Assert.IsType<TextContentBlock>(Assert.Single(report.Content)).Text;
         using var json = JsonDocument.Parse(text);
         Assert.Single(json.RootElement.GetProperty("entries").EnumerateArray());

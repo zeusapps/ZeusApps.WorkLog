@@ -15,6 +15,9 @@ public sealed class CliTests
     [InlineData("serve", "--dry-run")]
     [InlineData("serve", "--clients", "codex")]
     [InlineData("serve", "--unknown")]
+    [InlineData("update", "--check", "--status")]
+    [InlineData("update", "--data-dir")]
+    [InlineData("update", "--unknown")]
     public async Task InvalidArgumentsFailBeforeExecutingCommands(params string[] arguments)
     {
         using var workspace = new TestWorkspace();
@@ -29,6 +32,7 @@ public sealed class CliTests
     [Theory]
     [InlineData("init", "--clients", "--dry-run")]
     [InlineData("serve", "--repository", "--data-dir")]
+    [InlineData("update", "--check", "--status")]
     public async Task CommandHelpDescribesOnlyItsOwnOptions(string command, string firstOption, string secondOption)
     {
         using var workspace = new TestWorkspace();
@@ -56,11 +60,26 @@ public sealed class CliTests
             Assert.Equal(0, help.ExitCode);
             Assert.Contains("init", help.Output);
             Assert.Contains("serve", help.Output);
+            Assert.Contains("update", help.Output);
         }
 
         var version = await RunAsync(workspace, "--version");
         Assert.Equal(0, version.ExitCode);
         Assert.Equal(ApplicationInfo.Version, version.Output.Trim());
+    }
+
+    [Fact]
+    public async Task UpdateRefusesSourceInstallationAndStatusNeedsNoNetwork()
+    {
+        using var workspace = new TestWorkspace();
+        var update = await RunAsync(workspace, "update", "--data-dir", workspace.Data);
+        Assert.NotEqual(0, update.ExitCode);
+        Assert.Contains("self-contained Windows", update.Error);
+        Assert.False(Directory.Exists(workspace.Data));
+        var status = await RunAsync(workspace, "update", "--status", "--data-dir", workspace.Data);
+        Assert.Equal(0, status.ExitCode);
+        Assert.Contains("No update outcome", status.Output);
+        Assert.False(Directory.Exists(workspace.Data));
     }
 
     private static async Task<(int ExitCode, string Output, string Error)> RunAsync(TestWorkspace workspace, params string[] arguments)

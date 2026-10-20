@@ -8,7 +8,7 @@ worklog init --repository D:\Code\MyProject --dry-run
 worklog init --repository D:\Code\MyProject
 ```
 
-Install a self-contained Windows x64 release from GitHub Releases. No separately installed .NET runtime is needed. See [installation and upgrades](docs/installation.md).
+Install a self-contained Windows x64 release from [GitHub Releases](https://github.com/zeusapps/ZeusApps.WorkLog/releases). No separately installed .NET runtime is needed. See [installation and upgrades](docs/installation.md).
 
 `init` defaults to both clients and requires Git plus Codex CLI 0.162.1+ and Claude Code 2.1.289+. Select just one with `--clients codex` or `--clients claude`. Initialization preserves shared instructions and uses private configuration. Restart clients and follow their normal repository trust flow after initialization.
 
@@ -92,6 +92,19 @@ Restart the MCP/client after configuration edits. Match prefixes before the firs
 
 ## Development and releases
 
+WorkLog checks the public release feed in the background, at most once per 24 hours for servers sharing a data directory. A newer stable release appears as optional `updateHint` metadata in successful MCP tool results. Managed assistant instructions ask Codex and Claude Code to mention it once per version per session; presentation depends on the assistant. A failed release check never blocks logging or reporting, and checks send no journal/project data.
+
+```powershell
+worklog update --check
+# Stop MCP clients using this installation before installing:
+worklog update
+worklog update --status
+```
+
+The update command verifies and stages the package, then starts a helper to replace the idle installation after the command exits. `staged` means installation is still pending; check `--status` for `installed` or `failed`. Restart clients afterward and rerun init where managed instructions need refreshing. Keep `--data-dir` consistent across these commands when using a custom journal directory.
+
+Set `"updates": { "enabled": false }` in the private config and restart the server to disable automatic checks and notices. Explicit `update --check` and `update` remain available. Source builds must use the manual ZIP installation path before self-update can be used.
+
 See [code organization](docs/architecture.md) for component responsibilities and the logging, reporting, and initialization paths.
 
 ```powershell
@@ -103,4 +116,4 @@ dotnet test -c Release --no-build
 
 With both agent CLIs installed, run `dotnet run --project tools/WorkLog.Smoke -c Release --no-build` for an isolated packaged-executable smoke test. It uses temporary client configuration, verifies private registration/instruction loading, checks Claude's MCP connection, and exercises journal tools. Add `-- --live-agents` only when you intend to use your authenticated accounts and send test prompts to their services; that optional test asks each agent to log and query synthetic entries. Logs stay under ignored artifacts/smoke directories.
 
-GitHub Actions validates pull requests and pushes to main. Update Version in Directory.Build.props, commit, and push a matching `vMAJOR.MINOR.PATCH` tag to publish a Windows ZIP and checksum after validation. Creating the GitHub repository and pushing/tagging are separate actions; no remote is created by the application. macOS/Linux are not yet release-validated.
+GitHub Actions validates pull requests and pushes to main, including packaged update acceptance. Update Version in Directory.Build.props, commit, wait for primary-branch validation, and push a matching `vMAJOR.MINOR.PATCH` tag to publish a Windows ZIP and checksum after validation. Observe the release job and verify the downloaded assets before announcing publication. See [release operations](docs/releases.md). Creating the GitHub repository and pushing/tagging are separate actions; no remote is created by the application. macOS/Linux are not yet release-validated.

@@ -9,6 +9,7 @@ internal static class CliApplication
         var root = new RootCommand("A private local work journal for coding agents.");
         root.Subcommands.Add(new InitCommand());
         root.Subcommands.Add(new ServeCommand());
+        root.Subcommands.Add(new UpdateCommand());
         root.Options.OfType<VersionOption>().Single().Action = new ApplicationVersionAction();
 
         // Preserve the existing no-argument/help entry points while the library owns parsing and help output.
