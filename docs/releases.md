@@ -19,3 +19,13 @@ For each release:
 6. Verify the public latest-release endpoint returns the intended stable version and equal installed/published versions produce no update hint. Record the release link and outcome; required pending validation means release work is still in progress.
 
 The first planned release is `v0.1.0` if still unpublished. The application update feed uses the public latest stable release, excludes drafts/prereleases, and requires both the official Windows ZIP and checksum. Full agent-client smoke checks remain available locally; optional `--live-agents` checks require an explicit decision to send authenticated test prompts.
+
+## Verified release v0.1.0
+
+Published [v0.1.0](https://github.com/zeusapps/ZeusApps.WorkLog/releases/tag/v0.1.0) on 2026-10-20 from commit `33d620245246cd17267a18f822cc53e618790c4f`.
+
+- [Primary-branch validation](https://github.com/zeusapps/ZeusApps.WorkLog/actions/runs/39496322452) passed all 83 tests, Windows packaging, and packaged update acceptance.
+- [Release validation and publication](https://github.com/zeusapps/ZeusApps.WorkLog/actions/runs/39496648248) passed and uploaded the Windows ZIP and checksum.
+- The independently downloaded ZIP matched SHA-256 `f51af262643bf908de5093d36c01e87425eb70f7db5c990dbd4993be3fe9c073` and its executable reported `0.1.0`.
+- The published executable's explicit check and normal update command both reported installed/published `0.1.0` as up to date. Isolated stdio MCP initialization, logging, querying, equal-version hint suppression, and clean shutdown passed.
+- The existing checkout's saved local journal identity remained unchanged after adding the GitHub origin. Local smoke checks also confirmed private Codex/Claude registration and instructions, journal migration backups, helper replacement, data/configuration preservation, and active-server refusal.
