@@ -55,6 +55,8 @@ Release build passes with zero warnings; 41 automated tests pass. The self-conta
 
 Task 4.6 is partially verified: on 2026-10-20, the restarted Codex session discovered the actual WorkLog MCP tools, saved an in_progress entry for this change, and retrieved it through query_work with Europe/Warsaw daily grouping (entry a1a33342ca6a4400a1a9a359f523abfb). Claude Code live logging/query verification remains pending because the user currently has no active Claude Code access. Earlier automatic approval review rejected spawning authenticated live agent sessions; no such subprocess test was run. GitHub workflows are delivered but have not run on GitHub; no remote repository was created.
 
+Archive decision (2026-10-20): after confirming validation passed, the user explicitly deferred live Claude testing and approved archiving. Task 4.6 remains unchecked to preserve the verification gap; it is not an archive blocker. Main capability specs are synced as part of archiving.
+
 ## 8. Independent MCP audit corrections
 
 - [x] 8.1 Emit explicit nulls for required nullable result properties and validate real successful tool results against advertised schemas, including retries, full/minimal entries, empty reports, every view and continuation pages.
