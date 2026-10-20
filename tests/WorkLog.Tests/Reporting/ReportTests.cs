@@ -62,6 +62,6 @@ public sealed class ReportTests
         journal.Log(new("in_progress", "a", OccurredAt: "2026-10-26T00:00:00Z"));
         var report = journal.Query(new("2026-10-24T00:00:00Z", "2026-10-27T00:00:00Z", "Europe/Warsaw"));
         Assert.Equal(new[] { "2026-10-25", "2026-10-26" }, report.Days.Select(g => g.Date));
-        Assert.Equal(new[] { "done", "in_progress" }, report.Days[1].Observations.Select(e => e.Status));
+        Assert.Equal(new[] { "done", "in_progress" }, report.Days[1].EntryIds.Select(id => report.Entries.Single(e => e.Id == id).Status));
     }
 }

@@ -6,13 +6,17 @@ internal sealed record ReportingPeriod(DateTimeOffset From, DateTimeOffset To, T
 {
     public static ReportingPeriod FromRequest(QueryRequest request)
     {
-        var from = TimestampParser.Parse(request.From);
-        var to = TimestampParser.Parse(request.To);
+        var from = TimestampParser.Parse(request.From, "period.from");
+        var to = TimestampParser.Parse(request.To, "period.to");
         if (to <= from)
         {
             throw new ArgumentException("to must be later than from.");
         }
 
+        if (string.IsNullOrWhiteSpace(request.Timezone))
+        {
+            throw new ArgumentException("period.timezone is required.");
+        }
         TimeZoneInfo zone;
         try
         {

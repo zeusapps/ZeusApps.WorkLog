@@ -8,7 +8,7 @@ WorkLog remains one executable project. Folders and namespaces group code by res
 | `Mcp` | Host the stdio server and translate tool calls/errors |
 | `Journaling` | Validate logging requests, resolve metadata, coordinate persistence |
 | `Persistence` | SQLite connections, schema upgrades/backups, transactional entry storage |
-| `Reporting` | Validate periods, filter observations, build daily groups |
+| `Reporting` | Validate periods/options, bound pages, encode continuation, build daily groups and stable work identities |
 | `Configuration` | Load/save private settings and define configuration models |
 | `Repositories` | Run Git, derive stable repository identities, register checkouts |
 | `Integration` | Plan/apply private initialization, track ownership, render shared instructions |

@@ -17,6 +17,10 @@ The system SHALL expose a stdio MCP tool named `log_work` that persists an entry
 - **WHEN** an entry supplies an unsupported status
 - **THEN** the tool returns a validation error without persisting it
 
+#### Scenario: Unknown input field
+- **WHEN** a tool request misspells a field, including within a ticket reference
+- **THEN** it returns a validation error identifying the unknown field's full request path, without persisting an entry
+
 ### Requirement: Preserve activity rather than infer attendance
 The system SHALL retain entries as historical observations without manufacturing daily activity, requiring a single active feature, or deriving done from archive time. Further in_progress entries after done SHALL be accepted as resumed work.
 
@@ -45,6 +49,16 @@ The system SHALL support Jira and Azure DevOps references with provider, scope, 
 #### Scenario: Azure numeric identifier
 - **WHEN** a session supplies an Azure DevOps reference with organization/project scope and numeric ID
 - **THEN** the reference is recorded unchanged without querying Azure DevOps
+
+#### Scenario: Effective repository override
+- **WHEN** an entry overrides the initialized repository identity
+- **THEN** ticket inference uses only configuration matching that effective identity; unknown context retains an unresolved ID rather than the initialized repository's scope
+
+#### Scenario: Ticket normalization and nested validation
+- **WHEN** ticket fields contain surrounding whitespace
+- **THEN** fields are trimmed consistently before storage, retry hashing and filtering
+- **WHEN** a ticket element is null or an Azure DevOps ID is nonnumeric
+- **THEN** validation identifies the offending ticket field without writing an entry
 
 ### Requirement: Retry-safe shared local storage
 The system SHALL persist one journal per local user across repositories and restarts, support concurrent client processes, and keep machines independent. A supplied idempotency key SHALL return the original entry for the same normalized request and reject conflicting reuse. Concurrent starts for the same repository and OpenSpec change SHALL yield one initial started entry; resumed activity SHALL use in_progress.

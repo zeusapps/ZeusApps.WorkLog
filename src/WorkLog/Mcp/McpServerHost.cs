@@ -21,7 +21,20 @@ internal static class McpServerHost
         builder.Services.AddMcpServer(options =>
         {
             options.ServerInfo = new Implementation { Name = "worklog", Version = ApplicationInfo.Version };
-        }).WithStdioServerTransport().WithTools<JournalTools>();
+        }).WithStdioServerTransport().WithTools<JournalTools>(McpJson.Options)
+            .WithRequestFilters(filters => filters.AddCallToolFilter(next => async (context, token) =>
+            {
+                var unknown = UnknownFieldValidation.Find(context.Params);
+                if (unknown is not null)
+                {
+                    return new CallToolResult
+                    {
+                        IsError = true,
+                        Content = [new TextContentBlock { Text = $"Unknown field '{unknown}'. Check the tool's input schema for supported fields." }]
+                    };
+                }
+                return await next(context, token);
+            }));
 
         using var host = builder.Build();
         await host.RunAsync(cancellationToken);

@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using WorkLog.Infrastructure;
 using WorkLog.Journaling;
+using WorkLog.Reporting;
 
 namespace WorkLog.Persistence;
 
@@ -36,12 +37,45 @@ internal sealed class SqliteEntryStore(JournalDatabase database)
         return new LogResult(existing is null, entry);
     }
 
-    public Entry[] ReadPeriod(DateTimeOffset from, DateTimeOffset to)
+    public (Entry[] Entries, long Snapshot) ReadPage(QueryRequest request, ReportingPeriod period, ReportCursor? cursor)
     {
         using var connection = database.Open();
+        var snapshot = cursor?.Snapshot ?? Convert.ToInt64(SqliteCommands.Scalar(connection, "SELECT COALESCE(MAX(rowid),0) FROM entries"));
+        var conditions = new List<string> { "e.occurred >= $from", "e.occurred < $to", "e.rowid <= $snapshot" };
+        var parameters = new List<(string, object?)>
+        {
+            ("$from", period.From.UtcTicks), ("$to", period.To.UtcTicks), ("$snapshot", snapshot), ("$limit", request.PageSize + 1)
+        };
+        void Filter(string expression, string name, string? value)
+        {
+            if (value is null)
+                return;
+            conditions.Add(expression + "=" + name);
+            parameters.Add((name, value));
+        }
+        Filter("e.repository", "$repo", request.Repository);
+        Filter("e.change_name", "$change", request.Change);
+        Filter("e.status", "$status", request.Status);
+        Filter("json_extract(e.payload,'$.classification')", "$classification", request.Classification);
+        if (request.Ticket is not null)
+        {
+            conditions.Add("""
+                EXISTS (SELECT 1 FROM json_each(e.payload,'$.tickets') t WHERE
+                    trim(json_extract(t.value,'$.id'))=$ticket OR
+                    trim(json_extract(t.value,'$.provider'))||':'||trim(json_extract(t.value,'$.scope'))||':'||trim(json_extract(t.value,'$.id'))=$ticket)
+                """);
+            parameters.Add(("$ticket", request.Ticket));
+        }
+        if (cursor is not null)
+        {
+            conditions.Add("(e.occurred > $after OR (e.occurred=$after AND e.id>$id))");
+            parameters.Add(("$after", cursor.OccurredTicks));
+            parameters.Add(("$id", cursor.Id));
+        }
+        var projection = request.IncludeSummaries ? "e.payload" : "json_set(e.payload,'$.summary',NULL)";
         using var command = SqliteCommands.Create(connection,
-            "SELECT payload FROM entries WHERE occurred >= $from AND occurred < $to ORDER BY occurred, id",
-            parameters: [("$from", from.UtcTicks), ("$to", to.UtcTicks)]);
+            $"SELECT {projection} FROM entries e WHERE {string.Join(" AND ", conditions)} ORDER BY e.occurred, e.id LIMIT $limit",
+            parameters: parameters.ToArray());
         using var reader = command.ExecuteReader();
         var entries = new List<Entry>();
 
@@ -50,7 +84,7 @@ internal sealed class SqliteEntryStore(JournalDatabase database)
             entries.Add(Json.Decode<Entry>(reader.GetString(0)));
         }
 
-        return entries.ToArray();
+        return (entries.ToArray(), snapshot);
     }
 
     private static Entry? FindRetry(SqliteConnection connection, SqliteTransaction transaction, PreparedEntry prepared)
@@ -68,7 +102,7 @@ internal sealed class SqliteEntryStore(JournalDatabase database)
             return null;
         }
 
-        if (reader.GetString(0) != prepared.RequestHash)
+        if (reader.GetString(0) != prepared.RequestHash && reader.GetString(0) != prepared.LegacyRequestHash)
         {
             throw new ArgumentException("Idempotency key was already used for different input.");
         }

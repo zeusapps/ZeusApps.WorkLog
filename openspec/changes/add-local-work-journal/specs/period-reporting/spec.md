@@ -18,7 +18,11 @@ The system SHALL expose a stdio MCP tool named `query_work` accepting inclusive 
 - **THEN** a validation error is returned
 
 ### Requirement: Structured daily output
-The tool SHALL return a response schema version, resolved bounds, timezone, ordered entries with IDs and stored metadata, and groups by local calendar date and work identity. Groups SHALL preserve multiple statuses and summaries in occurrence order instead of replacing them with only the latest status. Ties SHALL have deterministic ordering. The response SHALL include all matching entries without silent truncation.
+The tool SHALL return response schema version 1, resolved bounds, timezone, and a bounded page of observations ordered by occurrence and ID. The default compact view SHALL contain entries once and groups by local calendar date and work identity referencing entry IDs. Ticket-only identity SHALL use the sorted distinct set of qualified tickets independent of input order. Groups SHALL preserve multiple observations rather than replacing them with a final status, and MAY span pages. All matching entries SHALL remain retrievable through explicit continuation without silent truncation.
+
+#### Scenario: Reordered ticket references
+- **WHEN** observations without a change contain the same qualified ticket set in different orders
+- **THEN** they share a work identity and daily group
 
 #### Scenario: Complete one feature and start another
 - **WHEN** feature A has done and feature B has started on the same reporting day
@@ -31,6 +35,21 @@ The tool SHALL return a response schema version, resolved bounds, timezone, orde
 #### Scenario: Same feature changes status
 - **WHEN** a feature has started and done entries on one day
 - **THEN** both observations remain available in daily output
+
+### Requirement: Bounded selectable report views
+The tool SHALL default to 25 observations per page, accept page sizes from 1 through 100, and limit each structured JSON payload to 64 KiB. It SHALL expose hasMore and nextCursor, require unchanged query options during continuation, and exclude writes made after the first page. Filters SHALL apply before the page limit. It SHALL offer compact, flat, grouped and legacy views, with legacy duplicating observations in flat and daily views. includeSummaries=false SHALL omit summary content without changing stored entries. An individual observation exceeding the byte budget SHALL produce an actionable validation error.
+
+#### Scenario: Complete a large report
+- **WHEN** a client follows nextCursor until hasMore is false
+- **THEN** each matching observation from the initial snapshot is retrieved once in the selected view, in deterministic order
+
+#### Scenario: Backdated concurrent write
+- **WHEN** an observation is inserted after the first page with an earlier occurred timestamp
+- **THEN** it is absent from continuation pages and appears in a new query
+
+#### Scenario: Oversized summary
+- **WHEN** one observation exceeds the byte budget because of its summary
+- **THEN** the error directs the client to retry with includeSummaries=false
 
 ### Requirement: Report facts only
 The tool SHALL return an empty result for a period without entries and SHALL NOT infer activity from unfinished changes, contact ticket services, or generate narrative claims beyond recorded facts.
