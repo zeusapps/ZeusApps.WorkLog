@@ -12,13 +12,38 @@ Windows x64 is the supported release target. The packaged executable includes .N
 
 `worklog init` initializes the current Git repository; `--repository` selects another. `--clients both|codex|claude` defaults to both. Both client CLIs must be installed when selecting both; minimum tested versions are Codex 0.162.1 and Claude Code 2.1.289.
 
-- Claude Code: local-scope MCP registration under the project path in your private `~/.claude.json`, plus a managed block in `CLAUDE.local.md`. Explicit imports preserve existing ancestor AGENTS.md instructions.
-- Codex: a private `.codex/config.toml` registration and additive `developer_instructions`, preserving existing user/project instructions. This does not replace model base instructions.
+- Claude Code: local-scope MCP registration under the project path in your private `~/.claude.json`. With managed instructions enabled, a block in `CLAUDE.local.md` and explicit imports preserve existing ancestor AGENTS.md instructions.
+- Codex: a private `.codex/config.toml` registration and, when enabled, additive `developer_instructions`, preserving existing user/project instructions. This does not replace model base instructions.
 - `.worklog/integration.json` records integration ownership/version. Generated project files are excluded via local Git info/exclude, including worktree-aware paths. Team CLAUDE.md, AGENTS.md, .mcp.json, .gitignore, and OpenSpec skills/configuration are not edited.
 
-An already tracked private target, malformed settings, or an unowned worklog server registration is a conflict: init reports it without overwriting it. Do not untrack team settings automatically; resolve the conflict or select the other client. Init backs up changed existing content under the data directory's integration-backups folder. Partial failures list applied steps; fix the problem and rerun init. Keep backups private because client settings can contain personal information.
+An already tracked private target that init would modify, malformed settings, or an unowned worklog server registration is a conflict: init reports it without overwriting it. An untouched tracked CLAUDE.local.md is allowed when instructions are disabled and no owned block needs removal. Do not untrack team settings automatically; resolve the conflict or select the other client. Init backs up changed existing content under the data directory's integration-backups folder. Partial failures list applied steps; fix the problem and rerun with the intended options. Keep backups private because client settings can contain personal information.
 
 Init can be rerun after an application upgrade to update managed instruction blocks. Preserve the ownership manifest. Journal data is shared across initialized repositories on this machine only. Repositories without origin receive a persisted local identity; explicitly set identity in private config when independent checkouts should refer to the same repository. Use distinct OpenSpec change names for new work rather than recycling completed names.
+
+### Existing applications and ticket context
+
+For an application that already has logging rules, review and apply this setup:
+
+```powershell
+worklog init --repository D:\Code\MyProject --clients claude --no-instructions --ticket-provider jira --ticket-scope company.atlassian.net --dry-run
+worklog init --repository D:\Code\MyProject --clients claude --no-instructions --ticket-provider jira --ticket-scope company.atlassian.net
+```
+
+`--no-instructions` removes only WorkLog-owned blocks, including imports inside those blocks, and remembers the disabled mode per repository and selected client. MCP registration stays enabled. It creates no Claude instruction file or imports, and does not copy global Codex instructions into new local instructions. Existing files, unrelated instructions, and empty values left by removal are retained. Later init runs, including upgrade refreshes, preserve the opt-out. `--instructions` explicitly restores one managed block and saves enabled mode; the two flags cannot be combined. Clients without a saved preference default to enabled.
+
+The ticket flags must be supplied together. Providers are `jira` and `azure-devops`; scopes are a Jira site or Azure organization/project. Values are trimmed, and blank/unsupported/incomplete values fail before writes. Omit both flags on later runs to retain context. A custom ticket extraction pattern is preserved; Azure numeric branch identifiers need a suitable pattern in the active shared context, or explicit ticket references. Restart client/MCP processes after setup so they load the new configuration. Existing unresolved observations stay unresolved but become searchable by bare ticket ID; qualified queries still require a stored qualified reference.
+
+### Worktree context and legacy configuration
+
+Init and server startup resolve the common Git directory to share one identity, ticket context, and per-client instruction preferences across worktrees. The first initialized checkout can be either the main checkout or a worktree. Separate clones retain their own settings. Client discovery in a fresh worktree is a separate concern: explicit init in that worktree configures its private registration; universal automatic discovery is not promised here.
+
+On first resolution, compatible legacy `repositories` records are promoted into `repositoryContexts` without deleting the old records. Missing provider/scope values do not erase known settings, and adding an origin does not replace a saved local identity. Removed or inaccessible checkout records remain untouched. Once promoted, edit the shared entry's `repository` values; its `legacyPaths` records which old copies are superseded. Instruction mode is stored in that entry's `instructions` map. Use init flags to change mode so file cleanup happens too.
+
+Different nonempty identities, scopes, providers, or extraction patterns in member records stop promotion with the conflicting paths/field. Back up config.json, identify the intended identity and ticket context, reconcile those legacy records explicitly, and rerun init. Keep journal.db intact: this change does not rewrite existing observations or regroup earlier worktree identities. Do not resolve an identity conflict by blindly replacing every saved identity with a remote-derived one.
+
+Changing instruction preference updates files only in the selected checkout. Previously initialized sibling worktrees keep their existing blocks until init next runs there, at which point the shared preference applies. Restart affected sessions to discard already loaded instructions.
+
+For a configuration rollback, stop affected clients and restore the corresponding private config/client files from backups together before using an older binary. Retain a copy of the new settings and journal; an older binary will not apply the new shared-context behavior. No journal schema migration is introduced by these fixes.
 
 ## Upgrade and restore
 

@@ -55,6 +55,8 @@ public sealed class JournalTests
     [Theory]
     [InlineData("feature/DEP-1232-adding-links", "feature")]
     [InlineData("bugs/DEP-1233-missing-citation", "bug")]
+    [InlineData("bugfix/DEP-1233-missing-citation", "bug")]
+    [InlineData("BUGFIX/DEP-1233-missing-citation", "bug")]
     [InlineData("hotfix/DEP-2231-failing-requests", "bug")]
     [InlineData("FEATURE/DEP-1232", "feature")]
     [InlineData("main", "unclassified")]
@@ -73,5 +75,31 @@ public sealed class JournalTests
         var unresolved = new Journal(context, new("other")).Log(new("in_progress", "b", "feature/DEP-12-test")).Entry;
         Assert.Equal("DEP-12", unresolved.ExtractedTicketId);
         Assert.Empty(unresolved.Tickets);
+    }
+
+    [Fact]
+    public void BugfixDefaultUpgradesOldConfigurationWithoutChangingHistory()
+    {
+        using var box = new TestWorkspace();
+        var settings = new LocalSettings(box.Data);
+        settings.Configuration.BranchClassifications.Remove("bugfix");
+        settings.Save();
+        var old = new Journal(settings, new("repo"));
+        var request = new LogRequest("in_progress", "repair", "bugfix/DEP-12", OccurredAt: "2026-10-20T09:00:00Z");
+        var historical = old.Log(request).Entry;
+        Assert.Equal("unclassified", historical.Classification);
+        var beforeRead = File.ReadAllText(settings.ConfigPath);
+        var upgradedSettings = new LocalSettings(box.Data);
+        Assert.Equal(beforeRead, File.ReadAllText(settings.ConfigPath));
+        var upgraded = new Journal(upgradedSettings, new("repo"));
+        Assert.Equal("bug", upgraded.Log(request).Entry.Classification);
+        Assert.Equal("unclassified", upgraded.Query(Period()).Entries.Single(entry => entry.Id == historical.Id).Classification);
+
+        upgradedSettings.Configuration.BranchClassifications.Remove("bugfix");
+        upgradedSettings.Configuration.BranchClassifications["BUGFIX"] = "maintenance";
+        upgradedSettings.Save();
+        var customSettings = new LocalSettings(box.Data);
+        Assert.Single(customSettings.Configuration.BranchClassifications.Keys, key => key.Equals("bugfix", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("maintenance", new Journal(customSettings, new("repo")).Log(request).Entry.Classification);
     }
 }

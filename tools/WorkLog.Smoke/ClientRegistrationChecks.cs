@@ -4,10 +4,10 @@ namespace WorkLog.Smoke;
 
 internal sealed class ClientRegistrationChecks(SmokeWorkspace workspace, SmokeProcessRunner processes)
 {
-    public async Task RunAsync()
+    public async Task RunAsync(bool instructionsEnabled = true)
     {
         await CheckSelfContainedVersionAsync();
-        await CheckCodexAsync();
+        await CheckCodexAsync(instructionsEnabled);
         await CheckClaudeAsync();
     }
 
@@ -24,7 +24,7 @@ internal sealed class ClientRegistrationChecks(SmokeWorkspace workspace, SmokePr
         }
     }
 
-    private async Task CheckCodexAsync()
+    private async Task CheckCodexAsync(bool instructionsEnabled)
     {
         var environment = new Dictionary<string, string> { ["CODEX_HOME"] = workspace.CodexHome };
         var servers = await processes.RunAsync("codex", ["-c", workspace.TrustOverride, "mcp", "list", "--json"], environment);
@@ -35,12 +35,12 @@ internal sealed class ClientRegistrationChecks(SmokeWorkspace workspace, SmokePr
 
         var prompt = await processes.RunAsync("codex",
             ["-c", workspace.TrustOverride, "debug", "prompt-input", "Smoke inspection only."], environment);
-        if (!prompt.Contains("Work journal integration"))
+        if (prompt.Contains("Work journal integration") != instructionsEnabled)
         {
-            throw new InvalidOperationException("Codex did not load private instructions.");
+            throw new InvalidOperationException("Codex instruction loading disagrees with the saved preference.");
         }
 
-        Console.WriteLine("Codex loaded private server registration and additive instructions.");
+        Console.WriteLine($"Codex loaded private server registration with managed instructions {(instructionsEnabled ? "enabled" : "disabled")}.");
     }
 
     private async Task CheckClaudeAsync()

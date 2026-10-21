@@ -4,9 +4,9 @@ namespace WorkLog.Integration;
 
 internal static class PrivateGitFiles
 {
-    public static void ValidateTargets(string root, string[] clients)
+    public static void ValidateTargets(InitializationPlan plan, string root)
     {
-        foreach (var relative in PrivateTargets(clients))
+        foreach (var relative in PrivateTargets(plan.ChangedPaths, root))
         {
             if (!string.IsNullOrWhiteSpace(GitRepository.Run(root, "ls-files", "--", relative)))
             {
@@ -15,12 +15,12 @@ internal static class PrivateGitFiles
         }
     }
 
-    public static void PlanExclusions(InitializationPlan plan, string root, string[] clients)
+    public static void PlanExclusions(InitializationPlan plan, string root)
     {
         var excludePath = GitRepository.Run(root, "rev-parse", "--git-path", "info/exclude").Trim();
         excludePath = Path.GetFullPath(excludePath, root);
         var exclusions = InitializationPlan.Read(excludePath);
-        var paths = PrivateTargets(clients).Select(path => path == ".worklog/integration.json" ? "/.worklog/" : "/" + path);
+        var paths = PrivateTargets(plan.TargetPaths, root).Select(path => path == ".worklog/integration.json" ? "/.worklog/" : "/" + path).ToArray();
 
         foreach (var path in paths)
         {
@@ -33,16 +33,13 @@ internal static class PrivateGitFiles
         plan.Add(excludePath, exclusions);
     }
 
-    private static IEnumerable<string> PrivateTargets(string[] clients)
+    private static IEnumerable<string> PrivateTargets(IEnumerable<string> paths, string root)
     {
-        yield return ".worklog/integration.json";
-        if (clients.Contains("codex"))
+        foreach (var path in paths)
         {
-            yield return ".codex/config.toml";
-        }
-        if (clients.Contains("claude"))
-        {
-            yield return "CLAUDE.local.md";
+            var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+            if (relative is ".worklog/integration.json" or ".codex/config.toml" or "CLAUDE.local.md")
+                yield return relative;
         }
     }
 }

@@ -11,6 +11,12 @@ public sealed class CliTests
     [InlineData("init", "--clients", "--dry-run")]
     [InlineData("init", "--clients", "unknown")]
     [InlineData("init", "--repository")]
+    [InlineData("init", "--ticket-provider", "jira")]
+    [InlineData("init", "--ticket-scope", "company")]
+    [InlineData("init", "--ticket-provider", "other", "--ticket-scope", "company")]
+    [InlineData("init", "--ticket-provider", "jira", "--ticket-scope", " ")]
+    [InlineData("init", "--ticket-provider", "--ticket-scope")]
+    [InlineData("init", "--instructions", "--no-instructions")]
     [InlineData("serve", "--data-dir")]
     [InlineData("serve", "--dry-run")]
     [InlineData("serve", "--clients", "codex")]
@@ -31,6 +37,8 @@ public sealed class CliTests
 
     [Theory]
     [InlineData("init", "--clients", "--dry-run")]
+    [InlineData("init", "--ticket-provider", "--ticket-scope")]
+    [InlineData("init", "--instructions", "--no-instructions")]
     [InlineData("serve", "--repository", "--data-dir")]
     [InlineData("update", "--check", "--status")]
     public async Task CommandHelpDescribesOnlyItsOwnOptions(string command, string firstOption, string secondOption)

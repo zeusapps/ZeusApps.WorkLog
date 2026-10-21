@@ -18,7 +18,15 @@ For each release:
 5. Observe the publish job. Verify that the public release contains `worklog-VERSION-win-x64.zip` and its `.sha256` file, download them independently, compare the hash, and check the extracted executable version/MCP startup against isolated data.
 6. Verify the public latest-release endpoint returns the intended stable version and equal installed/published versions produce no update hint. Record the release link and outcome; required pending validation means release work is still in progress.
 
-The first planned release is `v0.1.0` if still unpublished. The application update feed uses the public latest stable release, excludes drafts/prereleases, and requires both the official Windows ZIP and checksum. Full agent-client smoke checks remain available locally; optional `--live-agents` checks require an explicit decision to send authenticated test prompts.
+The application update feed uses the public latest stable release, excludes drafts/prereleases, and requires both the official Windows ZIP and checksum. Full agent-client smoke checks remain available locally; optional `--live-agents` checks require an explicit decision to send authenticated test prompts.
+
+## Release v0.1.1
+
+This patch release fixes F1-F5: paired ticket provider/scope setup, unresolved-ID reporting, shared Git worktree context, the bugfix classification alias for existing configurations, and persistent per-client managed-instruction opt-out/removal with explicit re-enable. The separate F6 server-startup investigation remains planned and is not claimed as fixed by this release.
+
+Existing applications can initialize Claude with `worklog init --clients claude --no-instructions --ticket-provider jira --ticket-scope company.atlassian.net`. Later init runs preserve the opt-out; `--instructions` restores managed instructions. Restart clients after upgrading and configuring. Legacy configuration is promoted without rewriting journal observations; reconcile conflicting saved identities or ticket settings explicitly as described in [installation](installation.md#worktree-context-and-legacy-configuration).
+
+Release validation includes the 127-test suite, Windows packaging, packaged update acceptance, and local isolated Codex/Claude checks with instructions enabled and disabled. The release workflow independently rebuilds, tests, and packages the exact version tag before publishing its ZIP and checksum. Published-asset verification and its resulting hash are recorded in the GitHub release notes after publication.
 
 ## Verified release v0.1.0
 

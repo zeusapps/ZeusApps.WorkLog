@@ -1,4 +1,5 @@
 using WorkLog.Smoke;
+using WorkLog.Cli;
 using WorkLog.Updates;
 
 if (args is ["--stage-update-fixture", var target, var data, var stage, var version])
@@ -16,13 +17,14 @@ if (args is ["--updates-only", var updateExecutable])
 }
 
 var executable = args.FirstOrDefault(argument => argument != "--live-agents")
-    ?? "artifacts/releases/worklog-0.1.0-win-x64/worklog.exe";
+    ?? $"artifacts/releases/worklog-{ApplicationInfo.Version}-win-x64/worklog.exe";
 var workspace = new SmokeWorkspace(executable);
 workspace.Initialize();
 
 var processes = new SmokeProcessRunner(workspace);
 await new ClientRegistrationChecks(workspace, processes).RunAsync();
 await new JournalAcceptanceChecks(workspace).RunAsync();
+await new InitializationAcceptanceChecks(workspace, processes).RunAsync();
 await new UpdateAcceptanceChecks(workspace.Executable).RunAsync();
 
 if (args.Contains("--live-agents"))

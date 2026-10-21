@@ -13,11 +13,18 @@ internal static class CodexIntegration
         var model = Toml.ToModel(text);
         ValidateOwnership(model, setup.Previous);
 
-        var globalModel = Toml.ToModel(InitializationPlan.Read(setup.CodexUserConfigPath));
-        var instructions = MergeInstructions(Value(model, "developer_instructions"),
-            Value(globalModel, "developer_instructions"), setup.RepositoryIdentity);
-
-        text = ReplaceInstructions(text, instructions);
+        var current = Value(model, "developer_instructions");
+        if (setup.Context.InstructionsEnabled("codex"))
+        {
+            var globalModel = Toml.ToModel(InitializationPlan.Read(setup.CodexUserConfigPath));
+            var instructions = MergeInstructions(current, Value(globalModel, "developer_instructions"), setup.RepositoryIdentity);
+            text = ReplaceInstructions(text, instructions);
+        }
+        else if (current is not null)
+        {
+            var remaining = ManagedBlock.Remove(current, ManagedBlock.InstructionsBegin, ManagedBlock.InstructionsEnd);
+            if (remaining != current) text = ReplaceInstructions(text, remaining);
+        }
         var registration = "[mcp_servers.worklog]\ncommand = " + Quote(setup.Server.Command)
             + "\nargs = [" + string.Join(", ", setup.Server.Arguments.Select(Quote)) + "]";
         text = ManagedBlock.Replace(text, ManagedBlock.ServerBegin, ManagedBlock.ServerEnd, registration);

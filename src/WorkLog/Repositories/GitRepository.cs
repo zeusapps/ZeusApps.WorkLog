@@ -7,6 +7,19 @@ public static class GitRepository
     public static string GetRoot(string path) =>
         Path.GetFullPath(Run(path, "rev-parse", "--show-toplevel").Trim());
 
+    public static string GetCommonDirectory(string path) =>
+        Path.TrimEndingDirectorySeparator(Path.GetFullPath(Run(path, "rev-parse", "--git-common-dir").Trim(), path));
+
+    internal static StringComparer PathComparer => OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    internal static string? TryGetCommonDirectory(string path)
+    {
+        if (!Directory.Exists(path)) return null;
+        var result = Run(path, false, "rev-parse", "--git-common-dir").Trim();
+        return result.Length == 0 ? null : Path.TrimEndingDirectorySeparator(Path.GetFullPath(result, path));
+    }
+
     public static string Run(string path, params string[] arguments) => Run(path, true, arguments);
 
     public static string Run(string path, bool required, params string[] arguments)

@@ -6,11 +6,16 @@ internal sealed class InitializationPlan
 {
     private sealed record FileChange(string Path, string Content, string? Before);
     private readonly List<FileChange> changes = [];
+    private readonly HashSet<string> targets = [];
 
     public static string Read(string path) => File.Exists(path) ? File.ReadAllText(path) : "";
 
+    public IEnumerable<string> ChangedPaths => changes.Select(change => change.Path);
+    public IEnumerable<string> TargetPaths => targets;
+
     public void Add(string path, string content)
     {
+        targets.Add(path);
         var before = File.Exists(path) ? File.ReadAllText(path) : null;
         if (before != content)
         {

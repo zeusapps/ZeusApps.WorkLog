@@ -12,6 +12,15 @@ Install a self-contained Windows x64 release from [GitHub Releases](https://gith
 
 `init` defaults to both clients and requires Git plus Codex CLI 0.162.1+ and Claude Code 2.1.289+. Select just one with `--clients codex` or `--clients claude`. Initialization preserves shared instructions and uses private configuration. Restart clients and follow their normal repository trust flow after initialization.
 
+For an existing application that already supplies logging instructions:
+
+```powershell
+worklog init --clients claude --ticket-provider jira --ticket-scope company.atlassian.net --no-instructions --dry-run
+# Review the plan, then rerun without --dry-run.
+```
+
+`--no-instructions` removes WorkLog-owned instruction blocks and remembers the opt-out for the selected repository and clients, while keeping MCP registration. Later init runs retain that choice. Use `--instructions` to re-enable managed instructions explicitly. Unrelated application/user instructions remain intact. Without managed instructions, your existing rules or explicit tool calls drive logging.
+
 ## Journal behavior
 
 - `started`: successful OpenSpec change creation, including `openspec-propose`.
@@ -59,6 +68,8 @@ The initialized repository supplies repository identity; direct servers can inst
 
 `from` is inclusive and `to` exclusive. The timezone controls calendar-day grouping; bounds must include offsets. Optional filters: repository, change, ticket (ID or `provider:scope:id`), status, classification. The assistant writes report prose from recorded facts.
 
+A bare `ticket: "DEP-7483"` also finds observations whose ticket is still only in `extractedTicketId`. A qualified filter matches stored qualified references only, even after you configure the repository's provider/scope. Reports never retroactively qualify those historical entries; rejected observations that were never saved cannot be recovered by querying.
+
 Report `schemaVersion: 1` defaults to `view: "compact"`: observations appear once in `entries`, and daily groups contain `entryIds`. Pages default to 25 observations (`pageSize`: 1–100) and at most 64 KiB of structured JSON, so pages may be smaller. While `hasMore` is true, pass `nextCursor` as `period.cursor` with every other option unchanged. Combine all pages before writing a complete report; a daily group can span pages. Continuation excludes observations written after the first page, even if backdated.
 
 Other views are `flat` (entries only), `grouped` (full observations in daily groups only), and `legacy` (both full views; count observations once). Every view is paginated. Use `includeSummaries: false` for smaller reports or when a single summary exceeds the byte budget. Cursor tokens are local continuation state, not credentials; start a new query after switching journals or changing filters.
@@ -67,28 +78,37 @@ Other views are `flat` (entries only), `grouped` (full observations in daily gro
 
 Configuration lives in `%LOCALAPPDATA%\ZeusApps.WorkLog\config.json` by default, alongside `journal.db`. Override with `--data-dir PATH` or `WORKLOG_DATA_DIR`. Each machine is independent. There are no issue-service connections or credentials; use separate official issue MCPs for lookup.
 
-After init, edit your private config to customize mappings or repository ticket context:
+Set repository ticket context with paired `init --ticket-provider jira --ticket-scope company.atlassian.net` options (or `azure-devops` with an organization/project scope). Omitting both flags preserves existing settings; invalid or incomplete pairs fail before writes. No provider or scope is inferred from a branch or Git remote.
+
+After init, edit the active `repositoryContexts` entry in your private config to customize identity or extraction pattern, and `branchClassifications` to customize mappings. Merge changes into the existing file rather than replacing other settings:
 
 ```json
 {
   "branchClassifications": {
     "feature": "feature",
     "bugs": "bug",
+    "bugfix": "bug",
     "hotfix": "bug",
     "chore": "maintenance"
   },
-  "repositories": {
-    "D:\\Code\\MyProject": {
-      "identity": "github.com/company/project",
-      "provider": "jira",
-      "scope": "company.atlassian.net",
-      "ticketPattern": "(?<id>[A-Z][A-Z0-9]+-\\d+)"
+  "repositoryContexts": {
+    "D:\\Code\\MyProject\\.git": {
+      "repository": {
+        "identity": "github.com/company/project",
+        "provider": "jira",
+        "scope": "company.atlassian.net",
+        "ticketPattern": "(?<id>[A-Z][A-Z0-9]+-\\d+)"
+      },
+      "instructions": { "claude": false },
+      "legacyPaths": []
     }
   }
 }
 ```
 
-Restart the MCP/client after configuration edits. Match prefixes before the first slash, case-insensitively. Explicit classification overrides mappings; unknown prefixes become unclassified. Existing entries retain their classification. Explicit tickets override branch extraction. Inference uses the effective repository's configuration, including when `entry.repository` overrides the initialized repository. An extracted ID without configured provider/scope is retained as unresolved metadata, not assigned a guessed provider. For Azure DevOps use provider `azure-devops`, scope `organization/project`, and a numeric ID; custom branch patterns must have a named `id` capture. Ticket fields are trimmed before storage and filtering. Ticket-only work groups by its sorted set of qualified references, independent of input order.
+Git worktrees share context and instruction preferences through their common Git directory, including repositories without origin. Separate clones do not inherit settings just because their remote URLs match. Legacy `repositories` records remain readable and are retained for recovery after promotion; `legacyPaths` identifies promoted copies, so leave that list unchanged when editing settings. Edit the authoritative shared entry after promotion. Conflicting legacy identities or nonempty ticket settings require explicit reconciliation; WorkLog does not rewrite journal history or silently choose a scope. See [worktree migration and recovery](docs/installation.md#worktree-context-and-legacy-configuration).
+
+Restart the MCP/client after configuration edits. Match prefixes before the first slash, case-insensitively. The missing `bugfix` alias is added for existing configurations too; explicit mappings such as `BUGFIX: maintenance` take precedence. Use `bugfix: unclassified` to opt out of that alias. Explicit classification overrides mappings; unknown prefixes become unclassified. Existing entries retain their classification. Explicit tickets override branch extraction. Inference uses the effective repository's configuration, including when `entry.repository` overrides the initialized repository. An extracted ID without configured provider/scope is retained as unresolved metadata, not assigned a guessed provider. For Azure DevOps use provider `azure-devops`, scope `organization/project`, and a numeric ID; the ticket flags preserve the existing pattern, so set a suitable named `id` capture for numeric branch IDs or supply explicit tickets. Ticket fields are trimmed before storage and filtering. Ticket-only work groups by its sorted set of qualified references, independent of input order.
 
 ## Development and releases
 

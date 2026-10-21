@@ -60,9 +60,10 @@ internal sealed class SqliteEntryStore(JournalDatabase database)
         if (request.Ticket is not null)
         {
             conditions.Add("""
+                ((instr($ticket,':')=0 AND json_extract(e.payload,'$.extractedTicketId')=$ticket) OR
                 EXISTS (SELECT 1 FROM json_each(e.payload,'$.tickets') t WHERE
-                    trim(json_extract(t.value,'$.id'))=$ticket OR
-                    trim(json_extract(t.value,'$.provider'))||':'||trim(json_extract(t.value,'$.scope'))||':'||trim(json_extract(t.value,'$.id'))=$ticket)
+                    (instr($ticket,':')=0 AND trim(json_extract(t.value,'$.id'))=$ticket) OR
+                    trim(json_extract(t.value,'$.provider'))||':'||trim(json_extract(t.value,'$.scope'))||':'||trim(json_extract(t.value,'$.id'))=$ticket))
                 """);
             parameters.Add(("$ticket", request.Ticket));
         }

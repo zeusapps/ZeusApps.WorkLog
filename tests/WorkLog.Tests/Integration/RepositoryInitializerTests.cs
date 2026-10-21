@@ -104,6 +104,21 @@ public sealed class RepositoryInitializerTests
     }
 
     [Fact]
+    public void RepeatedInitRestoresExclusionsForUnchangedOwnedFiles()
+    {
+        using var box = new TestWorkspace();
+        box.Git("init");
+        var initializer = new RepositoryInitializer(new LocalSettings(box.Data), box.Home, false);
+        initializer.Run(box.Repo);
+        var exclude = Path.Combine(box.Repo, ".git", "info", "exclude");
+        File.WriteAllText(exclude, "# Keep local content\n");
+        initializer.Run(box.Repo);
+        Assert.StartsWith("# Keep local content\n", File.ReadAllText(exclude));
+        foreach (var path in new[] { ".worklog/integration.json", ".codex/config.toml", "CLAUDE.local.md" })
+            Assert.Contains(path, GitRepository.Run(box.Repo, "check-ignore", path));
+    }
+
+    [Fact]
     public void UnownedServerIsNotOverwritten()
     {
         using var box = new TestWorkspace();
@@ -129,5 +144,6 @@ public sealed class RepositoryInitializerTests
         new RepositoryInitializer(context, box.Home, false).Run(worktree, "claude");
         Assert.Contains("CLAUDE.local.md", GitRepository.Run(worktree, "check-ignore", "CLAUDE.local.md"));
         Assert.Equal(first.Identity, new RepositoryRegistry(new LocalSettings(box.Data)).Get(box.Repo).Identity);
+        Assert.Equal(first.Identity, new RepositoryRegistry(new LocalSettings(box.Data)).Get(worktree).Identity);
     }
 }

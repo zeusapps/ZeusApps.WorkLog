@@ -26,10 +26,19 @@ internal static class ClaudeIntegration
         plan.Add(setup.ClaudeConfigPath, config.ToJsonString(Json.Options));
 
         var instructionPath = Path.Combine(setup.Root, "CLAUDE.local.md");
-        var instructions = AgentInstructions.Render(setup.RepositoryIdentity, "claude");
-        var imports = FindInstructionImports(setup.Root);
-        plan.Add(instructionPath, ManagedBlock.Replace(InitializationPlan.Read(instructionPath),
-            ManagedBlock.InstructionsBegin, ManagedBlock.InstructionsEnd, instructions + "\n" + string.Join("\n", imports)));
+        if (setup.Context.InstructionsEnabled("claude"))
+        {
+            var instructions = AgentInstructions.Render(setup.RepositoryIdentity, "claude");
+            var imports = FindInstructionImports(setup.Root);
+            plan.Add(instructionPath, ManagedBlock.Replace(InitializationPlan.Read(instructionPath),
+                ManagedBlock.InstructionsBegin, ManagedBlock.InstructionsEnd, instructions + "\n" + string.Join("\n", imports)));
+        }
+        else if (File.Exists(instructionPath))
+        {
+            var current = InitializationPlan.Read(instructionPath);
+            var remaining = ManagedBlock.Remove(current, ManagedBlock.InstructionsBegin, ManagedBlock.InstructionsEnd);
+            if (remaining != current) plan.Add(instructionPath, remaining);
+        }
     }
 
     private static void ValidateOwnership(JsonObject servers, IntegrationManifest? previous)

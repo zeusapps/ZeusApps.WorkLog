@@ -90,7 +90,7 @@ internal sealed class EntryFactory(WorkLogConfiguration configuration, Repositor
             return repository;
         }
 
-        var matches = configuration.Repositories.Values.Where(candidate => candidate.Identity == repositoryId).Distinct().ToArray();
+        var matches = configuration.EffectiveRepositories().Where(candidate => candidate.Identity == repositoryId).Distinct().ToArray();
         if (matches.Length > 1)
         {
             throw new ArgumentException("entry.repository has conflicting ticket configurations. Supply explicit qualified tickets.");

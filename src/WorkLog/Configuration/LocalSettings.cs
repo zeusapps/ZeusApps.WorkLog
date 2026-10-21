@@ -11,7 +11,7 @@ public sealed class LocalSettings
     public string ConfigPath => Path.Combine(DataDirectory, "config.json");
     public WorkLogConfiguration Configuration
     {
-        get;
+        get; private set;
     }
 
     public LocalSettings(string? dataDirectory = null)
@@ -23,7 +23,18 @@ public sealed class LocalSettings
         Configuration = File.Exists(ConfigPath)
             ? Json.Decode<WorkLogConfiguration>(File.ReadAllText(ConfigPath))
             : new WorkLogConfiguration();
+        Configuration.Normalize();
     }
+
+    private LocalSettings(string dataDirectory, WorkLogConfiguration configuration)
+    {
+        DataDirectory = dataDirectory;
+        Configuration = configuration;
+    }
+
+    internal LocalSettings Copy() => new(DataDirectory, Json.Decode<WorkLogConfiguration>(Json.Encode(Configuration)));
+
+    internal void Adopt(LocalSettings planned) => Configuration = planned.Configuration;
 
     public void Save()
     {

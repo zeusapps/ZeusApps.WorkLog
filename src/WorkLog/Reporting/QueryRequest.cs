@@ -8,7 +8,7 @@ public sealed record QueryRequest(
     [property: Description("Timezone used for daily grouping, for example Europe/Warsaw.")] string Timezone,
     [property: Description("Optional exact repository identity filter. Omit to report across this local journal.")] string? Repository = null,
     [property: Description("Optional exact OpenSpec change name filter.")] string? Change = null,
-    [property: Description("Optional ticket ID or fully qualified provider:scope:id filter, for example jira:company.atlassian.net:DEP-12. Surrounding whitespace is trimmed.")] string? Ticket = null,
+    [property: Description("Optional ticket filter. A bare ID also matches unresolved extractedTicketId; provider:scope:id matches only a stored qualified reference, for example jira:company.atlassian.net:DEP-12. Surrounding whitespace is trimmed.")] string? Ticket = null,
     [property: Description("Optional status filter: started, in_progress, or done.")] string? Status = null,
     [property: Description("Optional exact stored classification filter.")] string? Classification = null,
     [property: Description("Maximum observations per page, from 1 to 100. Defaults to 25; a byte budget can return fewer.")] int PageSize = 25,

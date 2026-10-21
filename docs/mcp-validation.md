@@ -15,6 +15,8 @@ Reviewed against the official C# SDK documentation, the installed ModelContextPr
 
 System.CommandLine 2.0.13 replaces the manual CLI parser. Init and serve have separate option sets; generated help and validation run before command actions. Regression cases cover missing values, unsupported clients, unknown options, foreign-command options, help and version behavior.
 
+Init regression cases also cover paired ticket provider/scope options and mutually exclusive instruction controls. Integration tests exercise block removal, persistent per-client opt-out, re-enable, dry-run/preflight preservation, tracked destinations, and shared worktree context. Reporting tests cover unresolved-ID matches with combined filters, pagination/snapshots, and strict qualified matching. Classification tests verify old configurations receive the bugfix alias while custom mappings and historical observations remain intact.
+
 The journal schema remains unchanged. Report schema version 1 deliberately adds compact pagination and selectable views. CLI help/error text comes from System.CommandLine, and options that never applied to serve are rejected.
 
 ## Audit corrections

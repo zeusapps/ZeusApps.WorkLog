@@ -1,3 +1,5 @@
+using WorkLog.Configuration;
+
 namespace WorkLog.Integration;
 
 internal sealed record ClientSetup(
@@ -6,4 +8,5 @@ internal sealed record ClientSetup(
     string ClaudeConfigPath,
     string CodexUserConfigPath,
     ServerRegistration Server,
-    IntegrationManifest? Previous);
+    IntegrationManifest? Previous,
+    RepositoryContext Context);
