@@ -70,7 +70,24 @@ The initialized repository supplies repository identity; direct servers can inst
 
 A bare `ticket: "DEP-7483"` also finds observations whose ticket is still only in `extractedTicketId`. A qualified filter matches stored qualified references only, even after you configure the repository's provider/scope. Reports never retroactively qualify those historical entries; rejected observations that were never saved cannot be recovered by querying.
 
+Choose grouping per report with optional `period.groupBy`: `"ticket"` (the default) combines same-day observations with the same complete qualified ticket set in one repository, even when their change names differ or are absent. Each observation retains its original change and ticket metadata. Set `"groupBy": "change"` for the previous change-first grouping with a qualified ticket-set fallback. Existing requests that omit the selector now group by ticket. For example:
+
+```json
+{
+  "period": {
+    "from": "2026-10-20T00:00:00Z",
+    "to": "2026-10-21T00:00:00Z",
+    "timezone": "UTC",
+    "groupBy": "ticket"
+  }
+}
+```
+
+Ticket sets are sorted and deduplicated: `{A,B}` and `{B,A,A}` share a group, while `{A}` and `{A,B}` remain separate, including when filtering by A. Observations belong to one daily group each. Repository, provider and scope distinguish tickets; equal bare IDs alone never merge groups. Without qualified tickets, ticket mode retains the existing change identity, even when an unresolved extracted ID matches a qualified ticket elsewhere. Grouping applies to compact, grouped and legacy views; flat entries are unchanged. Only `"change"` and `"ticket"` are accepted; explicit null, blank and other values return a `period.groupBy` error.
+
 Report `schemaVersion: 1` defaults to `view: "compact"`: observations appear once in `entries`, and daily groups contain `entryIds`. Pages default to 25 observations (`pageSize`: 1–100) and at most 64 KiB of structured JSON, so pages may be smaller. While `hasMore` is true, pass `nextCursor` as `period.cursor` with every other option unchanged. Combine all pages before writing a complete report; a daily group can span pages. Continuation excludes observations written after the first page, even if backdated.
+
+Merge daily group fragments by `(date, workIdentity)` after retrieving every page; a fragment does not establish a final status or whole-period total. Keep `groupBy` unchanged during continuation (omitted and explicit `"ticket"` are equivalent). After upgrading, restart the MCP client to refresh tool discovery and start a new query instead of reusing an older cursor. No journal migration is required for grouping. Older binaries reject the new option; omit it when rolling back.
 
 Other views are `flat` (entries only), `grouped` (full observations in daily groups only), and `legacy` (both full views; count observations once). Every view is paginated. Use `includeSummaries: false` for smaller reports or when a single summary exceeds the byte budget. Cursor tokens are local continuation state, not credentials; start a new query after switching journals or changing filters.
 

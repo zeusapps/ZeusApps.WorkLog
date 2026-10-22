@@ -14,4 +14,5 @@ public sealed record QueryRequest(
     [property: Description("Maximum observations per page, from 1 to 100. Defaults to 25; a byte budget can return fewer.")] int PageSize = 25,
     [property: Description("Opaque nextCursor from a previous page. Keep all query options unchanged while continuing.")] string? Cursor = null,
     [property: Description("compact (default): entries once, daily groups reference IDs; flat: entries only; grouped: observations only in daily groups; legacy: both full views.")] string View = "compact",
-    [property: Description("Include stored summaries. Set false to reduce output or retrieve entries whose summaries exceed the page byte budget.")] bool IncludeSummaries = true);
+    [property: Description("Include stored summaries. Set false to reduce output or retrieve entries whose summaries exceed the page byte budget.")] bool IncludeSummaries = true,
+    [property: Description("ticket (default): group by the complete qualified ticket set regardless of change, retaining change identity without qualified tickets. change: group by change with a qualified ticket-set fallback. Each observation belongs to one daily group; keep this option unchanged during continuation.")] string GroupBy = "ticket");

@@ -46,6 +46,8 @@ internal sealed class ReportPager(SqliteEntryStore store, string journalIdentity
             throw new ArgumentException("period.pageSize must be between 1 and 100.");
         if (request.View is not ("compact" or "flat" or "grouped" or "legacy"))
             throw new ArgumentException("period.view must be compact, flat, grouped, or legacy.");
+        if (request.GroupBy is not ("change" or "ticket"))
+            throw new ArgumentException("period.groupBy must be change or ticket.");
         return request with
         {
             Repository = Filter(request.Repository, "repository"),

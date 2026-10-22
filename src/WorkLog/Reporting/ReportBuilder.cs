@@ -10,7 +10,7 @@ internal static class ReportBuilder
         var days = request.View == "flat" ? [] : entries
             .GroupBy(entry => (
                 Date: TimeZoneInfo.ConvertTime(entry.OccurredAt, period.Zone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-                Work: WorkIdentity.For(entry)))
+                Work: WorkIdentity.For(entry, request.GroupBy)))
             .Select(group => new DailyGroup(group.Key.Date, group.Key.Work,
                 request.View == "compact" ? [] : group.ToArray(),
                 request.View == "compact" ? group.Select(entry => entry.Id).ToArray() : []))

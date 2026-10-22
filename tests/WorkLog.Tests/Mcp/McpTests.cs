@@ -219,6 +219,146 @@ public sealed class McpTests
         Assert.False(JsonSchema.Build(loggingSchema).Evaluate(invalidOutput.RootElement).IsValid);
     }
 
+    [Fact]
+    public async Task TicketGroupingIsDiscoverableValidatedAndBoundedAcrossViews()
+    {
+        using var box = new TestWorkspace();
+        box.Git("init");
+        var settings = new LocalSettings(box.Data);
+        settings.Configuration.Updates.Enabled = false;
+        settings.Save();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await using var client = await McpClient.CreateAsync(new StdioClientTransport(new()
+        {
+            Name = "grouping-test",
+            Command = "dotnet",
+            Arguments = [typeof(Program).Assembly.Location, "serve", "--repository", box.Repo, "--data-dir", box.Data]
+        }), cancellationToken: timeout.Token);
+        var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
+        var tool = Assert.Single(tools, item => item.Name == "query_work").ProtocolTool;
+        var input = tool.InputSchema;
+        var periodSchema = ResolveSchema(input.GetProperty("properties").GetProperty("period"), input);
+        AssertDescription(periodSchema, "groupBy", "complete qualified ticket set");
+        AssertDescription(periodSchema, "groupBy", "ticket (default)");
+        Assert.DoesNotContain(periodSchema.GetProperty("required").EnumerateArray(), item => item.GetString() == "groupBy");
+        var schema = tool.OutputSchema!.Value;
+        var dailySchema = ResolveSchema(schema.GetProperty("properties").GetProperty("days").GetProperty("items"), schema);
+        AssertDescription(dailySchema, "workIdentity", "period.groupBy");
+        var original = new Dictionary<string, JsonElement>();
+        for (var index = 0; index < 6; index++)
+        {
+            var logged = await client.CallToolAsync("log_work", new Dictionary<string, object?>
+            {
+                ["entry"] = new
+                {
+                    status = "in_progress",
+                    change = index % 2 == 0 ? "repair-links" : null,
+                    tickets = new[] { new { provider = "jira", scope = "company", id = "DEP-12" } },
+                    occurredAt = "2026-10-20T09:00:00Z",
+                    summary = new string('Ж', 2000)
+                }
+            }, cancellationToken: timeout.Token);
+            AssertValidOutput(Assert.Single(tools, item => item.Name == "log_work").ProtocolTool.OutputSchema!.Value, logged);
+            var entry = logged.StructuredContent!.Value.GetProperty("entry");
+            original.Add(entry.GetProperty("id").GetString()!, entry.Clone());
+        }
+
+        Dictionary<string, object?> Period() => new()
+        {
+            ["from"] = "2026-10-20T00:00:00Z",
+            ["to"] = "2026-10-21T00:00:00Z",
+            ["timezone"] = "UTC"
+        };
+        async Task<CallToolResult> Query(Dictionary<string, object?> period) => await client.CallToolAsync("query_work",
+            new Dictionary<string, object?> { ["period"] = period }, cancellationToken: timeout.Token);
+
+        foreach (var groupBy in new string?[] { null, "change", "ticket" })
+            foreach (var view in new[] { "compact", "flat", "grouped", "legacy" })
+                foreach (var includeSummaries in new[] { true, false })
+                {
+                    var request = Period();
+                    if (groupBy is not null)
+                        request["groupBy"] = groupBy;
+                    request["view"] = view;
+                    request["includeSummaries"] = includeSummaries;
+                    request["pageSize"] = 100;
+                    var ids = new List<string>();
+                    var groupIds = new List<string>();
+                    var identities = new HashSet<string>();
+                    while (true)
+                    {
+                        var result = await Query(request);
+                        AssertValidOutput(schema, result);
+                        var report = result.StructuredContent!.Value;
+                        Assert.True(JsonSerializer.SerializeToUtf8Bytes(report).Length <= 64 * 1024);
+                        var days = report.GetProperty("days").EnumerateArray().ToArray();
+                        var entries = view == "grouped"
+                            ? days.SelectMany(day => day.GetProperty("observations").EnumerateArray())
+                            : report.GetProperty("entries").EnumerateArray().ToArray().AsEnumerable();
+                        foreach (var entry in entries)
+                        {
+                            var id = entry.GetProperty("id").GetString()!;
+                            ids.Add(id);
+                            Assert.True(JsonElement.DeepEquals(original[id].GetProperty("change"), entry.GetProperty("change")));
+                            Assert.True(JsonElement.DeepEquals(original[id].GetProperty("tickets"), entry.GetProperty("tickets")));
+                            if (includeSummaries)
+                                Assert.Equal(original[id].GetProperty("summary").GetString(), entry.GetProperty("summary").GetString());
+                            else
+                                Assert.Equal(JsonValueKind.Null, entry.GetProperty("summary").ValueKind);
+                        }
+                        foreach (var day in days)
+                        {
+                            identities.Add(day.GetProperty("workIdentity").GetString()!);
+                            groupIds.AddRange(view == "compact"
+                                ? day.GetProperty("entryIds").EnumerateArray().Select(item => item.GetString()!)
+                                : day.GetProperty("observations").EnumerateArray().Select(item => item.GetProperty("id").GetString()!));
+                        }
+                        if (!report.GetProperty("hasMore").GetBoolean())
+                            break;
+                        request["cursor"] = report.GetProperty("nextCursor").GetString();
+                        Assert.True(ids.Count < 6);
+                    }
+                    Assert.Equal(6, ids.Count);
+                    Assert.True(original.Keys.ToHashSet().SetEquals(ids));
+                    Assert.Equal(view == "flat" ? 0 : groupBy == "change" ? 2 : 1, identities.Count);
+                    if (view != "flat")
+                        Assert.Equal(ids.Order(StringComparer.Ordinal), groupIds.Order(StringComparer.Ordinal));
+                }
+
+        foreach (var invalid in new object?[] { null, "", " ", "tickets", "Ticket" })
+        {
+            var request = Period();
+            request["groupBy"] = invalid;
+            var rejected = await Query(request);
+            Assert.True(rejected.IsError);
+            Assert.Contains("period.groupBy", Assert.IsType<TextContentBlock>(Assert.Single(rejected.Content)).Text);
+        }
+        var typoRequest = Period();
+        typoRequest["groupByy"] = "ticket";
+        var typo = await Query(typoRequest);
+        Assert.True(typo.IsError);
+        Assert.Contains("period.groupByy", Assert.IsType<TextContentBlock>(Assert.Single(typo.Content)).Text);
+        var afterRequest = Period();
+        afterRequest["includeSummaries"] = false;
+        var after = await Query(afterRequest);
+        AssertValidOutput(schema, after);
+        Assert.Equal(6, after.StructuredContent!.Value.GetProperty("entries").GetArrayLength());
+        afterRequest["pageSize"] = 1;
+        var first = await Query(afterRequest);
+        AssertValidOutput(schema, first);
+        afterRequest["cursor"] = first.StructuredContent!.Value.GetProperty("nextCursor").GetString();
+        var omittedContinuation = await Query(afterRequest);
+        AssertValidOutput(schema, omittedContinuation);
+        afterRequest["groupBy"] = "ticket";
+        var explicitContinuation = await Query(afterRequest);
+        AssertValidOutput(schema, explicitContinuation);
+        Assert.True(JsonElement.DeepEquals(omittedContinuation.StructuredContent!.Value, explicitContinuation.StructuredContent!.Value));
+        afterRequest["groupBy"] = "change";
+        var switchedMode = await Query(afterRequest);
+        Assert.True(switchedMode.IsError);
+        Assert.Contains("period.cursor", Assert.IsType<TextContentBlock>(Assert.Single(switchedMode.Content)).Text);
+    }
+
     private static void AssertValidOutput(JsonElement schema, CallToolResult response)
     {
         Assert.NotEqual(true, response.IsError);

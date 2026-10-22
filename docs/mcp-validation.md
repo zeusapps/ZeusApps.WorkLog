@@ -86,6 +86,32 @@ The default packaged smoke also runs this fixture. It uses disposable repositori
 
 These results cover known aliases in terminal Claude Code. Previously unseen spellings require rerunning init after their entries exist. They do not establish automatic registration in a fresh worktree (F6), Desktop behavior, symlink resolution or case-sensitive Windows directories. The official [MCP quickstart](https://code.claude.com/docs/en/mcp-quickstart), retrieved through Context7 on 2026-10-22, documents local-scope storage, `CLAUDE_CONFIG_DIR` and `mcp get` diagnostics; the casing claim above comes from the fixture.
 
+## Selectable ticket-grouping validation
+
+`query_work` accepts optional `period.groupBy` with `ticket` as the default for complete qualified ticket-set grouping and `change` for the previous change-first behavior. Generated input and daily-identity descriptions explain the selector. Null, blank and unsupported values are rejected before reading a page, including flat view; unknown fields such as `period.groupByy` retain path-specific errors. Request field names retain the existing serializer's case-insensitive matching.
+
+Reporting regressions exercise historical observations without a change alongside multiple changes for the same qualified ticket, omitted/explicit ticket equivalence and exact legacy identities under explicit change, unchanged metadata, reordered/deduplicated ticket sets, overlapping sets without duplicate assignments, namespace/repository separation and unresolved-ID fallback after context configuration. Both modes traverse timestamp ties, concurrent backdated writes and all four views within the 64 KiB budget. A ticket-mode fixture combines every filter with page size 1 across a Warsaw midnight and merges fragments by `(date, workIdentity)`. Continuation accepts omitted/explicit ticket interchangeably and rejects switching modes. Flat observations stay unchanged; groups remain page fragments rather than whole-period totals or final statuses.
+
+The stdio protocol fixture validates tools/list guidance, schema-valid output and JSON text equivalence across both modes, all views and summary inclusion/exclusion. Invalid selectors and misspelled fields are followed by a successful query verifying the original observation count. The packaged smoke uses a separate disposable journal with historical/new same-ticket observations, verifies omitted/change/ticket modes through native tool calls with page size 1, and compares each original observation's complete JSON metadata. It records `ticket-grouping/evidence.json` under the smoke run directory.
+
+Repeatable checks:
+
+```powershell
+dotnet restore --locked-mode
+dotnet test tests/WorkLog.Tests/WorkLog.Tests.csproj -c Release --filter 'FullyQualifiedName~Reporting|FullyQualifiedName~Mcp'
+dotnet test -c Release
+./scripts/package.ps1 -OutputDirectory artifacts/releases/ticket-default-review
+dotnet run --project tools/WorkLog.Smoke -c Release -- artifacts/releases/ticket-default-review/worklog-0.1.1-win-x64/worklog.exe
+```
+
+Keep all options unchanged during continuation, including grouping. Consumers must retrieve every page and merge matching date/identity fragments. After upgrading, restart the MCP client for refreshed tool discovery and begin a fresh query; older cursors may be rejected because the request fingerprint now includes grouping. The journal and response schema version remain unchanged. Older binaries reject the new request member; omit it after rollback. Grouping never rewrites stored data or resolves an unqualified historical ID.
+
+Final local validation on 2026-10-22 passed locked restore, a Release build with zero warnings/errors, all 32 focused reporting/MCP tests and all 196 tests without skips. Results are retained in `tests/WorkLog.Tests/TestResults/ticket-default-focused.trx` and `ticket-default-full.trx`. Changed C# files pass targeted whitespace-format verification. Strict change and main-spec validation pass. Review strengthened the work-switch regression to check explicit change groups and the combined default ticket group; protocol coverage also proves omitted/explicit ticket continuation equivalence and rejects switching to change mode.
+
+The 66,616,885-byte ticket-default review package is `artifacts/releases/ticket-default-review/worklog-0.1.1-win-x64.zip` (SHA-256 `fe71569e639784502fd266e315b6a2d74e8bbdd62335d5c3fa28ad80745bd50e`). The source version remains 0.1.1; this is a local review build, not a published release or installed-client update. Full packaged smoke passed under `artifacts/smoke/aa0a234e04f34e5180686eb13104a58d/`, including Codex discovery/instruction modes, Claude connections, initialization/context acceptance and Windows path-alias checks. Its `ticket-grouping/evidence.json` records three observations, page size 1, preserved metadata and the default ticket-grouped journal snapshot after all mode checks. Bootstrap protocol/EOF and offline-status acceptance passed under `artifacts/update-smoke/3d57fb97c5584274a7a15ca770c0829d/`. Native checks used disposable profiles/data without authenticated agent prompts; the alias fixture records Windows 10.0.26300.0, Git 2.51.0.windows.2 and Claude Code 2.1.306.
+
+The same local run used Codex CLI 0.163.0 and .NET SDK 10.0.113.
+
 ## Sources
 
 - [Official C# SDK: tools, structured content, errors and annotations](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/tools/tools.md)

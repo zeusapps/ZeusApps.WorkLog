@@ -23,9 +23,16 @@ public sealed class ReportTests
         Log("done", "Z", "2026-10-22T12:00:00+02:00");
         Log("in_progress", "Y", "2026-10-23T12:00:00+02:00");
         Log("done", "Y", "2026-10-25T00:00:00+02:00");
-        var report = journal.Query(Period());
+        var report = journal.Query(Period() with
+        {
+            GroupBy = "change"
+        });
         Assert.Equal(5, report.Entries.Length);
         Assert.DoesNotContain(report.Days, g => g.Date == "2026-10-22" && g.WorkIdentity.EndsWith("/Y"));
+        Assert.Equal(2, report.Days.Count(group => group.Date == "2026-10-21"));
+        var defaultDay = Assert.Single(journal.Query(Period()).Days, group => group.Date == "2026-10-21");
+        Assert.EndsWith("/ticket/jira:company:DEP-12", defaultDay.WorkIdentity);
+        Assert.Equal(2, defaultDay.EntryIds.Length);
         Assert.Equal(5, journal.Query(Period() with
         {
             Repository = "repo",

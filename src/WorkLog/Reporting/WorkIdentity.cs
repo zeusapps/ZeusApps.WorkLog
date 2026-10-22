@@ -4,9 +4,9 @@ namespace WorkLog.Reporting;
 
 internal static class WorkIdentity
 {
-    public static string For(Entry entry)
+    public static string For(Entry entry, string groupBy)
     {
-        if (entry.Change is not null)
+        if (entry.Change is not null && (groupBy == "change" || entry.Tickets.Length == 0))
         {
             return $"{entry.Repository}/change/{entry.Change}";
         }
