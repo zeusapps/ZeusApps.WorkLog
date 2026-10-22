@@ -2,9 +2,11 @@
 
 ## Context
 
-See proposal.md and [the handoff](../../../docs/handoffs/2026-10-21-claude-integration-flaws.md). Baseline is v0.1.1 / `fa48ada`. `RepositoryInitializer.Run` obtains Git's root, loads `.worklog/integration.json`, plans client edits against copied settings, validates private targets, and applies only after preflight. `ClaudeIntegration.Plan` currently accesses `projects[setup.Root.Replace('\\', '/')]` exactly, then calls `ValidateOwnership` only on that object's `mcpServers`.
+See proposal.md and [the handoff](../../../../docs/handoffs/2026-10-21-claude-integration-flaws.md). Baseline is v0.1.1 / `fa48ada`. `RepositoryInitializer.Run` obtains Git's root, loads `.worklog/integration.json`, plans client edits against copied settings, validates private targets, and applies only after preflight. `ClaudeIntegration.Plan` currently accesses `projects[setup.Root.Replace('\\', '/')]` exactly, then calls `ValidateOwnership` only on that object's `mcpServers`.
 
 The reporter observed `C:/Code/AnalyticsPlatform` versus `C:/Code/analyticsplatform`; client lookup behavior has not been independently reproduced. Official [Claude MCP docs](https://code.claude.com/docs/en/mcp-quickstart), consulted through Context7 on 2026-10-21, establish local-scope project entries, isolated `CLAUDE_CONFIG_DIR`, and `mcp get/list`, but do not guarantee Windows case normalization. Native acceptance must record the tested CLI version.
+
+Implementation on 2026-10-22 uses the current `cb9e7b7` source baseline, including the stable launcher and coordinated settings writes introduced after the original planning baseline above. The isolated `AliasRepo`/`aliasrepo` fixture independently reproduced the client lookup difference on Claude Code 2.1.306; both spellings connected after reconciliation. [Validation evidence](../../../../docs/mcp-validation.md#windows-claude-project-alias-validation) records versions, launch paths, logs and the remaining limits. The original reporter's path is historical context only.
 
 ## Goals / Non-Goals
 

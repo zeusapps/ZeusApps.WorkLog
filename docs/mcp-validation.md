@@ -66,6 +66,26 @@ A separate extra probe under `native repo with spaces żółć` failed during Gi
 
 Review follow-up on 2026-10-22 fixed legacy `bugfix` normalization across settings refresh, copy and adoption. Nine new test cases cover save, first-use/existing repository resolution, copies, and case-insensitive custom mappings including `unclassified`; the initialization regression also now uses legacy branch settings. Five new cases failed before the fix. After the fix, the Release build passed with zero warnings/errors, all 158 tests passed (`tests/WorkLog.Tests/TestResults/ezagv_LVIV_2026-10-22_21_43_23.trx`), and formatting verification passed. The history fixture now writes legacy JSON directly instead of relying on current `Save()` to emulate an older writer. The packaged acceptance evidence above predates this follow-up; those packages were not rebuilt for this settings-only fix.
 
+## Windows Claude project-alias validation
+
+On Windows 10.0.26300.0 with Git 2.51.0.windows.2 and Claude Code 2.1.306, the isolated baseline reproduced F7: with a registration stored only under `aliasrepo`, `claude mcp get worklog` connected from that lowercase launch path but reported no server from the `AliasRepo` launch path. The exact commands, launch directories and outputs are retained under `artifacts/smoke/f33059acba494ad2a9bd8fecbabe5fbb/`; `claude-aliases/baseline.json` records versions and both results. This is versioned native evidence, not a documented guarantee about every Claude release.
+
+The fixed review package, `artifacts/releases/claude-aliases-review/worklog-0.1.1-win-x64.zip` (66,614,923 bytes), passed focused native acceptance under `artifacts/smoke/4ffdd49def6444ad94cd3da4386898b4/`. Its `claude-aliases/evidence.json` records successful discovery and connection from both launch spellings through the stable launcher, actual command/arguments, preserved unrelated project/server settings, unchanged dry-run snapshots, repeat-init stability, persistent instruction opt-out and explicit re-enable. The package retains the source version 0.1.1 for local review; no release or installed-client migration is implied.
+
+The full packaged smoke passed under `artifacts/smoke/6855a1e3fc6140eea57e6e5c91e92eaf/`, including native Codex discovery/instruction loading, Claude connections with instructions enabled/disabled, journal/context acceptance and the alias fixture. Bootstrap acceptance passed under `artifacts/update-smoke/9cb06b2b2d6c44f2ad8a0b6d2a2e004d/`. After formatting and the final real-worktree regression fixture, the Release build passed with zero warnings/errors and all 176 tests passed (`tests/WorkLog.Tests/TestResults/claude-alias-final.trx`). Changed C# files pass targeted formatting verification; repository-wide formatting verification still reports unrelated pre-existing issues.
+
+The final 66,615,902-byte review package, `artifacts/releases/claude-aliases-verified/worklog-0.1.1-win-x64.zip`, includes the updated installation guide. Its native alias acceptance passed under `artifacts/smoke/68bdc19aaa774add820d7dcc569eabf9/claude-aliases/`; `baseline.json` and `evidence.json` capture before/after launch-path results. Strict OpenSpec validation passed all seven active changes/specifications.
+
+Repeat the isolated alias check against a freshly packaged launcher:
+
+```powershell
+dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- --claude-aliases-only PATH_TO_PACKAGED_LAUNCHER
+```
+
+The default packaged smoke also runs this fixture. It uses disposable repositories, data and `CLAUDE_CONFIG_DIR`; native probes use `mcp get` without authenticated agent prompts. Each `.log` includes the invoked command, arguments, launch directory, exit code and output. The pre-reconciliation probes record discovery independently before the fixture deliberately introduces stale owned arguments and reruns init. Regression tests additionally cover all aliases failing preflight together, malformed registration shapes, slash variants, canonical-only/lowercase-only/multiple entries, separate checkout paths, trust/settings preservation and non-Windows exact-case matching.
+
+These results cover known aliases in terminal Claude Code. Previously unseen spellings require rerunning init after their entries exist. They do not establish automatic registration in a fresh worktree (F6), Desktop behavior, symlink resolution or case-sensitive Windows directories. The official [MCP quickstart](https://code.claude.com/docs/en/mcp-quickstart), retrieved through Context7 on 2026-10-22, documents local-scope storage, `CLAUDE_CONFIG_DIR` and `mcp get` diagnostics; the casing claim above comes from the fixture.
+
 ## Sources
 
 - [Official C# SDK: tools, structured content, errors and annotations](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/tools/tools.md)

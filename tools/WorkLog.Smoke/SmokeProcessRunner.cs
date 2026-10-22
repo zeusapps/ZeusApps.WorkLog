@@ -1,14 +1,16 @@
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace WorkLog.Smoke;
 
 internal sealed class SmokeProcessRunner(SmokeWorkspace workspace)
 {
-    public async Task<string> RunAsync(string name, string[] arguments, Dictionary<string, string>? environment = null)
+    public async Task<string> RunAsync(string name, string[] arguments, Dictionary<string, string>? environment = null,
+        string? workingDirectory = null)
     {
         var start = new ProcessStartInfo(OperatingSystem.IsWindows() && name == "codex" ? "codex.cmd" : name)
         {
-            WorkingDirectory = workspace.Repository,
+            WorkingDirectory = workingDirectory ?? workspace.Repository,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -44,7 +46,8 @@ internal sealed class SmokeProcessRunner(SmokeWorkspace workspace)
 
         var stdout = await output;
         var stderr = await error;
-        File.WriteAllText(Path.Combine(workspace.Root, Path.GetFileName(name) + "-" + Guid.NewGuid().ToString("N") + ".log"), stdout + "\n" + stderr);
+        File.WriteAllText(Path.Combine(workspace.Root, Path.GetFileName(name) + "-" + Guid.NewGuid().ToString("N") + ".log"),
+            $"Command: {name}\nArguments: {JsonSerializer.Serialize(arguments)}\nWorking directory: {start.WorkingDirectory}\nExit code: {process.ExitCode}\n\n{stdout}\n{stderr}");
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException($"{name} exited {process.ExitCode}: {stderr}\n{stdout}");

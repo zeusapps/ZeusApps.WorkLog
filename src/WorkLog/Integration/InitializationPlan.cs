@@ -7,6 +7,7 @@ internal sealed class InitializationPlan
     private sealed record FileChange(string Path, string Content, string? Before);
     private readonly List<FileChange> changes = [];
     private readonly HashSet<string> targets = [];
+    private readonly List<string> descriptions = [];
 
     public static string Read(string path) => File.Exists(path) ? File.ReadAllText(path) : "";
 
@@ -33,8 +34,11 @@ internal sealed class InitializationPlan
         }
     }
 
+    public void DescribeTarget(string target) => descriptions.Add(target);
+
     public List<string> Describe(bool dryRun) =>
-        changes.Select(change => (dryRun ? "Would update " : "Updated ") + change.Path).ToList();
+        changes.Select(change => (dryRun ? "Would update " : "Updated ") + change.Path)
+            .Concat(descriptions.Select(description => (dryRun ? "Would reconcile " : "Reconciled ") + description)).ToList();
 
     public void Apply(string dataDirectory)
     {

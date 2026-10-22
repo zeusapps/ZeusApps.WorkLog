@@ -20,6 +20,19 @@ An already tracked private target that init would modify, malformed settings, or
 
 Init can be rerun after an application upgrade to update managed instruction blocks. Preserve the ownership manifest. Journal data is shared across initialized repositories on this machine only. Repositories without origin receive a persisted local identity; explicitly set identity in private config when independent checkouts should refer to the same repository. Use distinct OpenSpec change names for new work rather than recycling completed names.
 
+### Windows Claude project-path aliases
+
+On Windows, init reconciles existing Claude project entries whose full paths match the selected checkout after slash normalization and case-insensitive comparison. It updates the owned `worklog` registration under those existing spellings and Git's root spelling, preserving each entry's other settings and servers, including `worklog-legacy`. It does not copy trust settings between entries. A malformed entry, an unowned `worklog`, or an owned command changed outside WorkLog stops initialization before any setup changes are applied; the error names the conflicting project key. Preserve the ownership manifest and resolve that specific conflict before retrying.
+
+Preview the affected project keys, apply, and restart Claude normally:
+
+```powershell
+worklog init --repository D:\Code\MyProject --clients claude --dry-run
+worklog init --repository D:\Code\MyProject --clients claude
+```
+
+Omitting instruction options preserves the saved preference, including `--no-instructions`. The [recorded Windows acceptance](mcp-validation.md#windows-claude-project-alias-validation) verifies terminal-client discovery and connection from mixed-case and lowercase launch paths. Init reconciles known entries; it does not generate every possible spelling. If Claude later creates another spelling, rerun init to reconcile it. Matching remains case-sensitive outside Windows. Filesystem links and case-sensitive Windows directory configurations are outside this alias rule. A distinct worktree still requires its own setup; this does not establish automatic fresh-worktree discovery.
+
 ### Existing applications and ticket context
 
 For an application that already has logging rules, review and apply this setup:

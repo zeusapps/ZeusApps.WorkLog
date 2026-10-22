@@ -12,17 +12,26 @@ internal static class ClaudeIntegration
             : JsonNode.Parse(text) as JsonObject ?? throw new ArgumentException("Expected a JSON object in client configuration.");
 
         var projects = Child(config, "projects");
-        // Claude canonicalizes Windows project paths with forward slashes.
-        var project = Child(projects, setup.Root.Replace('\\', '/'));
-        var servers = Child(project, "mcpServers");
-        ValidateOwnership(servers, setup.Previous);
-
-        servers["worklog"] = new JsonObject
+        var keys = ProjectKeys(projects, setup.Root, OperatingSystem.IsWindows());
+        // Validate every alias before adding any client edits to the initialization plan.
+        foreach (var key in keys)
         {
-            ["type"] = "stdio",
-            ["command"] = setup.Server.Command,
-            ["args"] = new JsonArray(setup.Server.Arguments.Select(argument => (JsonNode?)JsonValue.Create(argument)).ToArray())
-        };
+            var project = ReadObject(projects, key, $"Claude project '{key}'");
+            var servers = ReadObject(project, "mcpServers", $"Claude project '{key}' mcpServers");
+            ValidateOwnership(servers, setup.Previous, key);
+        }
+
+        foreach (var key in keys)
+        {
+            var servers = Child(Child(projects, key), "mcpServers");
+            servers["worklog"] = new JsonObject
+            {
+                ["type"] = "stdio",
+                ["command"] = setup.Server.Command,
+                ["args"] = new JsonArray(setup.Server.Arguments.Select(argument => (JsonNode?)JsonValue.Create(argument)).ToArray())
+            };
+            plan.DescribeTarget($"Claude project '{key}' worklog registration");
+        }
         plan.Add(setup.ClaudeConfigPath, config.ToJsonString(Json.Options));
 
         var instructionPath = Path.Combine(setup.Root, "CLAUDE.local.md");
@@ -37,21 +46,45 @@ internal static class ClaudeIntegration
         {
             var current = InitializationPlan.Read(instructionPath);
             var remaining = ManagedBlock.Remove(current, ManagedBlock.InstructionsBegin, ManagedBlock.InstructionsEnd);
-            if (remaining != current) plan.Add(instructionPath, remaining);
+            if (remaining != current)
+                plan.Add(instructionPath, remaining);
         }
     }
 
-    private static void ValidateOwnership(JsonObject servers, IntegrationManifest? previous)
+    internal static string[] ProjectKeys(JsonObject projects, string root, bool windows)
     {
-        if (servers["worklog"] is not null && previous?.Clients.Contains("claude") != true)
+        var canonical = root.Replace('\\', '/');
+        var comparison = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        return projects.Select(project => project.Key)
+            .Where(key => string.Equals(windows ? key.Replace('\\', '/') : key, canonical, comparison))
+            .Append(canonical).Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    private static JsonObject ReadObject(JsonObject parent, string key, string description) =>
+        parent[key] is null ? new JsonObject()
+        : parent[key] as JsonObject ?? throw new ArgumentException($"Expected an object for {description}.");
+
+    private static void ValidateOwnership(JsonObject servers, IntegrationManifest? previous, string key)
+    {
+        if (servers["worklog"] is not { } registration)
+            return;
+        if (previous?.Clients.Contains("claude") != true)
         {
-            throw new InvalidOperationException("Claude MCP server 'worklog' already exists without an ownership manifest.");
+            throw new InvalidOperationException($"Claude project '{key}' MCP server 'worklog' already exists without an ownership manifest.");
         }
 
-        if (servers["worklog"] is JsonObject owned && previous is not null
-            && owned["command"]?.GetValue<string>() != previous.Command)
+        if (registration is not JsonObject owned
+            || owned["command"] is not JsonValue command || !command.TryGetValue<string>(out var executable)
+            || (owned["type"] is not null && (owned["type"] is not JsonValue type
+                || !type.TryGetValue<string>(out var transport) || transport != "stdio"))
+            || (owned["args"] is not null && (owned["args"] is not JsonArray arguments
+                || arguments.Any(argument => argument is not JsonValue value || !value.TryGetValue<string>(out _)))))
         {
-            throw new InvalidOperationException("Claude worklog server was changed outside worklog; resolve the conflict first.");
+            throw new ArgumentException($"Expected a stdio worklog server object for Claude project '{key}'.");
+        }
+        if (executable != previous.Command)
+        {
+            throw new InvalidOperationException($"Claude project '{key}' worklog server was changed outside worklog; resolve the conflict first.");
         }
     }
 

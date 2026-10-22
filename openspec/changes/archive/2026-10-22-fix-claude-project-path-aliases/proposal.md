@@ -2,7 +2,7 @@
 
 ## Why
 
-F7 reports that Claude's Windows project key can use a different path casing from Git's root. WorkLog currently updates and checks ownership at only the exact Git spelling, leaving an existing alias stale or an unrelated registration undetected. See [the saved report](../../../docs/handoffs/2026-10-21-claude-integration-flaws.md) for original evidence and its limits.
+F7 reports that Claude's Windows project key can use a different path casing from Git's root. WorkLog currently updates and checks ownership at only the exact Git spelling, leaving an existing alias stale or an unrelated registration undetected. See [the saved report](../../../../docs/handoffs/2026-10-21-claude-integration-flaws.md) for original evidence and its limits.
 
 ## What Changes
 
