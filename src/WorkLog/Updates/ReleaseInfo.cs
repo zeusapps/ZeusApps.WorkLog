@@ -32,7 +32,8 @@ public sealed record UpdateHint(
     [property: Description("Version of the running WorkLog executable.")] string InstalledVersion,
     [property: Description("Newer stable WorkLog version available from the official repository.")] string AvailableVersion,
     [property: Description("Official release page for this version.")] string ReleaseUrl,
-    [property: Description("Explicit update command. Stop affected MCP clients first and restart them afterward; a hint does not authorize installation.")] string Command);
+    [property: Description("Explicit update command. Compatible activation preserves existing sessions; reconnect normally to adopt. Maintenance migration is separate. A hint does not authorize installation.")] string Command,
+    [property: Description("Version currently selected for new processes in a versioned installation; installedVersion remains the running process version.")] string? SelectedVersion = null);
 
 public sealed record ReleaseCheck(ReleaseInfo? Release, string? Error = null, DateTimeOffset? RetryAfter = null)
 {

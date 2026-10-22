@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>worklog-launcher</AssemblyName>
+    <RootNamespace>WorkLog.Launcher</RootNamespace>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <PublishSingleFile>true</PublishSingleFile>
+    <LauncherVersion>1.0.0</LauncherVersion>
+    <Version>$(LauncherVersion)</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../WorkLog/Installation/InstallationLayout.cs" Link="Installation/InstallationLayout.cs" />
+  </ItemGroup>
+</Project>

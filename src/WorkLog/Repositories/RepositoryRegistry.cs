@@ -9,6 +9,20 @@ public sealed class RepositoryRegistry(LocalSettings settings)
 
     public RepositoryContext GetContext(string path, bool persist = true)
     {
+        if (!persist)
+            return ResolveContext(path);
+        using var lease = settings.AcquireWrite();
+        var latest = settings.FreshCopy();
+        _ = new RepositoryRegistry(latest).ResolveContext(path);
+        if (latest.SerializePreserving() != settings.SerializePreserving() || !File.Exists(settings.ConfigPath))
+            latest.Save();
+        settings.Adopt(latest);
+        return settings.Configuration.RepositoryContexts.First(pair =>
+            GitRepository.PathComparer.Equals(pair.Key, GitRepository.GetCommonDirectory(path))).Value;
+    }
+
+    private RepositoryContext ResolveContext(string path)
+    {
         var root = GitRepository.GetRoot(path);
         var common = GitRepository.GetCommonDirectory(root);
         var contexts = settings.Configuration.RepositoryContexts;
@@ -42,11 +56,6 @@ public sealed class RepositoryRegistry(LocalSettings settings)
         var repository = new RepositoryConfig(identity, provider, scope, pattern ?? new RepositoryConfig(identity).TicketPattern);
         var context = new RepositoryContext(repository) { LegacyPaths = legacy.Select(pair => pair.Key).ToList() };
         contexts[common] = context;
-
-        if (persist)
-        {
-            settings.Save();
-        }
 
         return context;
     }

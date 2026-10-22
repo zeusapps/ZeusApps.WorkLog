@@ -83,7 +83,9 @@ public sealed class JournalTests
         using var box = new TestWorkspace();
         var settings = new LocalSettings(box.Data);
         settings.Configuration.BranchClassifications.Remove("bugfix");
-        settings.Save();
+        // Simulate a legacy writer without invoking today's normalization on save.
+        Directory.CreateDirectory(box.Data);
+        File.WriteAllText(settings.ConfigPath, WorkLog.Infrastructure.Json.Encode(settings.Configuration));
         var old = new Journal(settings, new("repo"));
         var request = new LogRequest("in_progress", "repair", "bugfix/DEP-12", OccurredAt: "2026-10-20T09:00:00Z");
         var historical = old.Log(request).Entry;

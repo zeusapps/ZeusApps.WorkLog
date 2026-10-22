@@ -7,7 +7,7 @@ namespace WorkLog.Updates;
 
 public sealed record ReleaseManifest(string Version, string Runtime, bool SelfContained);
 
-public static class ReleasePackage
+public static partial class ReleasePackage
 {
     public const long MaximumPackageBytes = 256L * 1024 * 1024;
     public static readonly string[] ManagedFiles = ["worklog.exe", "release.json", "README.md", "INSTALL.md", "worklog.pdb"];
@@ -45,10 +45,12 @@ public static class ReleasePackage
     public static void Extract(string archivePath, string destination, string expectedVersion)
     {
         Directory.CreateDirectory(destination);
-        if (Directory.EnumerateFileSystemEntries(destination).Any()) throw new IOException("Extraction requires an empty staging directory.");
+        if (Directory.EnumerateFileSystemEntries(destination).Any())
+            throw new IOException("Extraction requires an empty staging directory.");
         var root = Path.GetFullPath(destination) + Path.DirectorySeparatorChar;
         using var archive = ZipFile.OpenRead(archivePath);
-        if (archive.Entries.Count is < 4 or > 16) throw new IOException("Unexpected package entry count.");
+        if (archive.Entries.Count is < 4 or > 16)
+            throw new IOException("Unexpected package entry count.");
         long total = 0;
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in archive.Entries)
@@ -71,7 +73,10 @@ public static class ReleasePackage
     {
         var start = new ProcessStartInfo(Path.Combine(directory, "worklog.exe"))
         {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
             WorkingDirectory = directory
         };
         start.ArgumentList.Add("--version");
@@ -81,10 +86,14 @@ public static class ReleasePackage
         // A bounded --version subprocess is the only child the updater may terminate on timeout.
         var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
         var error = process.StandardError.ReadToEndAsync(timeout.Token);
-        try { await process.WaitForExitAsync(timeout.Token); }
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
         catch
         {
-            if (!process.HasExited) process.Kill();
+            if (!process.HasExited)
+                process.Kill();
             throw;
         }
         if (process.ExitCode != 0 || (await output).Trim() != version)

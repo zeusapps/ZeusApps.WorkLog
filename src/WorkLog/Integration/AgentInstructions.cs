@@ -17,7 +17,7 @@ internal static class AgentInstructions
         Generate an idempotencyKey per observation and reuse that key only when retrying the same input.
         Report logging failures; do not claim entries were saved if a call failed.
         Use worklog.query_work for reports, with explicit from/to offsets and reporting timezone. Report recorded facts only.
-        When a successful WorkLog tool result includes updateHint, briefly announce the available version, explicit update command, and client restart requirement once per version per assistant session.
+        When a successful WorkLog tool result includes updateHint, briefly announce the available version and explicit update command once per version per assistant session. Compatible activation preserves existing conversations; they adopt the selected version at their next normal reconnect/restart. Legacy migration, launcher changes and incompatible data changes require separate maintenance.
         Finish the user's logging/reporting request. An update hint does not authorize installation or stopping processes; only update when the user requests it.
         Hint presentation depends on the assistant; it is not a guaranteed MCP client notification. Rerun worklog init after upgrading to refresh owned instructions where needed.
         """;

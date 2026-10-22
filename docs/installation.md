@@ -45,32 +45,51 @@ Changing instruction preference updates files only in the selected checkout. Pre
 
 For a configuration rollback, stop affected clients and restore the corresponding private config/client files from backups together before using an older binary. Retain a copy of the new settings and journal; an older binary will not apply the new shared-context behavior. No journal schema migration is introduced by these fixes.
 
-## Upgrade and restore
+## Versioned installation
 
-Packaged Windows installations support explicit verified updates:
+The root `worklog.exe` is a stable self-contained launcher. `current.json` selects a payload under `versions/VERSION/`; `launcher.json` records the independently versioned launcher contract. Each payload has an immutable `release.json` with compatibility declarations and file hashes. Keep the entire extracted layout together and keep private data outside it. Client registrations use the launcher even when init runs directly from a retained payload.
+
+New packages require Windows x64 with the .NET 10 supported OS baseline and Windows job-list process attributes (Windows 10 or newer). They include their runtimes; no separately installed .NET is needed. The launcher preserves arguments, working directory, environment, standard streams and exit status. Stdio diagnostics remain on stderr. Its child job ties server lifetime to the client-owned launcher; normal stdin closure shuts the server down, and forced launcher termination does not leave its payload detached.
+
+## One-time migration from the legacy layout
+
+Pre-launcher v0.1.1 and earlier replace application files in place. They cannot establish this layout while keeping their old installation running. The owner accepts a one-time maintenance window; a separate legacy status-reader race fix is not shipped as a prerequisite.
+
+1. Stop Codex/Claude sessions and all WorkLog processes using the old installation. Keep the old application and private configuration for recovery; keep a consistent journal backup, following the database guidance below.
+2. Download and checksum-verify the new bootstrap ZIP. Extract into a clean stable installation directory, preserving its launcher, metadata and version folders. Do not overlay it onto a legacy/partial directory or replace the private data directory. If the stable path must remain the same, preserve the old application elsewhere first while it is stopped.
+3. Run the new launcher with `--version`. Preview `worklog init --repository PATH --data-dir DATA --dry-run`, then apply the same command without `--dry-run` for each intended repository/client. Preserve `.worklog/integration.json` so init can prove ownership; an unowned registration is a conflict, not permission to overwrite it. Omitted ticket/instruction options preserve existing settings and opt-outs.
+4. Restart clients normally, follow their trust flow, and verify the saved repository identity, existing observations, stable launcher registration and instruction preferences. This migration does not claim to preserve an old live conversation.
+
+Changing the launcher or shared-data contract in the future uses another explicit maintenance installation. Supported mixed-version behavior begins with the first launcher-based release; keeping a legacy server running beside it is outside that contract.
+
+## Compatible updates and application rollback
 
 ```powershell
 worklog update --check
-# Close Codex/Claude sessions using this installation before continuing.
+# Existing conversations can keep running for a compatible payload update.
 worklog update
 worklog update --status
+# Explicitly select the previous verified compatible payload if needed:
+worklog update --rollback
 ```
 
-`--check` performs a fresh check and reports the installed/published versions without downloading a package. GitHub errors are reported as failures, rather than as up-to-date. `--status` reads the latest local result without contacting GitHub. The flags cannot be combined. All three modes accept `--data-dir PATH`; use the same directory throughout so status and cache refer to the intended journal.
+`--check` reports running, selected and published candidate versions without downloading a package. A release candidate is not yet a compatibility approval. `--status` reads local selection/outcomes offline. `--rollback` is also offline. These flags are mutually exclusive. All modes accept `--data-dir PATH`; use the same directory for cache and operation receipts. Selection belongs to the installation, so another custom data directory still launches the selected version, while journals remain separate.
 
-Plain `update` only selects a strictly newer stable release with the official Windows ZIP and checksum. It verifies SHA-256, validates archive paths and packaged version/runtime, and stages the files outside the installation. It refuses source builds, unsupported layouts, overlapping installation/data directories, unwritable destinations, concurrent updates, and busy installations. It never stops MCP servers or agent sessions for you.
+Plain update verifies the official ZIP/checksum, bounded nested archive paths, payload file hashes, compiled version/runtime and launcher/shared-data contracts. A disposable MCP health probe uses separate synthetic data. Ordinary updates require package format 2, launcher contract 1, shared-data contract 1 and journal schema 2. Incompatible declarations, legacy/source layouts, overlapping data/install paths, unsafe links, partial conflicting payload folders or permanent access failures cause actionable refusal. No ordinary update migrates private data, replaces the launcher or terminates sessions.
 
-The command prints `staged` and exits so a separate helper can replace its executable. This is not a successful installation report. Run `update --status` after a moment to see `installed` or `failed`. A helper failure leaves a message and recovery location. After `installed`, run `worklog --version`, restart MCP clients, and rerun init in repositories requiring refreshed instructions. The executable's registered path stays the same, and journal data/private configuration are preserved.
+`staged` means verification completed but selection has not committed. The command then serializes publishers, rechecks the original selection generation, publishes a complete immutable payload and atomically selects it. `activated` means new processes use that selection. Existing MCP servers keep their PID/version/connection and continue logging and querying; they adopt the new code at their next normal reconnect/restart. Rerun init when owned instructions need refreshing. Installation does not imply that every live conversation is running the new version.
 
-Automatic checks run in the background using the public GitHub release feed, without credentials or project/journal data. They are coordinated across processes sharing a data directory, with at most one automatic attempt per 24 hours. Valid cached notices expire after seven days without successful validation. Successful tool responses can include `updateHint`; managed assistant instructions ask that each available version be mentioned once per session. This is best-effort assistant behavior, not a dedicated MCP client notification. Automatic check failures do not interrupt journal operations.
+Concurrent status commands do not block replacement of a running executable because ordinary activation replaces no running executable. A competing publisher waits at most 30 seconds, with cancellation. A stale operation cannot select a lower version or silently overwrite an intentional rollback. Status reconciles receipts with the committed selection; an interrupted final receipt cannot undo a completed activation. Failed operations preserve the prior valid selection and retained application files, with actionable recovery details.
 
-To disable automatic checking and notices, merge `"updates": { "enabled": false }` into private config.json, preserving its other settings, and restart clients. Explicit update commands remain usable. Cache, staging, backup files, and outcome receipts live in the data directory's `updates` subdirectory; they are separate from journal.db and config.json. Retain recovery files until the upgrade is verified. SHA-256 checks detect corruption; distribution authenticity also depends on HTTPS and control of the official GitHub repository.
+Rollback verifies and selects the recorded previous compatible payload for new processes. It preserves journal/configuration data and existing server connections, and refuses a missing, corrupt or incompatible target. The first release retains all published payloads, including unused ones. Expect disk use to grow; automatic cleanup is deferred. Perform any manual payload maintenance only while relevant processes are stopped, preserving current/previous/recovery versions. Never remove folders merely because a process scan happens to look idle.
 
-For bootstrap installation from a source build, or manual recovery:
+Automatic checks run independently using the fixed public stable-release feed, without credentials or project/journal data, at most once per 24 hours per data directory. Valid cached notices expire after seven days. Successful tools can include `updateHint` with running `installedVersion` and selected `selectedVersion`. A cached candidate already selected is suppressed even in an older server. Managed instructions ask assistants to mention an offer once per version per session and explain activation versus adoption; a hint authorizes no installation or process termination. Notice presentation remains assistant-dependent.
 
-Stop agent sessions using WorkLog before replacing the executable. Extract the new release to the same stable installation location; registered MCP paths then remain valid. Run `worklog --version`, rerun init for repositories needing updated instructions, and restart clients. Do not replace the data directory with release contents.
+To disable automatic checks/notices, merge `"updates": { "enabled": false }` into private config while preserving other settings and restart affected servers. Explicit update commands still work. Supported settings writers coordinate current-state merges and preserve unknown nested fields; live reads otherwise retain their startup configuration snapshot. Cache, download staging and receipts live under the private data directory's `updates` folder. Payload publishing/recovery metadata stays in the installation. SHA-256 detects corruption; authenticity also depends on HTTPS and control of the official repository.
 
-If automatic application replacement fails, follow its status message. With all affected clients stopped, restore prior application files from the reported backup directory if necessary. Preserve any unowned installation files. Replacing application files does not roll back a journal schema migration performed on a later startup; use the database restore procedure below for that case.
+## Selection recovery and database restore
+
+Malformed/missing selection metadata or a missing/tampered selected payload makes the launcher fail on stderr rather than execute an arbitrary fallback. If its application cannot start, its update CLI is unavailable too. Stop affected clients for manual recovery, retain the damaged metadata and payloads, verify a known-good retained payload's manifest/file hashes, then restore the verified `current.previous.json` selection copy as `current.json`, or reinstall a checksum-verified bootstrap package into a clean directory. Keep the data directory unchanged. Rerun version/status checks and owned init as needed before restarting. Do not invent hashes, edit contracts to bypass validation, or restore journal data as part of application-selection repair.
 
 Journal upgrades run transactionally. Before upgrading an existing schema, WorkLog creates a consistent `journal.db.vN.TIMESTAMP.bak` in the data directory. A binary encountering a newer unsupported schema refuses to migrate it.
 

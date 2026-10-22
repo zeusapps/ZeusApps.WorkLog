@@ -116,12 +116,16 @@ WorkLog checks the public release feed in the background, at most once per 24 ho
 
 ```powershell
 worklog update --check
-# Stop MCP clients using this installation before installing:
+# Compatible updates preserve existing conversations:
 worklog update
 worklog update --status
+# Explicitly select the previous compatible payload if needed:
+worklog update --rollback
 ```
 
-The update command verifies and stages the package, then starts a helper to replace the idle installation after the command exits. `staged` means installation is still pending; check `--status` for `installed` or `failed`. Restart clients afterward and rerun init where managed instructions need refreshing. Keep `--data-dir` consistent across these commands when using a custom journal directory.
+The stable launcher selects an immutable version folder for each new process. A compatible update verifies the package and activates a new selection while existing conversations keep their original server and connection. `staged` means activation has not committed; `activated` means new processes use the selection. `--status` reports running and selected versions offline. Existing conversations adopt the new code at their next normal reconnect/restart. Rollback changes application selection only and preserves journal/configuration data. Keep `--data-dir` consistent for cache and operation receipts.
+
+Pre-launcher installations need a [one-time manual maintenance migration](docs/installation.md#one-time-migration-from-the-legacy-layout). Launcher changes and incompatible data changes also require maintenance. Journal schema remains 2; ordinary updates require matching launcher/shared-data contracts. Published payloads are retained on disk; automatic cleanup is deferred. Rerun init when managed instructions need refreshing; owned registrations always use the stable launcher.
 
 Set `"updates": { "enabled": false }` in the private config and restart the server to disable automatic checks and notices. Explicit `update --check` and `update` remain available. Source builds must use the manual ZIP installation path before self-update can be used.
 
@@ -132,6 +136,8 @@ dotnet restore --locked-mode
 dotnet build -c Release --no-restore
 dotnet test -c Release --no-build
 ./scripts/package.ps1
+# Builds two distinct disposable versions and exercises live updates and launcher lifecycle:
+./scripts/package-update-fixtures.ps1
 ```
 
 With both agent CLIs installed, run `dotnet run --project tools/WorkLog.Smoke -c Release --no-build` for an isolated packaged-executable smoke test. It uses temporary client configuration, verifies private registration/instruction loading, checks Claude's MCP connection, and exercises journal tools. Add `-- --live-agents` only when you intend to use your authenticated accounts and send test prompts to their services; that optional test asks each agent to log and query synthetic entries. Logs stay under ignored artifacts/smoke directories.

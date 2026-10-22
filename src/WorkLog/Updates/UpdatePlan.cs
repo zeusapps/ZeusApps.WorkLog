@@ -19,4 +19,4 @@ public sealed record UpdatePlan(string Id, string Token, string TargetDirectory,
         + ContentHash.Compute(Path.GetFullPath(target).ToUpperInvariant()) + ".json");
 }
 
-public sealed record UpdateOutcome(string State, string Version, string Message, string? RecoveryDirectory = null);
+public sealed record UpdateOutcome(string State, string Version, string Message, string? RecoveryDirectory = null, string? OperationId = null);

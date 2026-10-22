@@ -27,12 +27,18 @@ public sealed class RepositoryInitializer(
         }
 
         // Plan against a copy: dry runs and preflight failures must not change saved or in-memory preferences.
-        var plannedSettings = settings.Copy();
+        using var settingsLease = settings.AcquireWrite();
+        var plannedSettings = settings.FreshCopy();
         var context = new RepositoryRegistry(plannedSettings).GetContext(root, persist: false);
         if (ticketProvider is not null)
-            context.Repository = context.Repository with { Provider = ticketProvider.Trim(), Scope = ticketScope!.Trim() };
+            context.Repository = context.Repository with
+            {
+                Provider = ticketProvider.Trim(),
+                Scope = ticketScope!.Trim()
+            };
         if (instructions.HasValue)
-            foreach (var client in selected) context.Instructions[client] = instructions.Value;
+            foreach (var client in selected)
+                context.Instructions[client] = instructions.Value;
         var repository = context.Repository;
         var manifestPath = Path.Combine(root, ".worklog", "integration.json");
         var previous = File.Exists(manifestPath)
@@ -58,7 +64,7 @@ public sealed class RepositoryInitializer(
         PrivateGitFiles.PlanExclusions(plan, root);
         // Writing ownership first makes an interrupted initialization safe to rerun.
         plan.Prioritize(manifestPath);
-        plan.Add(settings.ConfigPath, Json.Encode(plannedSettings.Configuration));
+        plan.Add(settings.ConfigPath, plannedSettings.SerializePreserving());
 
         var messages = plan.Describe(dryRun);
         if (!dryRun)
@@ -88,7 +94,8 @@ public sealed class RepositoryInitializer(
 
     internal static void ValidateTicketOptions(string? provider, string? scope)
     {
-        if (provider is null && scope is null) return;
+        if (provider is null && scope is null)
+            return;
         if (provider?.Trim() is not ("jira" or "azure-devops") || string.IsNullOrWhiteSpace(scope))
             throw new ArgumentException("Supply --ticket-provider (jira or azure-devops) and a nonempty --ticket-scope together.");
     }

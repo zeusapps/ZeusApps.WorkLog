@@ -8,6 +8,8 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="WorkLog.Tests" />
+    <InternalsVisibleTo Include="WorkLog.Smoke" />
     <PackageReference Include="System.CommandLine" Version="2.0.13" />
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />

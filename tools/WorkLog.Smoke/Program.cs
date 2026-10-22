@@ -1,12 +1,35 @@
-using WorkLog.Smoke;
 using WorkLog.Cli;
+using WorkLog.Configuration;
+using WorkLog.Smoke;
 using WorkLog.Updates;
 
-if (args is ["--stage-update-fixture", var target, var data, var stage, var version])
+if (args is ["--settings-fixture", var settingsData, var key, var gate])
 {
-    using var lease = UpdateInstallation.Acquire(target);
-    var plan = await UpdateInstaller.PrepareDownloadedAsync(target, data, version, stage);
-    UpdateInstaller.StartHelper(plan);
+    var settings = new LocalSettings(settingsData);
+    settings.Configuration.RepositoryContexts[key] = new(new(key));
+    File.WriteAllText(gate + ".ready-" + key, "ready");
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+    while (!File.Exists(gate))
+        await Task.Delay(20, timeout.Token);
+    settings.Save();
+    return;
+}
+
+if (args is ["--versioned-updates", var priorExecutable, var candidateArchive])
+{
+    await new UpdateAcceptanceChecks(priorExecutable).RunMixedAsync(candidateArchive);
+    return;
+}
+
+if (args is ["--versioned-native", var nativePriorExecutable, var nativeCandidateArchive])
+{
+    await new UpdateAcceptanceChecks(nativePriorExecutable).RunMixedAsync(nativeCandidateArchive, nativeClients: true);
+    return;
+}
+
+if (args is ["--launcher-only", var launcherExecutable, var probeExecutable])
+{
+    await new LauncherAcceptanceChecks(launcherExecutable, probeExecutable).RunAsync();
     return;
 }
 

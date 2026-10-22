@@ -7,10 +7,11 @@ For initial publication, verify the authenticated GitHub account and target repo
 For each release:
 
 1. Set the intended unpublished `MAJOR.MINOR.PATCH` in Directory.Build.props. Do not reuse or move a published tag.
-2. Run locked restore, Release build/test, scripts/package.ps1, and the packaged update acceptance check:
+2. Run locked restore, Release build/test, scripts/package.ps1, and both packaged acceptance checks:
 
    ```powershell
    dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- --updates-only artifacts/releases/worklog-VERSION-win-x64/worklog.exe
+   ./scripts/package-update-fixtures.ps1
    ```
 
 3. Commit and push main. Observe the GitHub validation workflow and resolve failures.
@@ -19,6 +20,12 @@ For each release:
 6. Verify the public latest-release endpoint returns the intended stable version and equal installed/published versions produce no update hint. Record the release link and outcome; required pending validation means release work is still in progress.
 
 The application update feed uses the public latest stable release, excludes drafts/prereleases, and requires both the official Windows ZIP and checksum. Full agent-client smoke checks remain available locally; optional `--live-agents` checks require an explicit decision to send authenticated test prompts.
+
+The launcher layout is a breaking package-format transition. Do not use the pre-launcher v0.1.1 updater as a migration fixture or advertise uninterrupted migration from it. The sole user's first installation follows the documented stop/reinstall/init/restart procedure. Ordinary package-format-2 updates never replace the stable launcher. Launcher contract 1/shared-data contract 1 retains journal schema 2, stored entry/retry formats, compatible settings writes and report continuations; changing that contract requires maintenance. Compatible rollback selects a previous payload and restores no data.
+
+Production packaging enforces the application version from Directory.Build.props; the test-only fixture entry point separately compiles versions 0.0.1/0.0.2 without editing that file. Identical binaries with different manifest labels are insufficient evidence. Once the first launcher-based release is published, pin its independently verified artifact as a supported baseline in subsequent release validation alongside fixture checks. A first public launcher baseline does not exist yet. Package outputs are immutable: select a fresh `-OutputDirectory` when rebuilding locally. ZIPs remain bounded at 256 MiB; source/fixtures, debug logs and client profiles are not packaged.
+
+The planned F9 legacy update-status readiness fix is superseded by immutable activation and overlapping-status acceptance. Its old change remains unimplemented; do not sync its incompatible idle-replacement delta or mark its tasks complete merely because this feature ships. F6-F8 remain independently scoped. Actual local migration and GitHub version bump/publication require explicit operational action after validation.
 
 ## Release v0.1.1
 

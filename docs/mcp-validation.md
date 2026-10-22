@@ -31,6 +31,41 @@ Context discovery, auditable corrections, search tools and schema-level status/p
 
 This verifies the implementation and local protocol behavior. It does not claim complete conformance to every optional MCP feature or replace the pending live Claude Code verification.
 
+## Versioned activation validation
+
+The launcher-layout implementation is an unreleased source change; it does not alter the installed MCP or published v0.1.1. The old F9 in-place readiness plan is superseded, with its tasks unimplemented. Tests use disposable installations, profiles, data and synthetic observations. No authenticated agent prompts are required.
+
+Repeatable commands:
+
+```powershell
+dotnet restore --locked-mode
+dotnet build -c Release --no-restore
+dotnet test -c Release --no-build
+./scripts/package.ps1 -OutputDirectory artifacts/releases/FRESH-RUN
+./scripts/package-update-fixtures.ps1 -NativeClients
+```
+
+Omit `-NativeClients` on CI without installed agent CLIs. The script builds different compiled payload versions 0.0.1/0.0.2, verifies their executable/MCP versions and hashes, publishes a test-only launcher probe, then runs launcher and mixed-version acceptance. A production ZIP can also be tested as the newer candidate with `dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- --versioned-native OLD_LAUNCHER NEW_ZIP`. Production packaging still requires the configured application/tag version. Pin the first independently verified launcher-based public release as an additional old-version baseline once it exists.
+
+Recorded local checks on Windows 10.0.26300.0:
+
+| Evidence | Observed result |
+| --- | --- |
+| `artifacts/update-smoke/628ebc0e310c4aa788bfe3893de34b8a/evidence.json` | Actual 0.0.1/0.0.2 versions and different hashes; original payload PID/start time and MCP stream survive activation; new connection adopts selection; retries, first starts, cursor snapshots, independent settings processes, custom data directories, status/publisher/launch overlap, rollback, interrupted activation and retained versions pass |
+| `artifacts/launcher-smoke/facf8bab3795402bb9929e92a10b0535/evidence.json` and `5dcb08941ebc42279c0ba9e59f362d1b/evidence.json` | Empty, spaced, quoted, backslash and Unicode arguments, Unicode cwd/environment, 1,146,880 echoed bytes with backpressure/EOF, stderr and exit code 7 preserved; isolated CTRL+C returns child exit 23 inside a client job; restricted nested-job creation fails without detaching a payload |
+| `artifacts/smoke/ee1ce600ace4452f89de632a99fbaf4c/` | Packaged stable launcher passes native Codex discovery/instruction loading and Claude connection with instructions enabled/disabled; packaged ticket/context/opt-out regression and journal upgrade checks pass |
+| Settings/updater regression tests | Preserve nested unknown JSON, merge independent stale edits, reject conflicting leaves, converge first repository identities, reject unsafe/missing metadata and archives, refuse stale activation/unsafe rollback, honor cancellation and permanent access failures, suppress activated offers and preserve protocol budgets |
+
+Final validation passed locked restore, a Release build with zero warnings/errors, and all 149 tests. The final 66,615,624-byte review package is `artifacts/releases/session-preserving-verified/worklog-0.1.1-win-x64.zip`; its version is the unchanged source version, not a new public v0.1.1 release. Final native/client smoke is recorded under `artifacts/smoke/9c093a90b99949f08db47e565dacff27/`, with bootstrap evidence under `artifacts/update-smoke/673afd0a283241b996d4e27ccb07f711/`.
+
+The final mixed-version run (`artifacts/update-smoke/758fcaa9fb6f45bdb6d8edad1c1991ba/`) activated compiled 0.1.1 over compiled 0.0.1 while original payload PID 1496 and its stream survived. It also exercised settings writes and first-use repository identity from both compiled versions, retained-payload init preserving the stable launcher and opt-out, and native Codex 0.163.0 discovery plus Claude Code 2.1.306 connection. Ten packaged rejection logs cover checksum, package manifest, runtime, version, executable hash, shared-data contract, journal schema, traversal, reparse entry and case collision. Previously published payloads remain intact after those failures. `evidence.json` records both executable hashes, original process start time and final selection; `native-clients.json` records exact CLI versions. This is local disposable acceptance, not a remote CI run or production rollout.
+
+Native checks establish terminal CLI behavior only. They do not establish Desktop or every worktree launch mode. Codex loads project configuration only for trusted projects; the disposable fixture persists its own project trust in its isolated home, matching [official configuration guidance](https://learn.chatgpt.com/docs/config-file/config-basic). Production init does not grant trust. The extra retained-version probe records exact CLI versions in `native-clients.json` alongside its protocol logs.
+
+A separate extra probe under `native repo with spaces żółć` failed during Git-backed init even with direct payload invocation (no launcher). That path is not a claimed native-init result. The native registration fixture uses a path with spaces; Unicode argument/cwd/environment forwarding is independently proved by the launcher probe. Resolving the Git-path behavior is outside this updater change, alongside the independent F6-F8 follow-ups.
+
+Review follow-up on 2026-10-22 fixed legacy `bugfix` normalization across settings refresh, copy and adoption. Nine new test cases cover save, first-use/existing repository resolution, copies, and case-insensitive custom mappings including `unclassified`; the initialization regression also now uses legacy branch settings. Five new cases failed before the fix. After the fix, the Release build passed with zero warnings/errors, all 158 tests passed (`tests/WorkLog.Tests/TestResults/ezagv_LVIV_2026-10-22_21_43_23.trx`), and formatting verification passed. The history fixture now writes legacy JSON directly instead of relying on current `Save()` to emulate an older writer. The packaged acceptance evidence above predates this follow-up; those packages were not rebuilt for this settings-only fix.
+
 ## Sources
 
 - [Official C# SDK: tools, structured content, errors and annotations](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/tools/tools.md)
@@ -39,3 +74,5 @@ This verifies the implementation and local protocol behavior. It does not claim 
 - [MCP tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 - [System.CommandLine parsing and invocation](https://learn.microsoft.com/en-us/dotnet/standard/commandline/how-to-parse-and-invoke)
 - [System.CommandLine validation](https://learn.microsoft.com/en-us/dotnet/standard/commandline/how-to-customize-parsing-and-validation)
+- [Windows process attribute lists, including inherited handle and job lists](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute)
+- [Windows job lifetime limits](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information)

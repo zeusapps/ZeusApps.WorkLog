@@ -9,7 +9,12 @@ public static class AtomicFile
 
         try
         {
-            File.WriteAllText(temporaryPath, content);
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                var bytes = System.Text.Encoding.UTF8.GetBytes(content);
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
             File.Move(temporaryPath, path, overwrite: true);
         }
         finally
