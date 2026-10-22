@@ -2,7 +2,7 @@
 
 ## Context
 
-See proposal.md and [the handoff](../../../docs/handoffs/2026-10-21-claude-integration-flaws.md). Baseline is v0.1.1 / `fa48ada`. `UpdateInstaller` stages and launches a copied helper, which waits for its original parent to exit. `UpdateHelper.ApplyAsync` acquires the installation lease, calls `EnsureIdle`, verifies metadata/package, and invokes `ApplicationReplacement`. Replacement probes each existing target with exclusive read/write access before copying backups and mutating files. Both the process scan and these probes can reject a live installed `--status` process. `UpdateCommand` and `UpdateInstaller` currently invite checking status immediately. `UpdateAcceptanceChecks` reads JSON in-process and therefore misses that race.
+See proposal.md and [the handoff](../../../../docs/handoffs/2026-10-21-claude-integration-flaws.md). Baseline is v0.1.1 / `fa48ada`. `UpdateInstaller` stages and launches a copied helper, which waits for its original parent to exit. `UpdateHelper.ApplyAsync` acquires the installation lease, calls `EnsureIdle`, verifies metadata/package, and invokes `ApplicationReplacement`. Replacement probes each existing target with exclusive read/write access before copying backups and mutating files. Both the process scan and these probes can reject a live installed `--status` process. `UpdateCommand` and `UpdateInstaller` currently invite checking status immediately. `UpdateAcceptanceChecks` reads JSON in-process and therefore misses that race.
 
 ## Goals / Non-Goals
 

@@ -2,7 +2,7 @@
 
 ## Context
 
-See [proposal.md](proposal.md) and the [handoff](../../../docs/handoffs/2026-10-22-session-preserving-updates.md). Source baseline is `fa48ada` / v0.1.1. The owner confirmed there are no other real users and accepted a one-time maintenance migration, deferred automatic cleanup, and supersession of the standalone F9 implementation. This design does not promise coexistence with a still-running pre-launcher binary.
+See [proposal.md](proposal.md) and the [handoff](../../../../docs/handoffs/2026-10-22-session-preserving-updates.md). Source baseline is `fa48ada` / v0.1.1. The owner confirmed there are no other real users and accepted a one-time maintenance migration, deferred automatic cleanup, and supersession of the standalone F9 implementation. This design does not promise coexistence with a still-running pre-launcher binary.
 
 Observed integration points:
 

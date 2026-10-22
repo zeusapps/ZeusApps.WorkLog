@@ -2,7 +2,7 @@
 
 ## Why
 
-WorkLog's in-place Windows updater requires closing the Claude/Codex sessions that use it. Compatible releases should instead activate for new processes while existing conversations continue on their original server version, as described in the [handoff](../../../docs/handoffs/2026-10-22-session-preserving-updates.md).
+WorkLog's in-place Windows updater requires closing the Claude/Codex sessions that use it. Compatible releases should instead activate for new processes while existing conversations continue on their original server version, as described in the [handoff](../../../../docs/handoffs/2026-10-22-session-preserving-updates.md).
 
 ## What Changes
 

@@ -1,8 +1,14 @@
 # Proposal
 
+## Disposition: Superseded
+
+Archived on 2026-10-22 as superseded by [add-session-preserving-updates](../2026-10-22-add-session-preserving-updates/proposal.md), following the [recorded supersession decision](../2026-10-22-add-session-preserving-updates/design.md). Compatible updates now publish immutable versioned payloads and switch selection rather than replacing running executables in place; their acceptance coverage includes installed status readers during activation.
+
+The owner approved retiring this legacy readiness plan without implementation. All eight implementation tasks remain unchecked, and the obsolete delta spec is retained for history without syncing it into the main specification. This archive does not claim the proposed helper fix or its tests were completed, or that an existing legacy installation has been upgraded.
+
 ## Why
 
-F9 reports that following the staged message and running the installed `worklog update --status` can make the helper fail: the status reader itself is a target-installation process. Both process enumeration and exclusive executable access can reject this transient overlap. See [the saved report](../../../docs/handoffs/2026-10-21-claude-integration-flaws.md).
+F9 reports that following the staged message and running the installed `worklog update --status` can make the helper fail: the status reader itself is a target-installation process. Both process enumeration and exclusive executable access can reject this transient overlap. See [the saved report](../../../../docs/handoffs/2026-10-21-claude-integration-flaws.md).
 
 ## What Changes
 
