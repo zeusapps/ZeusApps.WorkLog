@@ -47,6 +47,14 @@ if (args is ["--claude-aliases-only", var aliasExecutable])
     return;
 }
 
+if (args is ["--worktrees-only", var worktreeExecutable])
+{
+    var worktreeWorkspace = new SmokeWorkspace(worktreeExecutable);
+    Directory.CreateDirectory(worktreeWorkspace.Root);
+    await new WorktreeAcceptanceChecks(worktreeWorkspace, new SmokeProcessRunner(worktreeWorkspace)).RunAsync();
+    return;
+}
+
 var executable = args.FirstOrDefault(argument => argument != "--live-agents")
     ?? $"artifacts/releases/worklog-{ApplicationInfo.Version}-win-x64/worklog.exe";
 var workspace = new SmokeWorkspace(executable);
@@ -57,6 +65,7 @@ await new ClientRegistrationChecks(workspace, processes).RunAsync();
 await new JournalAcceptanceChecks(workspace).RunAsync();
 await new InitializationAcceptanceChecks(workspace, processes).RunAsync();
 await new ClaudeProjectAliasChecks(workspace, processes).RunAsync();
+await new WorktreeAcceptanceChecks(workspace, processes).RunAsync();
 await new UpdateAcceptanceChecks(workspace.Executable).RunAsync();
 
 if (args.Contains("--live-agents"))

@@ -16,7 +16,9 @@ internal sealed class SmokeWorkspace
     public string Home => Path.Combine(Root, "home");
     public string Data => Path.Combine(Root, "data");
     public string CodexHome => Path.Combine(Home, ".codex");
-    public string TrustOverride => "projects." + JsonSerializer.Serialize(Repository) + ".trust_level=\"trusted\"";
+    public string TrustOverride => TrustOverrideFor(Repository);
+    public static string TrustOverrideFor(string repository) =>
+        "projects." + JsonSerializer.Serialize(Path.GetFullPath(repository)) + ".trust_level=\"trusted\"";
 
     public SmokeWorkspace(string executable)
     {

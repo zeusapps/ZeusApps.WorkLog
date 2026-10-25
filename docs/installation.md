@@ -31,7 +31,7 @@ worklog init --repository D:\Code\MyProject --clients claude --dry-run
 worklog init --repository D:\Code\MyProject --clients claude
 ```
 
-Omitting instruction options preserves the saved preference, including `--no-instructions`. The [recorded Windows acceptance](mcp-validation.md#windows-claude-project-alias-validation) verifies terminal-client discovery and connection from mixed-case and lowercase launch paths. Init reconciles known entries; it does not generate every possible spelling. If Claude later creates another spelling, rerun init to reconcile it. Matching remains case-sensitive outside Windows. Filesystem links and case-sensitive Windows directory configurations are outside this alias rule. A distinct worktree still requires its own setup; this does not establish automatic fresh-worktree discovery.
+Omitting instruction options preserves the saved preference, including `--no-instructions`. The [recorded Windows acceptance](mcp-validation.md#windows-claude-project-alias-validation) verifies terminal-client discovery and connection from mixed-case and lowercase launch paths. Init reconciles known entries; it does not generate every possible spelling. If Claude later creates another spelling, rerun init to reconcile it. Matching remains case-sensitive outside Windows. Filesystem links and case-sensitive Windows directory configurations are outside this alias rule. For a distinct worktree, follow the [verified setup procedure](#verified-terminal-client-worktree-setup); inherited discovery differs between clients.
 
 ### Existing applications and ticket context
 
@@ -57,6 +57,21 @@ Different nonempty identities, scopes, providers, or extraction patterns in memb
 Changing instruction preference updates files only in the selected checkout. Previously initialized sibling worktrees keep their existing blocks until init next runs there, at which point the shared preference applies. Restart affected sessions to discard already loaded instructions.
 
 For a configuration rollback, stop affected clients and restore the corresponding private config/client files from backups together before using an older binary. Retain a copy of the new settings and journal; an older binary will not apply the new shared-context behavior. No journal schema migration is introduced by these fixes.
+
+### Verified terminal-client worktree setup
+
+For each new worktree, preview and apply explicit initialization using the same WorkLog launcher and data directory as the main checkout:
+
+```powershell
+& D:\Apps\WorkLog\worklog.exe init --repository D:\Code\MyProject-feature --data-dir D:\Private\WorkLog --clients both --dry-run
+& D:\Apps\WorkLog\worklog.exe init --repository D:\Code\MyProject-feature --data-dir D:\Private\WorkLog --clients both
+```
+
+Select `--clients claude` or `--clients codex` if only one is installed. Preserve the main checkout's ownership manifest and any existing worktree manifest. Omit ticket and instruction options to retain the shared context and saved preferences. Init writes checkout-local setup; it does not copy the main checkout's generated files into the worktree. Restart affected clients normally and follow their repository trust flow. In Codex, an untrusted project does not load its project configuration; the acceptance fixture grants trust only inside its disposable profile.
+
+The [2026-10-25 acceptance matrix](mcp-validation.md#terminal-client-worktree-startup-validation) tested a manually created external Git worktree with Claude Code 2.1.310 and Codex CLI 0.164.0 on Windows. Claude discovered and connected through the main checkout's private registration before worktree init, and continued selecting that main registration afterward. Codex discovered no WorkLog registration before init, then discovered its worktree registration afterward. Both preserved shared repository identity, qualified ticket context and journal history; main-checkout discovery and connections still worked after setup.
+
+If WorkLog is missing, run init for that worktree, confirm its trust/configuration, and reconnect. A discovered server that fails to connect requires checking its command, arguments and stderr separately. `claude mcp get worklog` provides native connection health; `codex mcp list --json` reports discovery/configuration, not proof of connection. A stdio server starts when its client connects; these results do not require a machine-wide background service. Terminal health checks do not verify loaded session instructions or authenticated agent tool use, and do not establish Desktop or Claude-managed `--worktree` behavior. Other client versions may differ.
 
 ## Versioned installation
 

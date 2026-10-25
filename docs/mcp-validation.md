@@ -112,6 +112,38 @@ The 66,616,885-byte ticket-default review package is `artifacts/releases/ticket-
 
 The same local run used Codex CLI 0.163.0 and .NET SDK 10.0.113.
 
+## Terminal-client worktree startup validation
+
+The `verify-worktree-server-startup` acceptance uses a committed disposable main repository, initializes it with the packaged launcher, and then creates an external sibling worktree with Git. It probes the fresh worktree before init or generated-file copying. Each client is initialized explicitly in that worktree, checked again, and checked from the main checkout afterward. Both homes, trust entries, data and observations are isolated; no authenticated agent prompts or real client profiles are used.
+
+Recorded on 2026-10-25 with Windows 10.0.26300.0, Git 2.51.0.windows.2, Claude Code 2.1.310, Codex CLI 0.164.0 and the unreleased launcher-based WorkLog source version 0.1.1:
+
+| Stage | Claude discovery and native health | Codex discovery | Separate direct MCP/context check |
+| --- | --- | --- | --- |
+| Main checkout initialized | Found main registration; connected | Found main registration | Both passed |
+| Fresh external worktree, before init | Found inherited main registration; connected | WorkLog absent | Claude passed; Codex skipped because no registration was discovered |
+| Worktree after explicit per-client init | Found main registration; connected, despite a correctly written worktree definition | Found worktree registration | Both passed |
+| Main checkout after worktree init | Found main registration; connected | Found main registration | Both passed |
+
+Evidence is retained under `artifacts/smoke/557c8535c8454ff4b634a21da5ac46ae/worktree-startup/evidence.json`, with command, cwd, exit-code and output logs referenced relative to that smoke run directory. Acceptance checks the definition written by init separately from the client's effective selection: Claude can continue preferring the inherited definition. It records the effective repository/data arguments and verifies shared context through that actual connection. The passing run includes all eight stages and seven direct connections; Codex's pre-init absence is a finding rather than a baseline/setup failure.
+
+Claude uses `claude mcp get worklog` for native discovery and health. Its displayed command and complete argument string are matched to the fixture's private definitions. Codex uses `codex -c 'projects."CHECKOUT".trust_level="trusted"' mcp list --json`, with trust also persisted only in the isolated `CODEX_HOME`. Codex's JSON supplies the exact stdio command/arguments; it establishes configuration discovery, not native connection health. For every discovered definition, a separate official SDK connection uses that command, arguments, launch cwd and isolated environment. It records process launch, MCP initialization, both named tools with output schemas, and server version separately from native results. Synthetic logging verifies one repository identity and qualified ticket scope from main and worktree, and queries verify the complete shared history.
+
+The bounded 64 KiB summary distinguishes discovery, process-launch, MCP-initialization/tool-discovery, repository-context and native-health failures. Missing prerequisites and failed baselines/setup remain acceptance failures. Native pre-init absence does not abort the explicit-init checks. The fixture checks that generated WorkLog files remain absent throughout the pre-init probes. Process startup and health probes are bounded, and all artifacts remain local.
+
+Repeat against a packaged launcher:
+
+```powershell
+dotnet build -c Release --no-restore
+dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- --worktrees-only PATH_TO_PACKAGED_LAUNCHER
+```
+
+The default full packaged smoke also includes this matrix, exercising the runner's original working-directory behavior alongside explicit checkout paths. The installation guide provides the [worktree setup procedure](installation.md#verified-terminal-client-worktree-setup). Desktop, Claude-managed `--worktree` sessions, loaded session instructions and authenticated agent tool use remain untested by this fixture. The observed inheritance is version-specific; no runtime registration redesign or global server was introduced.
+
+Current documentation was checked on 2026-10-25. Context7 retrieved the official [Claude MCP commands/scopes](https://code.claude.com/docs/en/mcp), [MCP quickstart](https://code.claude.com/docs/en/mcp-quickstart) and [configuration isolation guidance](https://code.claude.com/docs/en/debug-your-config). The official [Claude worktree guide](https://code.claude.com/docs/en/worktrees) describes shared project behavior, but this private-registration selection claim comes from the native fixture. OpenAI's [MCP configuration guide](https://learn.chatgpt.com/docs/extend/mcp?surface=cli), [configuration precedence/trust guide](https://learn.chatgpt.com/docs/config-file/config-basic) and [CLI MCP command reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli) document project configuration, trust and JSON discovery commands. The installed official MCP SDK 2.2.0 XML documentation supplies the working-directory, environment and transport lifecycle APIs used by the separate protocol probe.
+
+Final local validation passed the Release build with zero warnings/errors, all 196 regression tests without skips (`tests/WorkLog.Tests/TestResults/ezagv_LVIV_2026-10-25_18_15_28.trx`), targeted formatting verification and strict OpenSpec validation. Full packaged smoke passed under `artifacts/smoke/6df1811ac385445cba1e0d7b5841b4a3/`, repeating the eight-stage worktree matrix with the same results alongside existing client/instruction, journal/migration, ticket/context and alias checks. Bootstrap protocol/EOF/offline-status acceptance passed under `artifacts/update-smoke/510a11a3d90d4450a714566e46f69295/`. The 68,897,144-byte review ZIP is `artifacts/releases/worktree-startup-20261025/worklog-0.1.1-win-x64.zip`, SHA-256 `33fa58c32c1636d58bdf53c81bdc7141ba31a77b51beb6f2125c6077438480dc`; it includes the updated installation guide. This remains a local unreleased review package. No runtime implementation, installed application, real client configuration or journal schema was changed by this verification.
+
 ## Sources
 
 - [Official C# SDK: tools, structured content, errors and annotations](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/tools/tools.md)
