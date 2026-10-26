@@ -3,6 +3,17 @@ using WorkLog.Configuration;
 using WorkLog.Smoke;
 using WorkLog.Updates;
 
+if (args is ["--dashboard-fixture", var dashboardRoot])
+{
+    DashboardFixture.Create(dashboardRoot);
+    return;
+}
+if (args is ["--dashboard-mcp", var dashboardExecutable, var dashboardDirectory])
+{
+    await DashboardFixture.ExerciseMcpAsync(dashboardExecutable, dashboardDirectory);
+    return;
+}
+
 if (args is ["--settings-fixture", var settingsData, var key, var gate])
 {
     var settings = new LocalSettings(settingsData);

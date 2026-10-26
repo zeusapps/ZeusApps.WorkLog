@@ -6,7 +6,34 @@
 4. Run `worklog --version`, then `worklog init --repository D:\Code\MyProject --dry-run` to review setup.
 5. Run the same init command without `--dry-run`. Restart Codex/Claude Code and use their normal trust prompts. Init never grants trust or changes permission policies.
 
-Windows x64 is the supported release target. The packaged executable includes .NET and SQLite native dependencies. Building from source requires the SDK selected by global.json, Git, and NuGet access.
+Windows x64 is the supported release target. The packaged executable includes .NET, the local web host, SQLite native dependencies, and the dashboard assets. Building from source requires the SDK selected by global.json, Git, Node.js (tested version in dashboard/.nvmrc), and dependency-registry access for locked restores.
+
+## Dashboard operations
+
+Run `worklog dashboard` to start the local browser interface. Use `--repository PATH` to supply a checkout, `--data-dir PATH` to select the journal, `--port NUMBER` to change the default 47831, and `--no-open` to copy the printed URL into a browser yourself. Repeat launches for the same data directory reuse its running listener and honor `--no-open`. Another process occupying the port produces an error; select another port rather than sharing an unrelated listener.
+
+The launch URL authorizes the browser automatically. Keep it private; links copied from the document reader contain no launch secret. A previously authorized browser remains authorized after restarting at the same endpoint. To revoke sessions, stop the dashboard, remove only `dashboard.secret` from the selected data directory, and relaunch. Removing `dashboard-state.json` resets repository selection, history preferences, and reading positions without changing your journal or integration configuration. `dashboard.lock` and its lease coordinate running instances; stale locks are replaced once no process holds the lease.
+
+The browser reads registered repositories and their available Git worktrees without registering new identities. Use `--repository` for a document-only checkout that has not been initialized with WorkLog. Root resolution follows the OpenSpec CLI, including configured standalone stores. If that CLI is unavailable, an ordinary project-local openspec directory can still be read when no store declaration needs resolution. Failed or missing sources are shown separately and do not remove journal history. Archived task totals can be unavailable when OpenSpec does not return them.
+
+Review designs after agent edits finish. Select a rendered block, type feedback, and save to insert a REVIEW marker in the active document. The marker explicitly names the preceding passage, quotes a short excerpt, and separates the feedback body from its reference. Its ID identifies the comment, not a permanent document anchor. Each active note has Edit and Delete buttons in rendered and source views; clicking a rendered note also opens its editor. Cancel edit leaves the saved note unchanged, and deletion requires confirmation in the reader. Plain older markers remain readable and become structured when edited. A stale selected block or changed/missing/ambiguous comment is rejected and the typed text is retained. These checks and atomic replacement do not coordinate external editors; overlapping writes after the last reread can still lose changes. There is no agent-idle detector or simultaneous-edit guarantee. The agent convention is to read the marker, address it, and remove it. Archived changes remain read-only.
+
+Copied routes retain change identity across an archive move at the same local endpoint. Heading/task targets that disappear or are ambiguous open the available document with a notice. Task links use current numbers and do not preserve identity across renumbering. The reader always displays current files, not their Git revision at the selected historical date. Documents over 2 MiB are explicitly unavailable rather than truncated.
+
+Stop the original dashboard command with Ctrl+C when finished. Its MCP peers continue independently. Installation updates do not transfer a running dashboard into another payload; restart it to adopt the selected version. The dashboard uses separate private UI files and retains journal schema 2 and existing repository identities.
+
+A new review marker looks like this in the raw Markdown file:
+
+```markdown
+<!-- REVIEW: id=0123456789abcdef0123456789abcdef
+Target: preceding passage
+Quote: A timeline connects recorded moments.
+Comment:
+Clarify how gaps are shown.
+-->
+```
+
+The quoted excerpt records the passage as it was reviewed. Editing feedback keeps that reference and comment ID; editing an older plain note adds them.
 
 ## Private client integration
 

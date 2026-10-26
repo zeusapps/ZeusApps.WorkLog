@@ -31,6 +31,24 @@ An unfinished feature generates no entries on days you do not work on it. Switch
 
 Automatic logging is instructed through local agent configuration. It depends on the agent calling the tools: abruptly terminated sessions or ignored instructions can miss activity. Logging failures must be reported, and tools can also be called explicitly.
 
+## Local dashboard
+
+```powershell
+worklog dashboard
+worklog dashboard --repository D:\Code\MyProject
+worklog dashboard --no-open --port 47831
+```
+
+The dashboard opens in your browser and runs on this machine. Dark theme is the default; the top-bar theme button switches to light and remembers your choice. Ongoing work shows active OpenSpec changes and recent work without a recorded completion. History connects recorded observations with elapsed spans and activity-date dots. Filter all views and document search to one repository, several, or all known repositories. The first visit selects the launch repository when known; later visits restore your selection. History initially uses the last 30 days, your system timezone, and ticket grouping, and remembers changes to these controls.
+
+Select a change to read its design, proposal, tasks, or specs. Designs open first unless you follow a document link or have a remembered selection. Local OpenSpec and configured standalone-store documents are supported, including archives and separate worktree copies. Documents refresh while open and retain your reading position. They show current local files, including beside historical activity. Task totals come from OpenSpec when available; unavailable totals are not reported as zero.
+
+After the agent finishes editing, select a passage in an active change document, type a review comment, and save it. WorkLog inserts a REVIEW marker immediately after that passage, containing a comment ID, an explicit preceding-passage reference, a short quote, and the feedback. Notes have Edit and Delete buttons in both rendered and source views; Delete asks for confirmation, and Cancel edit leaves the saved comment unchanged. Older plain REVIEW markers remain supported and gain a reference when edited. The agent can address the feedback and remove its marker when it next reads the file. Archived documents are read-only. Stale passage/comment checks retain your typed feedback on detected conflicts, but an external edit between the final read and replacement can still be lost: finish agent edits before saving reviews. Comments can be added to any active change Markdown document, with designs as the usual review surface.
+
+Copied change/document/section links contain no authorization secret and resolve after archiving at the same dashboard endpoint. Task links follow current numbering; renumbering can change their destination. Launching the command again reuses this data directory's running dashboard. `--no-open` prints a URL without opening a browser on both first and repeat launches. Cancel the original command to stop its listener. A compatible application update leaves an existing dashboard on its original payload until it is restarted.
+
+No Node.js, hosted service, or internet connection is required to use the packaged dashboard. The OpenSpec CLI supplies store resolution and active task counts; without it, ordinary local OpenSpec files remain readable when no store is declared. Journal history remains available if a source checkout is missing. See [dashboard operations](docs/installation.md#dashboard-operations) and [code organization](docs/architecture.md).
+
 ## MCP tools
 
 Both tools advertise output schemas and return MCP `structuredContent` with a JSON text fallback. See [MCP validation](docs/mcp-validation.md) for protocol checks and documentation references.
@@ -156,6 +174,8 @@ dotnet test -c Release --no-build
 # Builds two distinct disposable versions and exercises live updates and launcher lifecycle:
 ./scripts/package-update-fixtures.ps1
 ```
+
+Source builds also require Node.js (the tested version is in `dashboard/.nvmrc`). Run `npm ci --prefix dashboard` for a locked install. The .NET build compiles the Angular production client when inputs change and embeds its assets; missing or stale assets fail validation. Run `npm test --prefix dashboard` for Angular tests and `npm run test:e2e --prefix dashboard` after a Release build for isolated Edge browser acceptance. Browser acceptance supports `WORKLOG_DASHBOARD_EXECUTABLE` to exercise a packaged executable and `WORKLOG_BROWSER_CHANNEL` to choose an installed browser channel. Its sample repositories and journal remain under ignored `artifacts/dashboard-e2e` directories.
 
 With both agent CLIs installed, run `dotnet run --project tools/WorkLog.Smoke -c Release --no-build` for an isolated packaged-executable smoke test. It uses temporary client configuration, verifies private registration/instruction loading, checks Claude's MCP connection, and exercises journal tools. Add `-- --live-agents` only when you intend to use your authenticated accounts and send test prompts to their services; that optional test asks each agent to log and query synthetic entries. Logs stay under ignored artifacts/smoke directories.
 

@@ -1,0 +1,864 @@
+<router-outlet />
+<div class="app-shell">
+  <aside class="sidebar">
+    <a
+      class="brand"
+      href="/ongoing"
+      (click)="$event.preventDefault();changeView('ongoing')"
+      ><span class="brand-mark">w<span>.</span></span
+      ><span
+        >worklog<span class="brand-caption">YOUR LOCAL WORKSPACE</span></span
+      ></a
+    >
+    <div class="sidebar-label">WORKSPACE</div>
+    <nav aria-label="Main navigation">
+      <button
+        [class.active]="view()==='ongoing'"
+        (click)="changeView('ongoing')"
+      >
+        <span class="nav-icon">&#9638;</span> Ongoing work
+        <span class="nav-count">{{activeChanges().length}}</span>
+      </button>
+      <button
+        [class.active]="view()==='history'"
+        (click)="changeView('history')"
+      >
+        <span class="nav-icon">&#9684;</span> Work history
+      </button>
+    </nav>
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-label">REPOSITORIES</div>
+    <button
+      class="repo-link"
+      [class.chosen]="selectedRepos()===null"
+      (click)="selectAll()"
+    >
+      <span class="repo-dot all-dot"></span>All repositories
+    </button>
+    @for(repo of catalog()?.repositories??[];track repo.id){<button
+      class="repo-link"
+      [class.chosen]="selectedRepos()?.includes(repo.id)"
+      (click)="toggleRepository(repo.id)"
+      [title]="repo.id"
+    >
+      <span class="repo-dot"></span
+      ><span class="ellipsis">{{repo.label}}</span></button
+    >}
+    <div class="sidebar-bottom">
+      <span class="live-dot"></span>
+      <div>Private by default<small>Stored on this device</small></div>
+      <span class="local-tag">LOCAL</span>
+    </div>
+  </aside>
+
+  <div class="workspace">
+    <header class="topbar">
+      <div class="breadcrumb">
+        Workspace <span>/</span>
+        <strong>{{view()==='ongoing'?'Ongoing work':'Work history'}}</strong>
+      </div>
+      <div class="topbar-right">
+        <button
+          class="theme-toggle secondary-button"
+          [attr.aria-label]="theme()==='dark'?'Switch to light theme':'Switch to dark theme'"
+          (click)="toggleTheme()"
+        >
+          <span aria-hidden="true">{{theme()==='dark'?'☀':'☾'}}</span>
+          {{theme()==='dark'?'Light':'Dark'}}
+        </button>
+        <span class="live-dot"></span><span>Local journal</span
+        ><button
+          class="icon-button"
+          aria-label="Refresh dashboard"
+          title="Refresh"
+          (click)="refreshData()"
+        >
+          &#8635;</button
+        ><span class="avatar">ME</span>
+      </div>
+    </header>
+    <main>
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow">
+            {{view()==='ongoing'?'MAKE ROOM FOR FOCUS':'SEE THE BIGGER
+            PICTURE'}}
+          </div>
+          <h1>
+            {{view()==='ongoing'?'Your work, in motion.':'Your work, in
+            perspective.'}}
+          </h1>
+          <p>
+            {{view()==='ongoing'?'A clear view of what you are building, and the
+            thinking behind it.':'Follow the threads of your work, one recorded
+            moment at a time.'}}
+          </p>
+        </div>
+        <div class="filter-wrapper">
+          <button
+            class="filter-button"
+            (click)="repoMenu.set(!repoMenu())"
+            [attr.aria-expanded]="repoMenu()"
+          >
+            <span>&#9707;</span>{{selectedRepoLabel()}}<span>&#8964;</span>
+          </button>
+          @if(repoMenu()){
+          <div class="filter-menu">
+            <button (click)="selectAll()">All repositories</button>@for(repo of
+            catalog()?.repositories??[];track repo.id){<label
+              ><input
+                type="checkbox"
+                [checked]="selectedRepos()===null||selectedRepos()?.includes(repo.id)"
+                (change)="toggleRepository(repo.id)"
+              />{{repo.label}}</label
+            >}
+          </div>
+          }
+        </div>
+      </div>
+
+      @if(unauthorized()){
+      <section class="empty-state">
+        <div class="empty-symbol">&#9906;</div>
+        <h2>Connect this browser to WorkLog</h2>
+        <p>
+          Run <code>worklog dashboard</code> and open the printed local URL.
+        </p>
+      </section>
+      } @else if(!ready()){
+      <section class="empty-state" role="status">
+        <span class="spinner"></span>
+        <h2>Opening your workspace</h2>
+        <p>Reading local repositories and recorded activity.</p>
+      </section>
+      } @else { @if(error()){
+      <div class="message error" role="alert">
+        {{error()}}<button aria-label="Dismiss error" (click)="error.set('')">
+          &times;
+        </button>
+      </div>
+      } @if(notice()){
+      <div class="message" role="status">
+        {{notice()}}<button
+          aria-label="Dismiss notification"
+          (click)="notice.set('')"
+        >
+          &times;
+        </button>
+      </div>
+      }
+      <div class="search-bar">
+        <span class="search-icon">&#9906;</span
+        ><input
+          aria-label="Search OpenSpec documents"
+          placeholder="Search designs, decisions, tasks..."
+          [(ngModel)]="searchText"
+          (ngModelChange)="searchChanged()"
+        /><select
+          aria-label="Search scope"
+          [(ngModel)]="searchScope"
+          (ngModelChange)="searchChanged()"
+        >
+          <option value="active">Active changes</option>
+          <option value="all">All changes</option>
+          <option value="archived">Archived changes</option></select
+        >@if(searchText){<button
+          class="icon-button"
+          aria-label="Clear search"
+          (click)="searchText='';searchChanged()"
+        >
+          &times;</button
+        >}<span class="search-hint">OPENSPEC</span>
+      </div>
+      @if(searchText.trim()){
+      <section class="panel search-panel">
+        <div class="section-heading">
+          <h2>Search results</h2>
+          <span class="muted"
+            >{{searchLoading()?'Searching...':(searchResults()?.matches?.length??0)+'
+            matches'}}</span
+          >
+        </div>
+        @for(match of searchResults()?.matches??[];track $index){<button
+          class="search-result"
+          (click)="openMatch(match)"
+        >
+          <div>
+            <span class="result-title">{{humanize(match.change)}}</span
+            ><span class="badge" [class.archived]="match.archived"
+              >{{match.archived?'Archived':'Active'}}</span
+            >
+          </div>
+          <div class="result-path">
+            {{match.repositories.join(' · ')}} / {{match.path}}
+            @if(match.section){<span>/ {{match.section}}</span>}
+          </div>
+          <p>{{match.excerpt}}</p>
+          <span class="result-line">Line {{match.line+1}} &#8599;</span></button
+        >} @if(!searchLoading()&&searchResults()?.matches?.length===0){
+        <div class="compact-empty">
+          No passages match this search in the selected sources.
+        </div>
+        } @if(searchResults()?.limitReached){
+        <div class="message">
+          Showing the first 50 matches. Refine your search or repository
+          selection to find more specific passages.
+        </div>
+        } @if(searchResults()?.unavailable?.length){
+        <details class="source-notices">
+          <summary>Some sources could not be searched</summary>
+          @for(item of searchResults()!.unavailable;track $index){
+          <p>{{item}}</p>
+          }
+        </details>
+        }
+      </section>
+      }@else if(view()==='ongoing'){
+      <section class="stats-grid" aria-label="Workspace overview">
+        <div class="stat-card">
+          <span>Active changes</span><strong>{{activeChanges().length}}</strong
+          ><small><i class="tiny-dot blue"></i> OpenSpec documents</small
+          ><span class="stat-glyph">&#9638;</span>
+        </div>
+        <div class="stat-card">
+          <span>Recent work items</span><strong>{{ongoing().length}}</strong
+          ><small>Recorded in the last 14 days</small
+          ><span class="stat-glyph">&#9684;</span>
+        </div>
+        <div class="stat-card">
+          <span>Other ongoing work</span
+          ><strong>{{ongoingTickets().length}}</strong
+          ><small>No completion recorded</small
+          ><span class="stat-glyph">&#8644;</span>
+        </div>
+        <div class="stat-card">
+          <span>Document sources</span
+          ><strong>{{catalog()?.sources?.length??0}}</strong
+          ><small><i class="tiny-dot green"></i> On this machine</small
+          ><span class="stat-glyph">&#9707;</span>
+        </div>
+      </section>
+      <div class="section-heading spaced">
+        <div>
+          <h2>Pick up where you left off</h2>
+          <p>Active changes and the plans guiding them.</p>
+        </div>
+        <span class="muted small">{{activeChanges().length}} changes</span>
+      </div>
+      <section class="change-grid">
+        @for(change of activeChanges();track change.sourceId+change.variant){
+        @let row=changeRow(change);
+        <article class="change-card">
+          <div class="card-top">
+            <span class="change-icon">&#9707;</span
+            ><span class="badge active-badge">Active change</span>
+          </div>
+          <button class="change-title" (click)="openChange(change)">
+            {{humanize(change.name)}}
+          </button>
+          <div class="card-repository">
+            {{change.repositories.map(repositoryLabel.bind(this)).join(' · ')}}
+            <span class="card-source">{{sourceShort(change.sourceId)}}</span>
+          </div>
+          <div class="card-documents">
+            @for(doc of change.documents.slice(0,4);track doc.path){<button
+              (click)="openChange(change,doc.path)"
+            >
+              {{doc.label==='design'?'Design':doc.label==='proposal'?'Proposal':doc.label==='tasks'?'Tasks':'Spec'}}
+              &#8599;</button
+            >}
+          </div>
+          <div class="card-footer">
+            <span
+              >@if(change.totalTasks!==null){OpenSpec
+              <strong>{{change.completedTasks}} / {{change.totalTasks}}</strong>
+              tasks}@else{Task progress unavailable}</span
+            ><span class="status-dot" [class.done]="row?.status==='done'"></span
+            ><span>{{row?statusLabel(row.status):'No recorded activity'}}</span>
+          </div>
+        </article>
+        }@empty{
+        <div class="empty-state panel wide">
+          <div class="empty-symbol">&#9707;</div>
+          <h2>A little space for your next idea</h2>
+          <p>
+            No active OpenSpec changes were found in these repositories.<br />Recorded
+            work is available in History.
+          </p>
+          <button class="primary-button" (click)="changeView('history')">
+            Explore work history &#8594;
+          </button>
+        </div>
+        }
+      </section>
+      @if(ongoingTickets().length){
+      <section class="panel ongoing-panel">
+        <div class="section-heading">
+          <h2>Other ongoing work</h2>
+          <span class="muted small">Latest recorded status · last 14 days</span>
+        </div>
+        @for(row of ongoingTickets();track row.id){<button
+          class="work-list-item"
+          (click)="openItem(row,undefined,true)"
+        >
+          <span class="work-list-icon">&#8644;</span
+          ><span
+            ><strong>{{humanize(row.title)}}</strong
+            ><small>{{repositoryLabel(row.repository)}}</small></span
+          ><span class="badge">{{statusLabel(row.status)}}</span
+          ><span class="muted small">{{formatDate(row.lastAt)}}</span
+          ><span>&#8599;</span></button
+        >}
+      </section>
+      } }@else{
+      <section class="history-controls panel">
+        <div class="range-fields">
+          <label
+            >From<input
+              type="date"
+              [(ngModel)]="from"
+              (change)="controlsChanged()" /></label
+          ><span class="range-arrow">&#8594;</span
+          ><label
+            >Through<input
+              type="date"
+              [(ngModel)]="to"
+              (change)="controlsChanged()" /></label
+          ><label
+            >Group by<select [(ngModel)]="groupBy" (change)="controlsChanged()">
+              <option value="ticket">Ticket</option>
+              <option value="change">Change</option>
+            </select></label
+          ><label
+            >Timezone<input
+              aria-label="Reporting timezone"
+              [(ngModel)]="timezone"
+              (change)="controlsChanged()"
+              placeholder="Europe/Warsaw"
+          /></label>
+        </div>
+        <div class="segmented" aria-label="Timeline scale">
+          @for(unit of ['day','week','month'];track unit){<button
+            [class.selected]="scale===unit"
+            (click)="scale=unit;controlsChanged()"
+          >
+            {{unit}}</button
+          >}
+        </div>
+      </section>
+      <section class="stats-grid history-stats" [attr.aria-busy]="loading()">
+        <div class="stat-card">
+          <span>Work items</span
+          ><strong>{{loading()?'—':timeline()?.total??0}}</strong
+          ><small>In the selected period</small>
+        </div>
+        <div class="stat-card">
+          <span>Recorded activity dates</span
+          ><strong
+            >{{loading()?'—':timeline()?.insights?.days?.length??0}}</strong
+          ><small>Dates with observations</small>
+        </div>
+        <div class="stat-card">
+          <span>Longest observed span</span
+          ><strong class="smaller"
+            >{{loading()?'—':elapsed(timeline()?.insights?.longestSpans?.[0]?.elapsedSeconds??0)}}</strong
+          ><small>Elapsed time, including gaps</small>
+        </div>
+        <div class="stat-card">
+          <span>Repositories</span
+          ><strong
+            >{{selectedRepos()?.length??catalog()?.repositories?.length??0}}</strong
+          ><small>{{selectedRepoLabel()}}</small>
+        </div>
+      </section>
+      <section class="panel timeline-panel">
+        <div class="section-heading">
+          <div>
+            <h2>Work over time</h2>
+            <p>Every dot is a date with recorded activity.</p>
+          </div>
+          <div class="legend">
+            <span><i class="legend-line"></i>Elapsed span</span
+            ><span><i class="legend-dot"></i>Activity date</span>
+          </div>
+        </div>
+        @if(loading()){
+        <div class="loading-line" role="status">
+          Updating the journal snapshot...
+        </div>
+        }
+        <div class="timeline-scroll">
+          <div
+            class="timeline-table"
+            [style.min-width.px]="timelineWidth()+270"
+          >
+            <div class="timeline-header">
+              <div class="timeline-label">TICKET / CHANGE</div>
+              <div class="timeline-track axis">
+                @for(tick of ticks();track tick.date){<span
+                  [style.left.%]="tick.left"
+                  >{{tick.label}}</span
+                >}
+              </div>
+            </div>
+            @for(row of timeline()?.rows??[];track row.id){
+            <div class="timeline-row">
+              <button class="timeline-label row-label" (click)="openItem(row)">
+                <span
+                  class="row-marker"
+                  [class.complete]="row.status==='done'"
+                ></span
+                ><span
+                  ><strong>{{humanize(row.title)}}</strong
+                  ><small
+                    >{{repositoryLabel(row.repository)}} ·
+                    {{row.activityDates.length}} activity dates</small
+                  ></span
+                >
+              </button>
+              <div class="timeline-track">
+                <div
+                  class="elapsed-bar"
+                  [class.complete]="row.status==='done'"
+                  [class.clipped]="row.clippedStart"
+                  [style.left.%]="spanLeft(row)"
+                  [style.width.%]="spanWidth(row)"
+                  [title]="'Observed span: '+elapsed(row.elapsedSeconds)"
+                ></div>
+                @for(date of row.activityDates;track date){<button
+                  class="activity-dot"
+                  [class.completion]="row.completionDates.includes(date)"
+                  [class.resumed]="row.resumedDates.includes(date)"
+                  [style.left.%]="position(date)"
+                  [attr.aria-label]="row.title+' activity on '+date"
+                  [title]="date+' · click for observations'"
+                  (click)="openItem(row,date)"
+                ></button
+                >}
+              </div>
+            </div>
+            }
+          </div>
+        </div>
+        @if(!loading()&&!timeline()?.rows?.length){
+        <div class="compact-empty">
+          No recorded observations in this period. Try a wider date range or
+          another repository.
+        </div>
+        }
+        @if(timeline()?.nextOffset!==null&&timeline()?.nextOffset!==undefined){<button
+          class="load-more"
+          [disabled]="loading()"
+          (click)="loadHistory(true)"
+        >
+          Load more work items</button
+        >}
+        <div class="panel-footnote">
+          Spans connect recorded observations. Gaps do not imply continuous
+          work. <span>{{timeline()?.total??0}} work items</span>
+        </div>
+      </section>
+      @if(!loading()&&timeline();as data){
+      <section class="panel daily-panel">
+        <div class="section-heading">
+          <div>
+            <h2>Recorded work by day</h2>
+            <p>
+              Distinct grouped work items. Select a date to inspect its records.
+            </p>
+          </div>
+        </div>
+        <div class="daily-strip">
+          @for(day of data.insights.days;track day.date){<button
+            class="daily-item"
+            (click)="focusDay(day.date)"
+            [attr.aria-label]="day.items+' work items recorded on '+day.date"
+          >
+            <strong>{{day.items}}</strong
+            ><span>{{formatDate(day.date+'T12:00:00Z')}}</span></button
+          >}@empty{
+          <p class="muted small">No activity dates recorded in this period.</p>
+          }
+        </div>
+      </section>
+      <div class="insights-grid">
+        <section class="panel insight-panel">
+          <div class="section-heading">
+            <h2>Longest recorded spans</h2>
+            <span>&#8599;</span>
+          </div>
+          @for(row of data.insights.longestSpans;track row.id){<button
+            class="insight-row"
+            (click)="openItem(row)"
+          >
+            <span
+              ><strong>{{humanize(row.title)}}</strong
+              ><small
+                >{{row.activityDates.length}} visible activity dates</small
+              ></span
+            ><span class="duration-pill"
+              >{{elapsed(row.elapsedSeconds)}}</span
+            ></button
+          >}@empty{
+          <p class="muted">Nothing recorded in this period.</p>
+          }
+        </section>
+        <section class="panel insight-panel">
+          <div class="section-heading">
+            <h2>Recent completion observations</h2>
+            <i class="tiny-dot green"></i>
+          </div>
+          @for(item of data.insights.completions.slice(0,5);track
+          $index){<button class="insight-row" (click)="openItem(item)">
+            <span
+              ><strong>{{humanize(item.title)}}</strong
+              ><small>{{formatDate(item.at)}}</small></span
+            ><span class="check-mark">&#10003;</span></button
+          >}@empty{
+          <p class="muted">No completions recorded in this period.</p>
+          }
+        </section>
+        <section class="panel insight-panel">
+          <div class="section-heading">
+            <h2>Work revisited</h2>
+            <span>&#8644;</span>
+          </div>
+          @for(item of data.insights.subsequentWork.slice(0,5);track
+          $index){<button class="insight-row" (click)="openItem(item)">
+            <span
+              ><strong>{{humanize(item.title)}}</strong
+              ><small
+                >Work recorded after completion · {{formatDate(item.at)}}</small
+              ></span
+            ><span>&#8599;</span></button
+          >}@empty{
+          <p class="muted">No subsequent work recorded after completion.</p>
+          }
+        </section>
+      </div>
+      } } @if(catalog()?.notices?.length||catalog()?.sources?.length){
+      <details class="source-notices">
+        <summary>Local source information</summary>
+        @for(source of catalog()?.sources??[];track source.id){
+        <p>
+          <strong>{{source.location}}</strong> {{source.error??'Available'}}
+        </p>
+        }@for(item of catalog()?.notices??[];track $index){
+        <p>{{item}}</p>
+        }
+      </details>
+      }
+      <footer class="page-footer">
+        <span class="brand-mini">w.</span
+        ><span>A little clarity for the work you do.</span
+        ><span>Private. Local. Yours.</span>
+      </footer>
+      }
+    </main>
+  </div>
+</div>
+
+@if(copies().length){
+<div class="reader-backdrop" (click)="closeDocument()"></div>
+<section class="copy-choice panel" aria-label="Choose document source">
+  <h2>Choose a document copy</h2>
+  <p>Several sources contain this change. Select the copy you want to read.</p>
+  @for(copy of copies();track copy.variant){<button
+    class="work-list-item"
+    (click)="openChange(copy)"
+  >
+    <span>{{sourceLabel(copy.sourceId)}}</span
+    ><span class="badge"
+      >{{copy.archived?'Archived':'Active'}} · {{copy.directoryName}}</span
+    ></button
+  >}<button class="secondary-button" (click)="closeDocument()">Close</button>
+</section>
+} @if(document();as doc){
+<div class="reader-backdrop" (click)="closeDocument()"></div>
+<section
+  class="reader"
+  tabindex="-1"
+  role="dialog"
+  aria-modal="true"
+  aria-label="OpenSpec document reader"
+>
+  <header class="reader-header">
+    <div>
+      <div class="eyebrow">
+        {{doc.change==='@source'?'OPENSPEC REFERENCE':'OPENSPEC CHANGE'}}
+      </div>
+      <h2>{{humanize(doc.change)}}</h2>
+      <div class="reader-provenance">
+        {{doc.location}}
+        <span class="badge" [class.archived]="doc.archived"
+          >{{doc.change==='@source'?'Reference':doc.archived?'Archived':'Active'}}</span
+        >
+      </div>
+    </div>
+    <div class="reader-actions">
+      <button
+        class="icon-button"
+        aria-label="Refresh document"
+        title="Refresh document"
+        [disabled]="documentLoading()"
+        (click)="refreshDocument()"
+      >
+        &#8635;
+      </button>
+      <button class="secondary-button" (click)="copyLink()">
+        Copy link &#8599;</button
+      ><button
+        class="icon-button"
+        aria-label="Close document reader"
+        (click)="closeDocument()"
+      >
+        &times;
+      </button>
+    </div>
+  </header>
+  <div class="document-tabs" role="navigation" aria-label="Change documents">
+    @for(item of selectedChange()?.documents??[];track item.path){<button
+      [class.current]="item.path===doc.path"
+      (click)="openDocument(item.path)"
+    >
+      {{item.label}}</button
+    >}
+    <div class="document-mode">
+      <button [class.selected]="!sourceView()" (click)="sourceView.set(false)">
+        Read</button
+      ><button [class.selected]="sourceView()" (click)="sourceView.set(true)">
+        Source
+      </button>
+    </div>
+  </div>
+  <div class="reader-meta">
+    <span><i class="live-dot"></i>Current local file · {{doc.path}}</span
+    ><span
+      >@if(selectedChange()?.totalTasks!==null&&selectedChange()?.totalTasks!==undefined){OpenSpec
+      tasks {{selectedChange()?.completedTasks}} /
+      {{selectedChange()?.totalTasks}}}@else{Task progress unavailable}</span
+    >
+  </div>
+  @if(missingDocuments().length){
+  <div class="missing-documents">
+    Unavailable documents: {{missingDocuments().join(', ')}}
+  </div>
+  } @if(documentLoading()){
+  <div class="loading-line" role="status">Reading document...</div>
+  }
+  <div class="reader-body">
+    <aside class="document-outline">
+      <span class="sidebar-label">ON THIS PAGE</span>@for(heading of
+      headings();track heading.id){
+      <div class="outline-row" [class.nested]="heading.level>2">
+        <button (click)="scrollTo(heading.id)">{{heading.text}}</button
+        ><button
+          class="copy-section"
+          [attr.aria-label]="'Copy link to '+heading.text"
+          (click)="copyLink(heading.id)"
+        >
+          &#8599;
+        </button>
+      </div>
+      }@if(doc.tasks.length){
+      <div class="sidebar-label task-outline-label">TASK REFERENCES</div>
+      @for(task of doc.tasks;track task.line){
+      <div class="outline-row">
+        <button (click)="scrollTo(taskAnchor(task,$index))">
+          {{task.number??task.text.slice(0,30)}}</button
+        ><button
+          class="copy-section"
+          [attr.aria-label]="'Copy task link '+(task.number??task.text)"
+          (click)="copyLink(taskAnchor(task,$index))"
+        >
+          &#8599;
+        </button>
+      </div>
+      }}
+    </aside>
+    <div class="document-scroll" (scroll)="onScroll($event)">
+      @if(sourceView()){
+      <pre class="source-text">{{doc.text}}</pre>
+      @for(review of reviews();track review.line){
+      <aside class="review-note">
+        <div class="review-note-header">
+          <strong>Review comment · line {{review.line+1}}</strong>
+          @if(doc.canComment){<div class="review-note-actions">
+            <button type="button" aria-label="Edit review comment" [disabled]="saving()" (click)="editReview(review)">Edit</button>
+            <button type="button" aria-label="Delete review comment" [disabled]="saving()" (click)="requestDeleteReview(review)">Delete</button>
+          </div>}
+        </div>
+        <blockquote class="review-reference">Regarding the preceding passage@if(review.quote){: “{{review.quote}}”}</blockquote>
+        <p>{{review.text}}</p>
+      </aside>
+      }}@else{
+      <article
+        class="markdown"
+        [innerHTML]="html()"
+        (click)="readerClick($event)"
+        (keydown)="readerKey($event)"
+      ></article>
+      }
+    </div>
+  </div>
+  @if(doc.canComment){
+  <section class="review-composer">
+    @if(deletingReview();as deleting){
+    <div class="review-delete-confirm" role="alertdialog" aria-label="Delete review comment?">
+      <strong>Delete this review comment?</strong>
+      <p>{{deleting.text}}</p>
+      <div class="review-note-actions">
+        <button class="secondary-button" [disabled]="saving()" (click)="deletingReview.set(null)">Keep comment</button>
+        <button class="secondary-button" [disabled]="saving()" (click)="deleteReview()">Delete comment</button>
+      </div>
+    </div>}
+    <div class="review-composer-heading">
+      <strong><span>&#9998;</span> {{editingReview()?'Edit review comment':'Leave a review comment'}}</strong
+      ><small
+        >{{editingReview()?'Editing an existing note':selection()?'Passage selected':'Select a passage above, or focus it
+        and press Enter'}}</small
+      >
+    </div>
+    @if(selection()||editingReview()){
+    <blockquote class="selected-quote">
+      @if(editingReview();as editing){Regarding the preceding passage@if(editing.quote){: “{{editing.quote}}”}}
+      @else if(selection();as selected){ {{selected.text.slice(0,200)}}{{selected.text.length>200?'…':''}} }
+    </blockquote>
+    <div class="comment-entry">
+      <textarea
+        aria-label="Review comment"
+        placeholder="What would you like the agent to change?"
+        [ngModel]="comment()"
+        (ngModelChange)="comment.set($event)"
+        rows="2"
+      ></textarea
+      ><button
+        class="primary-button"
+        [disabled]="saving()||documentLoading()||!comment().trim()"
+        (click)="saveComment()"
+      >
+        {{saving()?'Saving...':editingReview()?'Save changes':'Save comment'}} &#8594;
+      </button>
+      @if(editingReview()){<button class="secondary-button" [disabled]="saving()" (click)="cancelReviewEdit()">Cancel edit</button>}
+    </div>
+    }@if(commentStatus()){
+    <div class="comment-status" role="status">{{commentStatus()}}</div>
+    }
+  </section>
+  }@else if(commentStatus()){
+  <div class="message" role="status">{{commentStatus()}}</div>
+  }
+</section>
+} @if(detail();as row){
+<div class="detail-backdrop" (click)="detail.set(null)"></div>
+<aside
+  class="activity-detail"
+  role="dialog"
+  aria-modal="true"
+  aria-label="Recorded work detail"
+>
+  <header>
+    <div>
+      <div class="eyebrow">RECORDED ACTIVITY</div>
+      <h2>{{humanize(row.title)}}</h2>
+      <p>{{repositoryLabel(row.repository)}}</p>
+    </div>
+    <button
+      class="icon-button"
+      aria-label="Close activity detail"
+      (click)="detail.set(null)"
+    >
+      &times;
+    </button>
+  </header>
+  @if(row.firstAt){
+  <div class="detail-metrics">
+    <div>
+      <small>First recorded</small><strong>{{formatDate(row.firstAt)}}</strong>
+    </div>
+    <div>
+      <small>Latest recorded</small><strong>{{formatDate(row.lastAt!)}}</strong>
+    </div>
+    <div>
+      <small>Observed span</small
+      ><strong>{{elapsed(row.elapsedSeconds!)}}</strong>
+    </div>
+    <div>
+      <small>Recorded status</small
+      ><strong>{{statusLabel(row.status!)}}</strong>
+    </div>
+  </div>
+  } @if(associatedChanges().length){
+  <div class="associated-docs">
+    <div class="eyebrow">CHANGE DOCUMENTS</div>
+    @for(change of associatedChanges();track change.variant){<button
+      (click)="openChange(change);detail.set(null)"
+    >
+      {{humanize(change.name)}} &#8599;</button
+    >}
+  </div>
+  }
+  <div class="observation-heading">
+    <h3>{{detailDay()?'Activity on '+detailDay():'Activity history'}}</h3>
+    @if(detailDay()){<button
+      class="text-button"
+      (click)="showAllObservations()"
+    >
+      Show all</button
+    >}
+  </div>
+  <div class="observation-list">
+    @for(entry of visibleObservations();track entry.id){
+    <article class="observation">
+      <span class="event-dot" [class.complete]="entry.status==='done'"></span>
+      <div class="event-top">
+        <strong>{{statusLabel(entry.status)}}</strong
+        ><time
+          >{{formatDate(entry.occurredAt)}} ·
+          {{formatTime(entry.occurredAt)}}</time
+        >
+      </div>
+      <p>{{entry.summary??'No summary recorded.'}}</p>
+      <small
+        >{{entry.agent??'Agent not recorded'}} @if(entry.change){·
+        {{entry.change}}}</small
+      >
+    </article>
+    }@if(detailLoading()){
+    <p class="muted" role="status">Loading observations...</p>
+    }@else if(!visibleObservations().length){
+    <p class="muted">No observations on the loaded page match this date.</p>
+    }@if(observationNext()!==null){<button
+      class="load-more"
+      [disabled]="detailLoading()"
+      (click)="moreObservations()"
+    >
+      Load more observations</button
+    >}
+    <p class="detail-footnote">
+      {{observations().length}} of {{observationTotal()}} observations loaded.
+      These records measure activity, not working hours.
+    </p>
+  </div>
+</aside>
+} @if(copyFallback()){
+<div class="clipboard-fallback panel">
+  <strong>Copy this link</strong
+  ><input
+    aria-label="Link for manual copying"
+    [value]="copyFallback()"
+    readonly
+    (focus)="$any($event.target).select()"
+  /><button class="text-button" (click)="copyFallback.set('')">Close</button>
+</div>
+} @if(notice() && document()){
+<div class="reader-toast" role="status">
+  {{notice()}}<button
+    class="icon-button"
+    aria-label="Dismiss reader notification"
+    (click)="notice.set('')"
+  >
+    &times;
+  </button>
+</div>
+}

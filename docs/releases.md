@@ -27,6 +27,16 @@ Production packaging enforces the application version from Directory.Build.props
 
 The planned F9 legacy update-status readiness fix is superseded by immutable activation and overlapping-status acceptance. Its old change remains unimplemented; do not sync its incompatible idle-replacement delta or mark its tasks complete merely because this feature ships. F6-F8 remain independently scoped. Actual local migration and GitHub version bump/publication require explicit operational action after validation.
 
+## Release v0.3.0
+
+This release adds `worklog dashboard`: a private local browser interface for ongoing OpenSpec work and recorded activity history. It defaults to dark mode, remembers the chosen theme and repository filters, and shows elapsed spans with dots only on recorded activity dates.
+
+The document reader supports designs, proposals, tasks, nested specs, search, and links that continue to resolve after archiving. Review notes contain explicit passage references and support editing and confirmed deletion, including older plain markers. Review after external edits finish; stale-content checks retain drafts but do not coordinate simultaneous writers.
+
+The Windows package embeds the web interface and requires no Node.js or separately installed .NET runtime. Launcher/shared-data contracts remain 1 and journal schema remains 2. Existing v0.2.0 versioned installations can use `worklog update`; restart the dashboard to adopt the selected payload, and reconnect agent clients when ready to use that payload for logging. The v0.1.1-and-earlier maintenance migration still applies.
+
+Local dashboard acceptance passed 219 .NET tests, 9 Angular tests, and 11 packaged Edge browser scenarios. Release validation also checks locked restores, packaging, bootstrap, and compatible updates from the independently verified public v0.2.0 baseline. The tag workflow must pass before publication; the published ZIP/checksum and isolated executable/protocol checks are verified afterward and recorded in the release notes.
+
 ## Release v0.2.0
 
 This release introduces the stable launcher and immutable versioned payloads. Compatible future updates activate for new processes while existing MCP sessions continue on their original version. It includes explicit application rollback, offline running/selected-version status, stale-update protection, and settings merges that preserve unknown fields and independent concurrent edits.

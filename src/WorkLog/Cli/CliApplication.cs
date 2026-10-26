@@ -10,6 +10,7 @@ internal static class CliApplication
         root.Subcommands.Add(new InitCommand());
         root.Subcommands.Add(new ServeCommand());
         root.Subcommands.Add(new UpdateCommand());
+        root.Subcommands.Add(new DashboardCommand());
         root.Options.OfType<VersionOption>().Single().Action = new ApplicationVersionAction();
 
         // Preserve the existing no-argument/help entry points while the library owns parsing and help output.

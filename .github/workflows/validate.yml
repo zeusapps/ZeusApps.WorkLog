@@ -11,11 +11,18 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: dashboard/.nvmrc
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
           cache: true
           cache-dependency-path: '**/packages.lock.json'
+      - run: npm ci --prefix dashboard --no-audit --no-fund
+      - run: npm test --prefix dashboard
       - run: dotnet restore --locked-mode
       - run: dotnet build -c Release --no-restore
       - run: dotnet test -c Release --no-build --logger trx
@@ -28,6 +35,14 @@ jobs:
           $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
           dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- --updates-only "artifacts/releases/worklog-$version-win-x64/worklog.exe"
           if ($LASTEXITCODE -ne 0) { throw 'Packaged update acceptance failed' }
+      - name: Packaged dashboard browser acceptance
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+          $env:WORKLOG_DASHBOARD_EXECUTABLE = (Resolve-Path "artifacts/releases/worklog-$version-win-x64/worklog.exe").Path
+          $env:WORKLOG_DASHBOARD_NO_NODE = 'true'
+          npm run test:e2e --prefix dashboard
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged dashboard acceptance failed' }
       - name: Mixed-version update and launcher acceptance
         shell: pwsh
         run: ./scripts/package-update-fixtures.ps1
@@ -40,3 +55,5 @@ jobs:
             artifacts/update-smoke/**/*.log
             artifacts/update-smoke/**/evidence.json
             artifacts/launcher-smoke/**/*.json
+            dashboard/test-results/results/**
+            dashboard/playwright-report/**

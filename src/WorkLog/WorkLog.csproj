@@ -6,14 +6,33 @@
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DashboardRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)/../../dashboard'))</DashboardRoot>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <InternalsVisibleTo Include="WorkLog.Tests" />
     <InternalsVisibleTo Include="WorkLog.Smoke" />
     <PackageReference Include="System.CommandLine" Version="2.0.13" />
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="Tomlyn" Version="0.19.0" />
   </ItemGroup>
+  <ItemGroup>
+    <DashboardInput Include="$(DashboardRoot)/src/**/*;$(DashboardRoot)/package.json;$(DashboardRoot)/package-lock.json;$(DashboardRoot)/angular.json;$(DashboardRoot)/tsconfig*.json;$(DashboardRoot)/scripts/stamp.mjs" />
+  </ItemGroup>
+  <Target Name="BuildDashboard" BeforeTargets="PrepareForBuild" Inputs="@(DashboardInput)" Outputs="$(DashboardRoot)/dist/dashboard/build.stamp">
+    <Exec WorkingDirectory="$(DashboardRoot)" Command="npm ci --no-audit --no-fund" Condition="!Exists('$(DashboardRoot)/node_modules/.package-lock.json')" />
+    <Exec WorkingDirectory="$(DashboardRoot)" Command="npm run build" />
+  </Target>
+  <Target Name="CollectDashboardAssets" BeforeTargets="AssignTargetPaths" DependsOnTargets="BuildDashboard">
+    <Exec WorkingDirectory="$(DashboardRoot)" Command="node scripts/stamp.mjs --verify" />
+    <Error Condition="!Exists('$(DashboardRoot)/dist/dashboard/browser/index.html')" Text="Dashboard production assets are missing. Run npm run build in dashboard." />
+    <ItemGroup>
+      <DashboardAsset Include="$(DashboardRoot)/dist/dashboard/browser/**/*" />
+      <EmbeddedResource Include="@(DashboardAsset)">
+        <LogicalName>WorkLog.Dashboard.Assets.%(DashboardAsset.RecursiveDir)%(DashboardAsset.Filename)%(DashboardAsset.Extension)</LogicalName>
+      </EmbeddedResource>
+      <EmbeddedResource Include="$(DashboardRoot)/dist/dashboard/3rdpartylicenses.txt" LogicalName="WorkLog.Dashboard.Assets.3rdpartylicenses.txt" Condition="Exists('$(DashboardRoot)/dist/dashboard/3rdpartylicenses.txt')" />
+    </ItemGroup>
+  </Target>
 </Project>

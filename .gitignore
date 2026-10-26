@@ -3,3 +3,9 @@
 artifacts/
 TestResults/
 .vs/
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.angular/
+dashboard/out-tsc/
+dashboard/playwright-report/
+dashboard/test-results/
