@@ -14,8 +14,8 @@ const change: Change = {
   archived: false,
   repositories: ["r"],
   documents: [
-    { path: "design.md", label: "design" },
-    { path: "tasks.md", label: "tasks" },
+    { path: "design.md", label: "design", fingerprint: "1:1" },
+    { path: "tasks.md", label: "tasks", fingerprint: "1:2" },
   ],
   completedTasks: 2,
   totalTasks: 7,

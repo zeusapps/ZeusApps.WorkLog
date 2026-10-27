@@ -2202,3 +2202,236 @@ h1 {
   text-decoration: underline;
   cursor: pointer;
 }
+/* Open review comments overview */
+.review-inbox {
+  padding: 23px;
+  margin-bottom: 26px;
+}
+.review-inbox > .section-heading {
+  margin-bottom: 16px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.inbox-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.scope-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.scope-switch button {
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 6px 12px;
+  font-size: 10px;
+}
+.scope-switch button + button {
+  border-left: 1px solid var(--border);
+}
+.scope-switch button.selected {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.review-group {
+  border-top: 1px solid var(--border);
+  padding: 14px 0 6px;
+}
+.review-group header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.review-group .result-title {
+  margin-right: 0;
+}
+.review-document {
+  margin: 8px 0 10px;
+}
+.review-entry {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-border);
+  border-left: 3px solid #cfb26b;
+  border-radius: 5px;
+  color: var(--warning);
+  padding: 9px 13px;
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.review-entry:hover {
+  border-color: var(--warning);
+}
+.review-entry .review-quote {
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.review-entry .review-comment-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 9px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.chip.comments-chip {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+.chip.updated-chip {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success);
+}
+.card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.card-chips + .card-documents {
+  margin-top: 12px;
+}
+.comment-menu,
+.removed-comments {
+  font-size: 10px;
+  padding: 8px 26px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  max-height: 240px;
+  overflow: auto;
+}
+.comment-menu summary,
+.removed-comments summary {
+  cursor: pointer;
+}
+.removed-comment {
+  margin-top: 8px;
+  color: var(--warning);
+}
+.removed-comment p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+}
+.removed-comment .review-reference {
+  margin: 0;
+  padding: 2px 0 2px 10px;
+  border: 0;
+  border-left: 2px solid var(--warning-border);
+  background: none;
+  color: var(--warning);
+}
+
+/* Changed since last read */
+.read-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 8px 26px;
+  font-size: 10px;
+  background: var(--success-bg);
+  border-bottom: 1px solid var(--success-border);
+  color: var(--success);
+}
+.read-banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+.read-banner .secondary-button {
+  padding: 5px 10px;
+}
+.changed-since-read {
+  position: relative;
+  border-left: 3px solid var(--teal);
+  background: color-mix(in srgb, var(--teal) 10%, transparent);
+  padding-left: 10px;
+  margin-left: -13px;
+}
+tr.changed-since-read {
+  box-shadow: inset 3px 0 0 var(--teal);
+  border-left: 0;
+  margin-left: 0;
+  padding-left: 0;
+}
+.changed-since-read::before {
+  /* Text for assistive technology; the left rule is the visual marker. */
+  content: "Changed since last read: ";
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.source-text .changed-since-read {
+  display: inline;
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+  box-shadow: -3px 0 0 var(--teal);
+}
+.source-text .changed-since-read::before {
+  content: none;
+}
+.removed-since-read {
+  margin: 10px 0;
+  font-size: 11px;
+  border: 1px dashed var(--warning-border);
+  border-radius: 5px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  padding: 6px 12px;
+}
+.removed-since-read summary {
+  cursor: pointer;
+}
+.removed-since-read pre {
+  margin: 8px 0 2px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    11px/1.7 "Cascadia Code",
+    Consolas,
+    monospace;
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: var(--warning-border);
+}
+.review-note.changed-since-read {
+  margin-left: 0;
+}
+@media (max-width: 760px) {
+  .comment-menu,
+  .removed-comments,
+  .read-banner {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .review-inbox {
+    padding: 16px;
+  }
+}

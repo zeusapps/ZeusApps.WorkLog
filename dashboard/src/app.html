@@ -247,6 +247,61 @@
           ><span class="stat-glyph">&#9707;</span>
         </div>
       </section>
+      <section class="panel review-inbox" aria-labelledby="review-inbox-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="review-inbox-title">Open review comments</h2>
+            <p>Comments still present in change documents. Removing a comment's marker closes it.</p>
+          </div>
+          <div class="inbox-controls">
+            <div class="scope-switch" role="group" aria-label="Review comment scope">
+              @for(scope of inboxScopes;track scope.value){<button
+                type="button"
+                [class.selected]="inboxScope()===scope.value"
+                [attr.aria-pressed]="inboxScope()===scope.value"
+                (click)="inboxScope.set(scope.value)"
+              >{{scope.label}}</button>}
+            </div>
+            <span class="muted small review-total">{{reviewTotal()}} open</span>
+          </div>
+        </div>
+        @for(group of reviewGroups();track group.key){
+        <section class="review-group">
+          <header>
+            <span class="result-title">{{humanize(group.change)}}</span>
+            <span class="badge" [class.archived]="group.archived">{{group.archived?'Archived · read-only':'Active'}}</span>
+            <span class="muted small">{{group.repositories.map(repositoryLabel.bind(this)).join(' · ')}}</span>
+            <span class="chip comments-chip">{{group.count}} {{group.count===1?'comment':'comments'}}</span>
+          </header>
+          @for(document of group.documents;track document.path){
+          <div class="review-document">
+            <div class="result-path">{{document.path}} · {{document.items.length}}</div>
+            @for(item of document.items;track item.line){<button
+              type="button"
+              class="review-entry"
+              (click)="openReview(item)"
+            >
+              @if(item.quote){<span class="review-quote">&ldquo;{{item.quote}}&rdquo;</span>}
+              <span class="review-comment-text">{{item.comment}}@if(item.truncated){ &hellip;}</span>
+              <span class="result-line">Line {{item.line+1}} &#8599;</span>
+            </button>}
+          </div>
+          }
+        </section>
+        }@empty{
+        <div class="compact-empty">
+          No open review comments in {{inboxScope()==='all'?'any':inboxScope()}} changes of the selected repositories.
+        </div>
+        }
+        @if(inbox()?.unavailable?.length){
+        <details class="source-notices">
+          <summary>Some documents could not be read for comments</summary>
+          @for(item of inbox()!.unavailable;track $index){
+          <p>{{item}}</p>
+          }
+        </details>
+        }
+      </section>
       <div class="section-heading spaced">
         <div>
           <h2>Pick up where you left off</h2>
@@ -269,6 +324,14 @@
             {{change.repositories.map(repositoryLabel.bind(this)).join(' · ')}}
             <span class="card-source">{{sourceShort(change.sourceId)}}</span>
           </div>
+          @let comments=commentCount(change);
+          @let updated=updatedDocs(change);
+          @if(comments||updated.length){
+          <div class="card-chips">
+            @if(comments){<span class="chip comments-chip">{{comments}} {{comments===1?'comment':'comments'}}</span>}
+            @if(updated.length){<span class="chip updated-chip" [attr.title]="'Differs from your last read: '+updated.join(', ')">Updated since read</span>}
+          </div>
+          }
           <div class="card-documents">
             @for(doc of change.documents.slice(0,4);track doc.path){<button
               (click)="openChange(change,doc.path)"
@@ -640,6 +703,19 @@
       >
         &#8635;
       </button>
+      <button
+        class="secondary-button"
+        [disabled]="documentLoading()"
+        (click)="markRead()"
+      >
+        Mark as read</button
+      >@if(selectedChange()){<button
+        class="secondary-button"
+        [disabled]="documentLoading()"
+        (click)="markChangeRead()"
+      >
+        Mark change read</button
+      >}
       <button class="secondary-button" (click)="copyLink()">
         Copy link &#8599;</button
       ><button
@@ -659,9 +735,9 @@
       {{item.label}}</button
     >}
     <div class="document-mode">
-      <button [class.selected]="!sourceView()" (click)="sourceView.set(false)">
+      <button [class.selected]="!sourceView()" (click)="setSourceView(false)">
         Read</button
-      ><button [class.selected]="sourceView()" (click)="sourceView.set(true)">
+      ><button [class.selected]="sourceView()" (click)="setSourceView(true)">
         Source
       </button>
     </div>
@@ -674,7 +750,57 @@
       {{selectedChange()?.totalTasks}}}@else{Task progress unavailable}</span
     >
   </div>
-  @if(missingDocuments().length){
+  @if(readerComments().length||reviews().length){
+  <details class="comment-menu">
+    <summary>
+      {{readerComments().length}} open {{readerComments().length===1?'comment':'comments'}} in this change@if(selectedChange()){ ·
+      {{documentCommentCount(selectedChange()!,doc.path)}} in this document}
+    </summary>
+    @for(item of readerComments();track item.path+item.line){<button
+      type="button"
+      class="review-entry"
+      (click)="openReview(item)"
+    >
+      <span class="result-path">{{item.path}}</span>
+      @if(item.quote){<span class="review-quote">&ldquo;{{item.quote}}&rdquo;</span>}
+      <span class="review-comment-text">{{item.comment}}@if(item.truncated){ &hellip;}</span>
+    </button>}
+  </details>
+  } @if(readMarks();as marks){
+  <div class="read-banner" role="status">
+    <strong>Changed since last read</strong>
+    <span class="muted small">{{changeStatus(marks)}}</span>
+    <div class="read-banner-actions">
+      <button
+        class="secondary-button"
+        aria-keyshortcuts="["
+        [disabled]="!changeCount()"
+        (click)="navigateChange(-1)"
+      >
+        Previous change</button
+      ><button
+        class="secondary-button"
+        aria-keyshortcuts="]"
+        [disabled]="!changeCount()"
+        (click)="navigateChange(1)"
+      >
+        Next change
+      </button>
+    </div>
+  </div>
+  } @if(removedComments().length){
+  <details class="removed-comments">
+    <summary>
+      Removed since last read · {{removedComments().length}} review {{removedComments().length===1?'comment':'comments'}}
+    </summary>
+    @for(item of removedComments();track $index){
+    <div class="removed-comment">
+      <blockquote class="review-reference">Regarding the preceding passage@if(item.quote){: “{{item.quote}}”}</blockquote>
+      <p>{{item.text}}</p>
+    </div>
+    }
+  </details>
+  } @if(missingDocuments().length){
   <div class="missing-documents">
     Unavailable documents: {{missingDocuments().join(', ')}}
   </div>
@@ -713,7 +839,7 @@
     </aside>
     <div class="document-scroll" (scroll)="onScroll($event)">
       @if(sourceView()){
-      <pre class="source-text">{{doc.text}}</pre>
+      <pre class="source-text">@for(part of sourceParts();track $index){<span [class.changed-since-read]="part.changed" [attr.data-read-state]="part.changed?'changed':null" [attr.tabindex]="part.changed?-1:null">{{part.text}}</span>}</pre>
       @for(review of reviews();track review.line){
       <aside class="review-note">
         <div class="review-note-header">

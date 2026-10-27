@@ -97,6 +97,7 @@ internal static class DashboardHost
         var catalog = new SourceCatalog(settings, journal, commands ?? new LocalCommand(), repository ?? Environment.CurrentDirectory);
         var documents = new DocumentService(catalog);
         var state = new DashboardState(settings.DataDirectory);
+        var reads = new ReadBaselineService(catalog, documents, new ReadBaselineStore(settings.DataDirectory));
         app.Use(async (context, next) =>
         {
             var host = context.Request.Host;
@@ -144,6 +145,11 @@ internal static class DashboardHost
         app.MapPost("/api/comments", (CommentRequest request, CancellationToken ct) => documents.CommentAsync(request, ct));
         app.MapPost("/api/comments/edit", (ReviewMutationRequest request, CancellationToken ct) => documents.MutateCommentAsync(request, delete: false, ct));
         app.MapPost("/api/comments/delete", (ReviewMutationRequest request, CancellationToken ct) => documents.MutateCommentAsync(request, delete: true, ct));
+        app.MapPost("/api/reviews", (ReviewsRequest request, CancellationToken ct) => documents.ReviewsAsync(request, ct));
+        app.MapPost("/api/reads/get", async (ReadDocumentRequest request, CancellationToken ct) =>
+            await reads.GetAsync(request, ct) is { } baseline ? Results.Json(baseline) : Results.Text("null", "application/json"));
+        app.MapPost("/api/reads/mark", (ReadMarkRequest request, CancellationToken ct) => reads.MarkAsync(request, ct));
+        app.MapGet("/api/reads/summary", (CancellationToken ct) => reads.SummaryAsync(ct));
         app.MapPost("/api/search", (SearchRequest request, CancellationToken ct) => documents.SearchAsync(request, ct));
         app.MapPost("/api/link", (LinkRequest request, CancellationToken ct) => documents.LinkAsync(request.Document, request.Target, ct));
         app.MapFallback("/{**path}", (HttpContext context) => Asset(context.Request.Path.Value ?? "/"));

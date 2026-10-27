@@ -79,3 +79,47 @@ These are fixture measurements from an in-process harness (Release build, fake C
 | 1,280 Markdown files (20 active and 300 archived changes) | 727 ms, 835 ms | 17.5 ms, 19.3 ms |
 
 The catalog revision and a hash over every change's document order, content stamp and task stamp were identical before and after for both fixtures. A timed-out result is now remembered for 30 s (never longer than the 60 s lifetime): a timed-out `openspec context` is still reported as the source error, while a timed-out git or `openspec list` result leaves worktrees or task progress out for the backoff window. So a hanging CLI is spawned at most twice a minute per checkout instead of on every refresh.
+
+## Review inbox (add-review-inbox)
+
+Recorded on 2026-10-27 on Windows 10.0.26300.0, using .NET SDK 10.0.113, Node 24.13.0, OpenSpec CLI 1.13.1 (for the Release-build run), and headless Microsoft Edge. All documents, comments and baselines used isolated synthetic fixtures under ignored artifacts directories.
+
+### Dependency
+
+- `diff` (jsdiff) 9.0.0, pinned exactly in `dashboard/package.json` and `package-lock.json`. It was published on 2026-04-13, more than two weeks before use. The API used is `diffLines(old, new, { timeout })`, checked against the library's current documentation; a timed-out comparison returns `undefined` and is reported as incomplete.
+
+### Validation results
+
+- Locked restore, clean `npm ci --prefix dashboard` and Release build passed with no warnings.
+- Full .NET suite (Release): 262 passed, none skipped. New coverage: marker listing by active, archived and all scope, repository filtering, fenced-code exclusion, truncation without splitting surrogate pairs, unreadable documents and sources reported as unavailable (scoped to the requested repositories), no reparse and no path resolution on a warm listing (the marker cache is keyed by catalog identity and the catalog fingerprint, and a miss resolves each change directory once), a document deleted or replaced by an unreadable one between listings not served from the cache, a marker-cache bound of 512 entries with least-recently-used eviction in which a second listing over 520 documents reparses only the 8 over the bound (a parse count, over three rounds), listing misses leaving the reader's document cache alone, zero reparses over 50 repeated listings, catalog document fingerprints with unchanged revision semantics, the baseline store (exact text, deduplication, 300-key and 64 MiB bounds, least-recently-read eviction across many marks over many days, unreferenced-blob deletion, corrupt and oversized indexes reset, an index of another schema version preserved untouched and reported unavailable, an index held open with `FileShare.None` during `Mark`, `Get` and `Entries` writing and deleting nothing, a blob held open during `Get` keeping its entry, tampered entries and damaged blobs), and the HTTP endpoints (401 for every new endpoint before authorization with nothing written, 409 for a stale revision with the baseline kept, 400 for escaping paths and for malformed bodies (`{}`, a null or empty `document`, a missing revision) on `reads/get`, `reads/mark` and `reviews`, 404 for unknown changes, baseline surviving an archive move, BOM and UTF-16 documents).
+- Angular unit tests: 81 passed in 8 files. New coverage: grouping and counts per change and document, scope filtering, diff-to-block mapping with known diffs (blocks by `data-start`, removed passages by position, escaped removed text, stops), source-view segments, first open, Mark as read, Mark change read, own comment save after reading (no highlight) and after an unread agent edit (still highlighted), removed-since-last-read by id and by exact legacy marker text, updated-since-read chips and clearing on open, `[` and `]` handling (ignored while typing), and idle polling making no overview requests while the catalog revision is unchanged. Removing the baseline advance after own writes made the two own-write tests fail.
+- Browser acceptance against the packaged build (`scripts/package.ps1`, `WORKLOG_DASHBOARD_EXECUTABLE` set to the packaged `worklog.exe`, `WORKLOG_DASHBOARD_NO_NODE=true`): 19 of 19 scenarios passed, including the three new ones (comments across two changes opened at their note and following an agent removing a marker; an agent's edit of a read design highlighted with the addressed comment listed, keyboard navigation, source view, Mark as read, baseline kept across reload and own comment not highlighted; an archived change's leftover marker listed read-only).
+- Browser acceptance against the Release build with the OpenSpec CLI on the PATH: the new scenarios pass; the full serial run stops at the existing scenario "keeps history available when a declared store cannot be resolved" (tracked as QA-007, unchanged), so the three later scenarios were run on their own and passed.
+- Two defects were found by these browser runs and fixed: the card hint did not clear after Mark as read because 100-ns write times exceed what a JavaScript number holds exactly (fingerprints now travel as text), and a heading whose slug starts with `review-` was mistaken for a comment anchor (comment links now use `note:<line>`, which no heading slug can produce).
+
+### Idle cost with the overview visible
+
+This record replaces an earlier one that reported 0 OpenSpec and 0 git spawns. That window (60 s) missed the 60 s CLI refresh round, and its method was invalid: git was filtered on `child_start` events, which a directly invoked git never emits, and the logging shim was an `openspec.cmd` that the dashboard does not run (`LocalCommand` runs `node` with `node_modules/@fission-ai/openspec/bin/openspec.js` found on the PATH).
+
+Method: the three-repository fixture, the packaged build (`scripts/package.ps1`, `worklog.exe`), a free port with `--no-open`, a disposable data directory, headless Edge on the Ongoing page with the review overview and change cards visible, 15 s of settling, then one 135 s window that spans two refresh rounds. OpenSpec spawns were counted by a logging `openspec.js` placed in a `node_modules/@fission-ai/openspec/bin` directory first on the PATH, which then runs the real CLI. git spawns were counted from `GIT_TRACE2_EVENT` `start` events (one per git process). Requests were counted in the browser.
+
+| 135 s window, idle, overview visible | Count | Per 60 s round |
+| --- | ---: | ---: |
+| OpenSpec CLI spawns | 16 | 8 |
+| git spawns | 8 | 4 |
+| API requests | 64 (all `GET /api/catalog`) | |
+| `/api/reviews`, `/api/reads/*`, `/api/search`, `/api/timeline`, `/api/document`, preference writes | 0 | |
+
+The per-round cost (8 OpenSpec and 4 git spawns) equals the reliability record, so the overview adds no idle cost. The overview and the read hints are requested at start and again only when the catalog revision changes.
+
+### Warm review listing
+
+The listing `POST /api/reviews` with `scope: "all"` is refreshed on every catalog revision change. It answers an unchanged document from a marker cache keyed by the document's catalog identity (source, variant, change, path) and the catalog's `length:lastWriteTicks` fingerprint, so a warm listing resolves no path and stats no file. On a miss each change directory is resolved once and its documents are resolved below it. The cache is bounded by the catalog, not by a count: after each listing, the entries of documents that are no longer in the current catalog snapshot are removed, and nothing is removed by age or number. A listing over one scope or repository filter therefore keeps the entries of the other documents warm. A listing is at most one catalog refresh (2 s) behind a file, which is the freshness the client already has.
+
+In-process measurements of `DocumentService.ReviewsAsync` (Release, fixture of 900 synthetic documents with one marker each, 10 changes active and 80 archived, 10 documents per change, `scope: "all"`, 12 warm calls after one cold call). They exclude HTTP and JSON, so they are lower than the earlier HTTP probe of the same shape.
+
+| Documents in scope (`all`) | Before the marker cache | Cold call | Warm call |
+| --- | ---: | ---: | ---: |
+| 900 | 1,648 ms median (1,469 to 2,107 ms), every document reparsed on every call | 666 ms, 900 parses | 0.53 ms median (0.36 to 10.4 ms), zero parses |
+
+The target of under about 50 ms is met at 900 documents, above the former 512 bound.

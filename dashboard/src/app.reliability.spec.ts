@@ -14,7 +14,7 @@ const change: Change = {
   variant: "v",
   archived: false,
   repositories: ["r"],
-  documents: [{ path: "design.md", label: "design" }],
+  documents: [{ path: "design.md", label: "design", fingerprint: "1:1" }],
   completedTasks: 2,
   totalTasks: 7,
   error: null,
@@ -87,6 +87,10 @@ function setup() {
         ? Response.json({ error: "Unknown reporting timezone." }, { status: 400 })
         : Response.json(timeline);
     if (path === "/api/search") return Response.json({ matches: [], limitReached: false, unavailable: [] });
+    if (path === "/api/reviews") return Response.json({ items: [], unavailable: [] });
+    if (path === "/api/reads/summary") return Response.json({ entries: {} });
+    if (path === "/api/reads/get") return Response.json(null);
+    if (path === "/api/reads/mark") return Response.json({ revision: body.revision, fingerprint: "1:1" });
     if (path === "/api/document")
       return Response.json(
         body.knownRevision === server.document.revision
@@ -342,6 +346,7 @@ describe("idle polling", () => {
     app["now"] = () => clock.now;
     app["evaluate"]();
     app["journalSnapshot"] = server.catalog.journalSnapshot;
+    app["overviewRevision"] = server.catalog.revision;
     app.searchText = "needle";
     await app.search();
     await app["loadDocument"]({ sourceId: "s", change: "demo", path: "design.md" });
@@ -360,6 +365,8 @@ describe("idle polling", () => {
     expect(server.calls.filter((c) => c.path === "/api/document").every((c) => c.body.knownRevision === "r1")).toBe(true);
     expect(server.count("/api/search")).toBe(0);
     expect(server.count("/api/timeline")).toBe(0);
+    // The overview and the read hints are not requested again while the catalog revision stays the same.
+    expect(server.calls.filter((c) => c.path === "/api/reviews" || c.path.startsWith("/api/reads/"))).toEqual([]);
     expect(puts(server)).toHaveLength(0);
     // The unchanged answer keeps the rendered document; nothing was parsed again.
     expect(app.html()).toBe(rendered);
@@ -376,6 +383,8 @@ describe("idle polling", () => {
     await app["poll"]();
     expect(server.count("/api/search")).toBe(1);
     expect(server.count("/api/timeline")).toBe(0);
+    await vi.waitFor(() => expect(server.count("/api/reviews")).toBe(1));
+    expect(server.count("/api/reads/summary")).toBe(1);
     server.catalog = { ...server.catalog, journalSnapshot: 6 };
     await app["poll"]();
     const afterJournal = server.count("/api/timeline");
@@ -383,6 +392,8 @@ describe("idle polling", () => {
     await app["poll"]();
     expect(server.count("/api/timeline")).toBe(afterJournal);
     expect(server.count("/api/search")).toBe(1);
+    // A journal change moves History, not the overview.
+    expect(server.count("/api/reviews")).toBe(1);
     expect([app.from, app.to]).toEqual(["2026-09-28", "2026-10-27"]);
     clock.now = new Date("2026-10-28T00:30:00Z");
     await app["poll"]();

@@ -49,7 +49,7 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
         return (file, change.Archived, source.Location);
     }
 
-    private Cached Read(string path, bool fresh = false)
+    private Cached Read(string path, bool fresh = false, bool cacheResult = true)
     {
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -64,6 +64,9 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
             if (before.Length != after.Length || before.LastWriteTimeUtc != after.LastWriteTimeUtc || bytes.LongLength != after.Length) continue;
             var (encoding, bomLength) = DetectEncoding(bytes);
             var text = encoding.GetString(bytes, bomLength, bytes.Length - bomLength);
+            // A read that is not cached is for parsing only: it needs neither the revision nor the hash.
+            if (!cacheResult)
+                return new Cached(after.Length, after.LastWriteTimeUtc, text, "", encoding, bomLength > 0, 0);
             var value = new Cached(after.Length, after.LastWriteTimeUtc, text,
                 Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)), encoding, bomLength > 0, Interlocked.Increment(ref order));
             HashReads++;
@@ -185,21 +188,31 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
         return await GetAsync(selection, cancellationToken);
     }
 
-    public async Task<SearchResults> SearchAsync(SearchRequest request, CancellationToken token = default)
+    /// <summary>
+    /// The selected repositories (null for all) and the notices that make a listing over them incomplete.
+    /// Only notices about the requested repositories count, so an unrelated broken source does not taint a scoped listing.
+    /// </summary>
+    private static (string[]? Selected, List<string> Unavailable) Unavailable(CatalogSnapshot snapshot, string[]? repositories)
     {
-        if (request.Query.Length is < 1 or > 500) throw new ArgumentException("Search text must contain between 1 and 500 characters.");
-        if (request.Scope is not ("active" or "archived" or "all")) throw new ArgumentException("scope must be active, archived, or all.");
-        var snapshot = await catalog.GetAsync(token);
-        var results = new List<SearchMatch>();
-        // Only notices about the requested repositories can make this search incomplete.
-        var selected = request.Repositories is { Length: > 0 } ? request.Repositories : null;
-        bool InScope(IEnumerable<string> repositories) => selected is null || repositories.Intersect(selected).Any();
+        var selected = repositories is { Length: > 0 } ? repositories : null;
+        bool InScope(IEnumerable<string> ids) => selected is null || ids.Intersect(selected).Any();
         var unavailable = new List<string>();
         foreach (var repository in snapshot.Repositories.Where(r => selected is null || selected.Contains(r.Id)))
             if (!snapshot.Sources.Any(s => s.Repositories.Contains(repository.Id)))
                 unavailable.Add(repository.Label + ": no available OpenSpec source. Recorded history is still available.");
         unavailable.AddRange(snapshot.Sources.Where(s => s.Error is not null && InScope(s.Repositories)).Select(s => s.Location + ": " + s.Error));
         unavailable.AddRange((snapshot.SourceNotices ?? []).Where(n => snapshot.Sources.Any(s => s.Id == n.SourceId && InScope(s.Repositories))).Select(n => n.Text));
+        return (selected, unavailable);
+    }
+
+    public async Task<SearchResults> SearchAsync(SearchRequest request, CancellationToken token = default)
+    {
+        if (request.Query.Length is < 1 or > 500) throw new ArgumentException("Search text must contain between 1 and 500 characters.");
+        if (request.Scope is not ("active" or "archived" or "all")) throw new ArgumentException("scope must be active, archived, or all.");
+        var snapshot = await catalog.GetAsync(token);
+        var results = new List<SearchMatch>();
+        var (selected, unavailable) = Unavailable(snapshot, request.Repositories);
+        bool InScope(IEnumerable<string> repositories) => selected is null || repositories.Intersect(selected).Any();
         foreach (var change in snapshot.Changes.Where(c => (request.Scope == "all" || c.Archived == (request.Scope == "archived")) && InScope(c.Repositories)))
         {
             foreach (var document in change.Documents)

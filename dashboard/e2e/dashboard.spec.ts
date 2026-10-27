@@ -652,3 +652,185 @@ test("keeps history available when a declared store cannot be resolved",async({p
   await page.getByRole('button',{name:'Work history',exact:false}).click();
   await expect(page.locator('.timeline-row').first()).toBeVisible();
 });
+
+/** Writes (or rewrites) the Markdown documents of a change in the isolated fixture. */
+async function writeChange(root: string, name: string, files: Record<string, string>) {
+  const directory = join(root, "openspec", "changes", name);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-10-27\n");
+  for (const [file, text] of Object.entries(files)) await writeFile(join(directory, file), text);
+}
+const structuredMarker = (id: string, quote: string, comment: string) =>
+  `<!-- REVIEW: id=${id}\nTarget: preceding passage\nQuote: ${quote}\nComment:\n${comment}\n-->`;
+const panel = (page: Page) => page.locator(".review-inbox");
+const cardFor = (page: Page, title: string) =>
+  page.locator(".change-card").filter({ has: page.getByRole("button", { name: title, exact: true }) });
+const closeReader = (page: Page) => page.getByRole("button", { name: "Close document reader" }).click();
+
+test("lists open comments across two changes, opens one at its note, and follows an agent removing a marker", async ({ page }, testInfo) => {
+  const info = await fixture();
+  await writeChange(info.repo, "review-inbox-alpha", {
+    "design.md": `# Inbox alpha\n\nAlpha passage one.\n\n<!-- REVIEW: E2E alpha first comment -->\n\nAlpha passage two.\n\n${structuredMarker("a1".repeat(16), "Alpha passage two.", "E2E alpha second comment")}\n\n\`\`\`md\n<!-- REVIEW: E2E syntax only, inside a code example -->\n\`\`\`\n`,
+  });
+  await writeChange(info.otherRepo, "review-inbox-beta", {
+    "design.md": `# Inbox beta\n\nBeta passage.\n\n${structuredMarker("b2".repeat(16), "Beta passage.", "E2E beta comment")}\n`,
+  });
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  const inbox = panel(page);
+  await expect(inbox.getByRole("heading", { name: "Open review comments" })).toBeVisible();
+  const mine = inbox.locator(".review-entry").filter({ hasText: "E2E " });
+  await expect(mine).toHaveCount(3);
+  await expect(inbox).not.toContainText("syntax only");
+  const alpha = inbox.locator(".review-group").filter({ hasText: "Review inbox alpha" });
+  await expect(alpha.locator(".comments-chip")).toHaveText("2 comments");
+  await expect(alpha).toContainText("design.md");
+  await expect(alpha).toContainText("example/worklog");
+  await expect(inbox.locator(".review-group").filter({ hasText: "Review inbox beta" }).locator(".comments-chip")).toHaveText("1 comment");
+  await expect(cardFor(page, "Review inbox alpha").locator(".comments-chip")).toHaveText("2 comments");
+  await expect(cardFor(page, "Review inbox beta").locator(".comments-chip")).toHaveText("1 comment");
+  await expect(cardFor(page, "Review inbox beta")).toContainText("example/bell-tower");
+  await page.screenshot({ path: testInfo.outputPath("review-inbox.png"), fullPage: true });
+
+  await inbox.locator(".review-entry").filter({ hasText: "E2E alpha second comment" }).click();
+  await expect(page.getByRole("dialog", { name: "OpenSpec document reader" })).toBeVisible();
+  const note = page.locator(".review-note").filter({ hasText: "E2E alpha second comment" });
+  await expect(note).toBeInViewport();
+  await expect(page.locator(".comment-menu summary")).toContainText("2 open comments in this change");
+  await expect(page.locator(".comment-menu summary")).toContainText("2 in this document");
+  await closeReader(page);
+
+  // The agent addresses the first comment by deleting its marker; the overview and the card follow without a reload.
+  const file = join(info.repo, "openspec/changes/review-inbox-alpha/design.md");
+  await writeFile(file, (await readFile(file, "utf8")).replace("<!-- REVIEW: E2E alpha first comment -->\n", ""));
+  await expect(mine).toHaveCount(2);
+  await expect(inbox.locator(".review-entry").filter({ hasText: "E2E alpha first comment" })).toHaveCount(0);
+  await expect(alpha.locator(".comments-chip")).toHaveText("1 comment");
+  await expect(cardFor(page, "Review inbox alpha").locator(".comments-chip")).toHaveText("1 comment");
+});
+
+test("highlights an agent's edit of a read design, lists the addressed comment, and Mark as read clears both", async ({ page }, testInfo) => {
+  const info = await fixture();
+  const id = "c3".repeat(16);
+  const quote = "Keep the reviewer in control of when a change counts as read.";
+  await writeChange(info.repo, "review-loop-demo", {
+    "design.md": `# Review loop demo\n\n## Context\n\nThe agent drafts this design and the reviewer reads it.\n\n## Decision\n\n${quote}\n\n${structuredMarker(id, quote, "E2E please explain how an unread edit is shown.")}\n\n## Consequences\n\nNothing else changes.\n`,
+  });
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  const card = cardFor(page, "Review loop demo");
+  await expect(card.locator(".comments-chip")).toHaveText("1 comment");
+  await card.getByRole("button", { name: /^Design/ }).click();
+  await expect(page.locator(".markdown h1")).toHaveText("Review loop demo");
+  // First open: the current content is the baseline, so nothing is highlighted.
+  await expect(page.locator(".read-banner")).toHaveCount(0);
+  await expect(page.locator(".changed-since-read")).toHaveCount(0);
+  await closeReader(page);
+
+  const file = join(info.repo, "openspec/changes/review-loop-demo/design.md");
+  const edited =
+    (await readFile(file, "utf8"))
+      .replace(quote, "The reviewer decides when a change counts as read; an edit stays marked until then.")
+      .replace(/<!-- REVIEW: id=[\s\S]*?-->\n\n/, "") + "\n## Follow-up\n\nA new section added by the agent.\n";
+  await writeFile(file, edited);
+  await expect(card.locator(".updated-chip")).toHaveText("Updated since read");
+  await expect(card.locator(".comments-chip")).toHaveCount(0);
+  await card.getByRole("button", { name: /^Design/ }).click();
+
+  const banner = page.locator(".read-banner");
+  await expect(banner).toContainText("Changed since last read");
+  const changed = page.locator(".markdown .changed-since-read");
+  await expect(changed.filter({ hasText: "The reviewer decides when a change counts as read" })).toHaveCount(1);
+  await expect(changed.filter({ hasText: "Follow-up" })).toHaveCount(1);
+  await expect(changed.filter({ hasText: "A new section added by the agent." })).toHaveCount(1);
+  await expect(changed.filter({ hasText: "Nothing else changes." })).toHaveCount(0);
+  await expect(changed.filter({ hasText: "The agent drafts this design" })).toHaveCount(0);
+  await expect(page.locator(".markdown .removed-since-read").filter({ hasText: "(1 line)" })).toContainText("Keep the reviewer in control");
+  await expect(page.locator(".removed-comments")).toContainText("Removed since last read");
+  await page.locator(".removed-comments summary").click();
+  await expect(page.locator(".removed-comments")).toContainText("E2E please explain how an unread edit is shown.");
+  await expect(page.locator(".removed-comments .review-reference")).toContainText(quote);
+  await page.screenshot({ path: testInfo.outputPath("changed-since-read.png") });
+
+  // Keyboard: ] and [ step through the changes.
+  await page.locator(".reader").focus();
+  await page.keyboard.press("]");
+  await expect(banner).toContainText("Change 1 of 2");
+  await expect(page.locator(".removed-since-read summary:focus, .changed-since-read:focus")).toHaveCount(1);
+  await page.getByRole("button", { name: "Next change", exact: true }).click();
+  await expect(banner).toContainText("Change 2 of 2");
+  await expect(page.locator("h2.changed-since-read:focus")).toHaveText("Follow-up");
+  await page.keyboard.press("[");
+  await expect(banner).toContainText("Change 1 of 2");
+  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(page.locator(".source-text .changed-since-read").first()).toBeVisible();
+  await expect(page.locator(".source-text .changed-since-read").filter({ hasText: "A new section added by the agent." })).toHaveCount(1);
+  await page.getByRole("button", { name: "Read", exact: true }).click();
+
+  await page.getByRole("button", { name: "Mark as read", exact: true }).click();
+  await expect(banner).toHaveCount(0);
+  await expect(page.locator(".changed-since-read")).toHaveCount(0);
+  await expect(page.locator(".removed-since-read")).toHaveCount(0);
+  await expect(page.locator(".removed-comments")).toHaveCount(0);
+  await closeReader(page);
+  await expect(card.locator(".updated-chip")).toHaveCount(0);
+  // The baseline is stored by the server, so a reload keeps it.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Pick up where you left off" })).toBeVisible();
+  await card.getByRole("button", { name: /^Design/ }).click();
+  await expect(page.locator(".markdown h1")).toHaveText("Review loop demo");
+  await expect(page.locator(".read-banner")).toHaveCount(0);
+  await expect(card.locator(".updated-chip")).toHaveCount(0);
+
+  // The user's own comment, saved right after reading, is not a change either.
+  await page.locator(".markdown p").filter({ hasText: "Nothing else changes." }).click();
+  await page.getByRole("textbox", { name: "Review comment" }).fill("E2E my own note after reading.");
+  await page.getByRole("button", { name: /^Save comment/ }).click();
+  await expect(page.locator(".review-note").filter({ hasText: "E2E my own note after reading." })).toBeVisible();
+  await expect(page.locator(".read-banner")).toHaveCount(0);
+  await expect(page.locator(".changed-since-read")).toHaveCount(0);
+  await expect(page.locator(".removed-comments")).toHaveCount(0);
+  await closeReader(page);
+  await expect(card.locator(".updated-chip")).toHaveCount(0);
+  await expect(card.locator(".comments-chip")).toHaveText("1 comment");
+  await card.getByRole("button", { name: /^Design/ }).click();
+  await expect(page.locator(".read-banner")).toHaveCount(0);
+  await closeReader(page);
+});
+
+test("lists a comment left behind in an archived change as read-only", async ({ page }, testInfo) => {
+  const info = await fixture();
+  await writeChange(info.repo, "archive/2026-10-02-review-leftover", {
+    "design.md": "# Leftover\n\nAn archived passage.\n\n<!-- REVIEW: E2E leftover from before the archive -->\n",
+  });
+  await writeChange(info.repo, "review-active-control", {
+    "design.md": "# Active control\n\nAn active passage.\n\n<!-- REVIEW: E2E active control comment -->\n",
+  });
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  const inbox = panel(page);
+  await expect(inbox.getByRole("heading", { name: "Open review comments" })).toBeVisible();
+  await expect(inbox.locator(".review-entry").filter({ hasText: "E2E active control comment" })).toBeVisible();
+  // Active scope is the default, so the archived comment is not listed.
+  await expect(inbox).not.toContainText("E2E leftover");
+  await inbox.getByRole("button", { name: "Archived", exact: true }).click();
+  const entry = inbox.locator(".review-entry").filter({ hasText: "E2E leftover from before the archive" });
+  await expect(entry).toBeVisible();
+  const group = inbox.locator(".review-group").filter({ hasText: "E2E leftover from before the archive" });
+  await expect(group.locator(".badge")).toContainText("Archived");
+  await expect(inbox).not.toContainText("E2E active control");
+  await page.screenshot({ path: testInfo.outputPath("review-inbox-archived.png"), fullPage: true });
+  await entry.click();
+  await expect(page.getByRole("dialog", { name: "OpenSpec document reader" })).toBeVisible();
+  await expect(page.locator(".reader-provenance .badge")).toHaveText("Archived");
+  const note = page.locator(".review-note").filter({ hasText: "E2E leftover from before the archive" });
+  await expect(note).toBeVisible();
+  await expect(note).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Edit review comment", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delete review comment", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save comment" })).toHaveCount(0);
+  await closeReader(page);
+  await inbox.getByRole("button", { name: "All", exact: true }).click();
+  await expect(inbox.locator(".review-entry").filter({ hasText: "E2E leftover" })).toHaveCount(1);
+  await expect(inbox.locator(".review-entry").filter({ hasText: "E2E active control" })).toHaveCount(1);
+});

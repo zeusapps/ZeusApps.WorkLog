@@ -1,5 +1,6 @@
-import MarkdownIt from "markdown-it";
+import MarkdownIt, { type MarkdownIt as Parser, type Token } from "markdown-it";
 import DOMPurify from "dompurify";
+import { intersects, type ReadMarks } from "./diff";
 export interface Heading {
   id: string;
   text: string;
@@ -18,7 +19,16 @@ export interface RenderedDocument {
   headings: Heading[];
   reviews: Review[];
 }
-export function renderMarkdown(text: string, canComment = false): RenderedDocument {
+/** The marker text of every review comment in a document, found by the same rule the reader renders them with. */
+export function parseReviews(text: string): Review[] {
+  return renderMarkdown(text).reviews;
+}
+
+/**
+ * Renders a document. With `marks`, blocks that share a line with a changed range carry the `changed-since-read` class,
+ * and each removed passage becomes a collapsed `removed-since-read` disclosure before the top-level block it preceded.
+ */
+export function renderMarkdown(text: string, canComment = false, marks: ReadMarks | null = null): RenderedDocument {
   const md = new MarkdownIt({
     html: false,
     linkify: false,
@@ -61,8 +71,9 @@ export function renderMarkdown(text: string, canComment = false): RenderedDocume
       marker: String(t.meta?.["marker"] ?? ""),
     };
     reviews.push(review);
+    const changed = t.meta?.["changed"] === true;
     return (
-      '<aside class="review-note" data-review-line="' + review.line + '">'
+      '<aside class="review-note' + (changed ? ' changed-since-read" data-read-state="changed' : '') + '" tabindex="-1" data-review-line="' + review.line + '">'
       + '<div class="review-note-header"><strong>Review comment</strong>'
       + (canComment ? '<div class="review-note-actions"><button type="button" data-review-action="edit" aria-label="Edit review comment">Edit</button>'
         + '<button type="button" data-review-action="delete" aria-label="Delete review comment">Delete</button></div>' : '')
@@ -75,7 +86,17 @@ export function renderMarkdown(text: string, canComment = false): RenderedDocume
     '<span class="image-placeholder">[Image: ' +
     md.utils.escapeHtml(_tokens[index].content) +
     "]</span>";
-  const tokens = md.parse(text, {});
+  md.renderer.rules["worklog_removed"] = (tokens, index) => {
+    const removed = tokens[index];
+    const body = removed.content.replace(/\n$/, "");
+    const count = body.split("\n").length;
+    return (
+      '<details class="removed-since-read" data-removed-line="' + removed.map![0] + '"><summary>Removed since last read ('
+      + count + (count === 1 ? " line" : " lines") + ')</summary><pre>' + md.utils.escapeHtml(body) + '</pre></details>'
+    );
+  };
+  let tokens = md.parse(text, {});
+  if (marks) tokens = applyMarks(md, tokens, marks);
   const counts = new Map<string, number>();
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -147,6 +168,7 @@ export function renderMarkdown(text: string, canComment = false): RenderedDocume
           ts[index].map![1] +
           '" tabindex="0"'
         : "") +
+      (ts[index].meta?.["changed"] ? ' class="changed-since-read" data-read-state="changed"' : "") +
       ">" +
       render(ts, index, options, env, renderer) +
       "</div>";
@@ -155,7 +177,60 @@ export function renderMarkdown(text: string, canComment = false): RenderedDocume
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "svg", "math", "iframe", "object", "style", "script"],
     FORBID_ATTR: ["style"],
-    ADD_ATTR: ["data-start", "data-end", "data-review-line", "data-review-action", "tabindex"],
+    ADD_ATTR: ["data-start", "data-end", "data-review-line", "data-review-action", "data-read-state", "data-removed-line", "tabindex"],
   });
   return { html, headings, reviews };
+}
+
+/**
+ * Marks the innermost blocks that share a line with a changed range, and inserts the removed passages. A container
+ * (list, table, quote) is marked only when none of its visible children is, so one edited list item highlights that
+ * item rather than the whole list.
+ */
+function applyMarks(md: Parser, tokens: Token[], marks: ReadMarks): Token[] {
+  const stack: { token: Token; hit: boolean; child: boolean }[] = [];
+  const mark = (token: Token) => {
+    if (token.type === "fence" || token.type === "code_block" || token.type === "worklog_review")
+      token.meta = { ...token.meta, changed: true };
+    else {
+      token.attrJoin("class", "changed-since-read");
+      token.attrSet("data-read-state", "changed");
+    }
+    for (const ancestor of stack) ancestor.child = true;
+  };
+  for (const token of tokens) {
+    // Hidden paragraphs of tight lists render no element, so the list item stands for them.
+    if (token.hidden || token.type === "inline") continue;
+    if (token.nesting === -1) {
+      const top = stack.at(-1);
+      if (top && top.token.type === token.type.replace(/_close$/, "_open")) {
+        stack.pop();
+        if (top.hit && !top.child) mark(top.token);
+      }
+      continue;
+    }
+    if (!token.map) continue;
+    const hit = intersects(marks.changed, token.map[0], token.map[1]);
+    if (token.nesting === 1) stack.push({ token, hit, child: false });
+    else if (hit) mark(token);
+  }
+  return insertRemoved(md, tokens, marks);
+}
+
+/** Puts each removed passage before the top-level block that contains, or next follows, the line it preceded. */
+function insertRemoved(md: Parser, tokens: Token[], marks: ReadMarks): Token[] {
+  if (marks.removed.length === 0) return tokens;
+  const Token = new md.core.State("", md, {}).Token;
+  const before = new Map<number, Token[]>();
+  const trailing: Token[] = [];
+  for (const hunk of marks.removed) {
+    const removed = new Token("worklog_removed", "", 0);
+    removed.map = [hunk.line, hunk.line];
+    removed.content = hunk.text;
+    removed.block = true;
+    const at = tokens.findIndex((t) => t.level === 0 && t.nesting !== -1 && !!t.map && t.map[1] > hunk.line);
+    if (at < 0) trailing.push(removed);
+    else before.set(at, [...(before.get(at) ?? []), removed]);
+  }
+  return [...tokens.flatMap((t, index) => [...(before.get(index) ?? []), t]), ...trailing];
 }

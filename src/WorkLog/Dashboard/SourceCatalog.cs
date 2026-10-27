@@ -10,7 +10,8 @@ namespace WorkLog.Dashboard;
 internal sealed record DashboardRepository(string Id, string Label);
 internal sealed record DocumentSource(string Id, string[] Repositories, string Location, string? Error, [property: JsonIgnore] string Root,
     [property: JsonIgnore] string? StoreId = null);
-internal sealed record ChangeDocument(string Path, string Label);
+/// <summary>A change document. <paramref name="Fingerprint"/> is its length and last write time (<c>length:lastWriteTicks</c>), taken from the catalog's per-file stamp.</summary>
+internal sealed record ChangeDocument(string Path, string Label, string Fingerprint);
 internal sealed record ChangeInfo(string SourceId, string Name, string DirectoryName, string Variant, bool Archived,
     string[] Repositories, ChangeDocument[] Documents, int? CompletedTasks, int? TotalTasks, string? Error, [property: JsonIgnore] string Directory,
     [property: JsonIgnore] string ContentStamp = "", [property: JsonIgnore] string TaskStamp = "");
@@ -208,7 +209,7 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
                 if (changes[c].SourceId == source.Id && !changes[c].Archived && counts.TryGetValue(changes[c].DirectoryName, out var count))
                     changes[c] = changes[c] with { CompletedTasks = count.Complete, TotalTasks = count.Total };
         }
-        var revision = ContentHash.Compute(Json.Encode(changes.Select(c => new { c.SourceId, c.DirectoryName, c.Archived, c.Documents, c.CompletedTasks, c.TotalTasks, c.ContentStamp })));
+        var revision = ContentHash.Compute(Json.Encode(changes.Select(c => new { c.SourceId, c.DirectoryName, c.Archived, Documents = c.Documents.Select(d => new { d.Path, d.Label }), c.CompletedTasks, c.TotalTasks, c.ContentStamp })));
         return new(repositories.Values.OrderBy(r => r.Label, StringComparer.Ordinal).ToArray(), sources.Values.ToArray(), changes.ToArray(), launchRepository,
             revision, notices.ToArray(), journalSnapshot, sourceNotices.ToArray());
     }
@@ -258,9 +259,9 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
             var logical = archived ? ArchivePrefix().Replace(name, "", 1) : name;
             var files = SourcePath.MarkdownFiles(canonicalRoot, safe)
                 .Select(f => (Relative: Path.GetRelativePath(safe, f.Path).Replace('\\', '/'), f.Stamp)).ToArray();
-            var documents = files.Select(f => f.Relative)
-                .OrderBy(p => p == "design.md" ? 0 : p == "proposal.md" ? 1 : p == "tasks.md" ? 2 : 3).ThenBy(p => p, StringComparer.Ordinal)
-                .Select(p => new ChangeDocument(p, p.EndsWith(".md", StringComparison.Ordinal) ? p[..^3] : p)).ToArray();
+            var documents = files
+                .OrderBy(f => f.Relative == "design.md" ? 0 : f.Relative == "proposal.md" ? 1 : f.Relative == "tasks.md" ? 2 : 3).ThenBy(f => f.Relative, StringComparer.Ordinal)
+                .Select(f => new ChangeDocument(f.Relative, f.Relative.EndsWith(".md", StringComparison.Ordinal) ? f.Relative[..^3] : f.Relative, f.Stamp.Replace('@', ':'))).ToArray();
             // Length and write time of each Markdown file: edits change the catalog revision without reading file contents.
             var stamps = files.OrderBy(f => f.Relative, StringComparer.Ordinal).ToArray();
             var content = ContentHash.Compute(string.Join('\n', stamps.Select(f => f.Relative + "=" + f.Stamp)));
@@ -276,12 +277,16 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
     }
 
     public static ChangeInfo Resolve(CatalogSnapshot catalog, string sourceId, string name, string? variant = null)
+        => Find(catalog, sourceId, name, variant) with { Name = name };
+
+    /// <summary>Finds the one change a request names, keeping its logical name even when the request used the directory name.</summary>
+    public static ChangeInfo Find(CatalogSnapshot catalog, string sourceId, string name, string? variant = null)
     {
         var candidates = catalog.Changes.Where(c => c.SourceId == sourceId && (c.Name == name || c.DirectoryName == name)
             && (variant is null || c.Variant == variant)).ToArray();
         if (candidates.Length == 0) throw new FileNotFoundException("Change is unavailable. Refresh its source or select another checkout.");
         if (candidates.Length != 1) throw new DashboardConflictException("Several documents match this change. Select a source copy.");
-        return candidates[0] with { Name = name };
+        return candidates[0];
     }
 
     private static string ErrorText(JsonElement root, string fallback)

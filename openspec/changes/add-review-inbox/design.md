@@ -28,7 +28,7 @@ See proposal.md for motivation. Relevant current code:
 ### 1. Marker listing endpoint
 `POST /api/reviews { repositories: string[], scope: "active"|"archived"|"all" }` returns `{ items: ReviewItem[], unavailable: string[] }`.
 - `ReviewItem` contains `sourceId`, `change`, `variant`, `path`, `archived`, `repositories`, `line`, `id`, `quote` (truncated to 280 chars), and `comment` (truncated to 500 chars, with a `truncated` flag).
-- The server iterates catalog documents in scope and parses each with `ReviewMarker.Parse`. It caches parsed markers per canonical path keyed by length and last-write time, with a bounded cache (512 entries, oldest-first eviction).
+- The server iterates catalog documents in scope and parses each with `ReviewMarker.Parse`. It caches parsed markers per catalog document (source, variant, change directory, path), keyed by the catalog's `fingerprint` (length and last-write time). The cache is bounded by the catalog: after each listing, entries for documents no longer in the current catalog are removed. Each entry holds only parsed marker text, so the cache's size follows the total size of the markers. A fixed entry cap was rejected, because listings visit documents in the same order every time, so any cap smaller than the catalog makes every overflowing entry miss on every listing.
 - Unavailable rules follow the scoped-notice rules from `fix-dashboard-reliability`.
 - The client requests it on load and when `catalog.revision` changes.
 - The counts per change and document are derived on the client from the item list. This avoids a second endpoint.

@@ -17,7 +17,7 @@ export interface Change {
   variant: string;
   archived: boolean;
   repositories: string[];
-  documents: { path: string; label: string }[];
+  documents: { path: string; label: string; fingerprint: string }[];
   completedTasks: number | null;
   totalTasks: number | null;
   error: string | null;
@@ -126,6 +126,38 @@ export interface SearchResults {
   matches: Match[];
   limitReached: boolean;
   unavailable: string[];
+}
+/** An open review comment as the overview lists it. */
+export interface ReviewItem {
+  sourceId: string;
+  change: string;
+  variant: string;
+  path: string;
+  archived: boolean;
+  repositories: string[];
+  line: number;
+  id: string | null;
+  quote: string;
+  comment: string;
+  truncated: boolean;
+}
+export interface ReviewList {
+  items: ReviewItem[];
+  unavailable: string[];
+}
+/** The document text as the user last read it. */
+export interface ReadBaseline {
+  revision: string;
+  text: string;
+}
+/** A fingerprint is `length:lastWriteTicks` as text: ticks are too large for a JavaScript number to hold exactly. */
+export interface ReadMarkResult {
+  revision: string;
+  fingerprint: string;
+}
+export interface ReadSummary {
+  /** The fingerprint stored when each remembered document was last read, by baseline key. */
+  entries: Record<string, string>;
 }
 export interface Selection {
   start: number;

@@ -21,6 +21,19 @@ import {
   localDate,
 } from "./api";
 import { renderMarkdown, Heading, Review } from "./markdown";
+import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
+import {
+  baselineKey,
+  changeKey,
+  countByChange,
+  countByDocument,
+  documentKey,
+  groupReviews,
+  removedReviews,
+  ReviewGroup,
+  ReviewScope,
+  updatedDocuments,
+} from "./reviews";
 import {
   HistoryRange,
   defaultRange,
@@ -43,6 +56,11 @@ import {
   Match,
   ObservationPage,
   Preferences,
+  ReadBaseline,
+  ReadMarkResult,
+  ReadSummary,
+  ReviewItem,
+  ReviewList,
   Row,
   SearchResults,
   Selection,
@@ -86,6 +104,23 @@ export class App implements OnDestroy, AfterViewInit {
   html = signal<SafeHtml>("");
   headings = signal<Heading[]>([]);
   reviews = signal<Review[]>([]);
+  /** Open review comments across the selected repositories, active and archived. The overview's scope switch filters them. */
+  inbox = signal<ReviewList | null>(null);
+  inboxScope = signal<ReviewScope>("active");
+  /** The fingerprint (length and write time) each document had when the user last read it, by baseline key. */
+  readSummary = signal<ReadSummary["entries"]>({});
+  /** The open document as the user last read it. */
+  baseline = signal<ReadBaseline | null>(null);
+  /** Where the open document differs from the baseline; null when it does not. */
+  readMarks = signal<ReadMarks | null>(null);
+  removedComments = signal<Review[]>([]);
+  changeCount = signal(0);
+  changePosition = signal(0);
+  readonly inboxScopes: { value: ReviewScope; label: string }[] = [
+    { value: "active", label: "Active" },
+    { value: "archived", label: "Archived" },
+    { value: "all", label: "All" },
+  ];
   editingReview = signal<(Review & { revision: string }) | null>(null);
   deletingReview = signal<(Review & { revision: string }) | null>(null);
   sourceView = signal(false);
@@ -137,6 +172,11 @@ export class App implements OnDestroy, AfterViewInit {
   private documentEpoch = 0;
   private detailEpoch = 0;
   private polling = false;
+  private reviewEpoch = 0;
+  private summaryEpoch = 0;
+  private overviewRevision: string | null = null;
+  private changeCursor = -1;
+  private marksMemo: { key: string; marks: ReadMarks | null } | null = null;
   private drafts = new Map<
     string,
     { selection: Selection | null; comment: string; editing: (Review & { revision: string }) | null }
@@ -161,6 +201,27 @@ export class App implements OnDestroy, AfterViewInit {
         ),
     ),
   );
+  readonly reviewGroups = computed<ReviewGroup[]>(() =>
+    groupReviews(this.inbox()?.items ?? [], this.inboxScope()),
+  );
+  readonly reviewTotal = computed(() =>
+    this.reviewGroups().reduce((total, group) => total + group.count, 0),
+  );
+  readonly changeComments = computed(() => countByChange(this.inbox()?.items ?? []));
+  readonly documentComments = computed(() => countByDocument(this.inbox()?.items ?? []));
+  /** Open comments of the change the reader shows, in document order. */
+  readonly readerComments = computed(() => {
+    const change = this.selectedChange();
+    return change
+      ? (this.inbox()?.items ?? []).filter(
+          (item) => item.sourceId === change.sourceId && item.variant === change.variant,
+        )
+      : [];
+  });
+  readonly sourceParts = computed(() => {
+    const d = this.document();
+    return d ? sourceSegments(d.text, this.readMarks()) : [];
+  });
   readonly selectedRepoLabel = computed(() => {
     const selected = this.selectedRepos();
     if (!selected) return "All repositories";
@@ -256,6 +317,8 @@ export class App implements OnDestroy, AfterViewInit {
         await this.router.navigateByUrl(state.lastRoute);
       } else await this.routeChanged();
       await this.refreshData();
+      this.overviewRevision = this.catalog()?.revision ?? null;
+      await this.refreshOverview();
       this.timer = setInterval(() => void this.poll(), 2000);
     } catch (error) {
       this.report(error);
@@ -330,6 +393,52 @@ export class App implements OnDestroy, AfterViewInit {
       return "";
     }
   }
+  /** Loads the open review comments and the read summary: the data behind the overview, the chips and the counts. */
+  async refreshOverview() {
+    await Promise.all([this.loadReviews(), this.loadReadSummary()]);
+  }
+  async loadReviews() {
+    const epoch = ++this.reviewEpoch;
+    try {
+      // Always every scope: the reader and archived documents need their counts whichever scope the panel shows.
+      const list = await api<ReviewList>("reviews", {
+        repositories: this.selectedRepos() ?? [],
+        scope: "all",
+      });
+      if (epoch === this.reviewEpoch) this.inbox.set(list);
+    } catch (error) {
+      if (epoch === this.reviewEpoch) this.report(error);
+    }
+  }
+  async loadReadSummary() {
+    const epoch = ++this.summaryEpoch;
+    try {
+      const summary = await api<ReadSummary>("reads/summary");
+      if (epoch === this.summaryEpoch) this.readSummary.set(summary.entries);
+    } catch {
+      // The baselines are unavailable (for example a locked file): no document is shown as updated, and there is nothing to report on every refresh.
+      if (epoch === this.summaryEpoch) this.readSummary.set({});
+    }
+  }
+  commentCount(change: Change) {
+    return this.changeComments().get(changeKey(change.sourceId, change.variant)) ?? 0;
+  }
+  documentCommentCount(change: Change, path: string) {
+    return this.documentComments().get(documentKey(change.sourceId, change.variant, path)) ?? 0;
+  }
+  updatedDocs(change: Change) {
+    return updatedDocuments(change, this.readSummary());
+  }
+  async openReview(item: ReviewItem) {
+    const change = this.catalog()?.changes.find(
+      (c) => c.sourceId === item.sourceId && c.variant === item.variant,
+    );
+    if (!change) {
+      this.notice.set("That change is no longer available. The overview refreshes with the next catalog update.");
+      return;
+    }
+    await this.openChange(change, item.path, "note:" + item.line);
+  }
   changeRow(change: Change) {
     return this.ongoing().find(
       (r) =>
@@ -361,6 +470,7 @@ export class App implements OnDestroy, AfterViewInit {
     this.repoMenu.set(false);
     this.searchResults.set(null);
     this.remember();
+    void this.loadReviews();
     await this.refreshData();
     if (this.searchText.trim()) void this.search();
   }
@@ -705,6 +815,11 @@ export class App implements OnDestroy, AfterViewInit {
         this.document.set(value);
         return;
       }
+      // A different document starts from its own baseline; the baseline is known before the first render so nothing flashes.
+      if (!same) {
+        await this.loadBaseline(value);
+        if (epoch !== this.documentEpoch) return;
+      }
       const pane = document.querySelector<HTMLElement>(".document-scroll");
       const scroll = pane?.scrollTop ?? 0;
       const currentHeading = same
@@ -717,10 +832,7 @@ export class App implements OnDestroy, AfterViewInit {
             .at(-1)?.id
         : undefined;
       this.document.set(value);
-      const rendered = renderMarkdown(value.text, value.canComment);
-      this.html.set(this.sanitizer.bypassSecurityTrustHtml(rendered.html));
-      this.headings.set(rendered.headings);
-      this.reviews.set(rendered.reviews);
+      this.renderDocument(value);
       if (!same) {
         const draft = this.drafts.get(this.documentKey(value));
         this.selection.set(draft?.selection ?? null);
@@ -736,6 +848,7 @@ export class App implements OnDestroy, AfterViewInit {
       setTimeout(() => {
         if (epoch !== this.documentEpoch) return;
         this.attachTaskAnchors();
+        this.syncStops();
         if (anchor) this.scrollTo(anchor);
         else if (currentHeading) this.scrollTo(currentHeading, false);
         else {
@@ -760,6 +873,179 @@ export class App implements OnDestroy, AfterViewInit {
     } finally {
       if (epoch === this.documentEpoch) this.documentLoading.set(false);
     }
+  }
+  private renderDocument(value: DocumentContent) {
+    const marks = this.marksFor(value);
+    const rendered = renderMarkdown(value.text, value.canComment, marks);
+    this.readMarks.set(marks);
+    this.html.set(this.sanitizer.bypassSecurityTrustHtml(rendered.html));
+    this.headings.set(rendered.headings);
+    this.reviews.set(rendered.reviews);
+    const baseline = this.baseline();
+    this.removedComments.set(marks && baseline ? removedReviews(baseline.text, rendered.reviews) : []);
+  }
+  /** Differences between the baseline and `value`, worked out once per pair of revisions. */
+  private marksFor(value: DocumentContent): ReadMarks | null {
+    const baseline = this.baseline();
+    if (!baseline || baseline.revision === value.revision) return null;
+    const key = baseline.revision + ">" + value.revision;
+    if (this.marksMemo?.key !== key)
+      this.marksMemo = { key, marks: readMarks(baseline.text, value.text) };
+    return this.marksMemo.marks;
+  }
+  private readRequest(d: DocumentRequest): DocumentRequest {
+    return { sourceId: d.sourceId, change: d.change, path: d.path, variant: d.variant };
+  }
+  private logicalName(d: DocumentRequest) {
+    return d.change === "@source"
+      ? d.change
+      : (this.catalog()?.changes.find(
+          (c) => c.sourceId === d.sourceId && (c.name === d.change || c.directoryName === d.change),
+        )?.name ?? d.change);
+  }
+  /** Records the fingerprint of a document just marked read, so its card stops showing it as updated. */
+  private noteRead(d: DocumentRequest, result: ReadMarkResult) {
+    const key = baselineKey(d.sourceId, this.logicalName(d), d.path);
+    this.readSummary.update((summary) => ({ ...summary, [key]: result.fingerprint }));
+  }
+  /**
+   * Loads the remembered content of a document that has just been opened. A document never read becomes its own baseline,
+   * and one whose card said "updated" but whose content is unchanged is marked again so the false hint clears.
+   * A failure only means no highlights are shown.
+   */
+  private async loadBaseline(value: DocumentContent) {
+    this.baseline.set(null);
+    this.readMarks.set(null);
+    this.removedComments.set([]);
+    try {
+      const document = this.readRequest(value);
+      let baseline = await api<ReadBaseline | null>("reads/get", { document });
+      let marked: ReadMarkResult | undefined;
+      if (!baseline) {
+        marked = await api<ReadMarkResult>("reads/mark", { document, revision: value.revision });
+        baseline = { revision: value.revision, text: value.text };
+      } else if (baseline.revision === value.revision && this.looksUpdated(value)) {
+        marked = await api<ReadMarkResult>("reads/mark", { document, revision: value.revision });
+      }
+      if (marked) this.noteRead(value, marked);
+      this.baseline.set(baseline);
+    } catch {
+      // The document is still readable; it just has nothing to compare with.
+    }
+  }
+  private looksUpdated(d: DocumentRequest) {
+    const change = this.catalog()?.changes.find(
+      (c) =>
+        c.sourceId === d.sourceId &&
+        (c.name === d.change || c.directoryName === d.change) &&
+        (!d.variant || c.variant === d.variant),
+    );
+    return !!change && updatedDocuments(change, this.readSummary()).includes(d.path);
+  }
+  /** Makes the current content the baseline, which clears the highlights and the updated hint. */
+  async markRead() {
+    const d = this.document();
+    if (!d || this.documentLoading()) return;
+    try {
+      const result = await api<ReadMarkResult>("reads/mark", {
+        document: this.readRequest(d),
+        revision: d.revision,
+      });
+      this.noteRead(d, result);
+      if (this.document()?.revision === d.revision) {
+        this.baseline.set({ revision: d.revision, text: d.text });
+        this.renderDocument(d);
+        setTimeout(() => this.syncStops(), 0);
+      }
+    } catch (error) {
+      this.notice.set(
+        error instanceof ApiError && error.status === 409
+          ? "The document changed while you were reading. It has been reloaded; review the changes, then mark it read."
+          : "Could not mark the document as read. " + (error instanceof Error ? error.message : String(error)),
+      );
+      if (error instanceof ApiError && error.status === 409) void this.loadDocument(d, undefined, true);
+    }
+  }
+  /** Marks every document of the open change read, as each stands now. */
+  async markChangeRead() {
+    const change = this.selectedChange();
+    if (!change) return;
+    let failed = 0;
+    for (const item of change.documents) {
+      try {
+        const request: DocumentRequest = {
+          sourceId: change.sourceId,
+          change: change.name,
+          path: item.path,
+          variant: change.variant,
+        };
+        const content = await api<DocumentContent>("document", request);
+        const result = await api<ReadMarkResult>("reads/mark", { document: request, revision: content.revision });
+        this.noteRead(request, result);
+        const open = this.document();
+        if (open && open.path === item.path && open.revision === content.revision) {
+          this.baseline.set({ revision: content.revision, text: content.text });
+          this.renderDocument(open);
+          setTimeout(() => this.syncStops(), 0);
+        }
+      } catch {
+        failed++;
+      }
+    }
+    this.notice.set(
+      failed
+        ? failed + (failed === 1 ? " document" : " documents") + " changed while being marked and still show changes."
+        : "Every document of this change is marked as read.",
+    );
+  }
+  /** After the user's own comment write, the new revision becomes the baseline if the user had read everything before it. */
+  private async advanceBaseline(d: DocumentRequest, written: DocumentContent, epoch: number) {
+    try {
+      const result = await api<ReadMarkResult>("reads/mark", {
+        document: this.readRequest(d),
+        revision: written.revision,
+      });
+      this.noteRead(d, result);
+      if (epoch === this.documentEpoch) this.baseline.set({ revision: written.revision, text: written.text });
+    } catch {
+      // The baseline stays, so the write shows as a change rather than being hidden.
+    }
+  }
+  private stops() {
+    const root = document.querySelector(".document-scroll");
+    return root ? changeStops(root) : [];
+  }
+  private syncStops() {
+    this.changeCursor = -1;
+    this.changePosition.set(0);
+    this.changeCount.set(this.readMarks() ? this.stops().length : 0);
+  }
+  changeStatus(marks: ReadMarks) {
+    if (marks.incomplete) return "Too many differences to mark individually.";
+    const count = this.changeCount();
+    return this.changePosition()
+      ? "Change " + this.changePosition() + " of " + count
+      : count + (count === 1 ? " change" : " changes");
+  }
+  setSourceView(value: boolean) {
+    this.sourceView.set(value);
+    setTimeout(() => this.syncStops(), 0);
+  }
+  /** Moves to the next (1) or previous (-1) change, wrapping at the ends. */
+  navigateChange(direction: 1 | -1) {
+    const stops = this.stops();
+    if (!stops.length) return;
+    this.changeCursor =
+      direction === 1
+        ? (this.changeCursor + 1) % stops.length
+        : this.changeCursor <= 0
+          ? stops.length - 1
+          : this.changeCursor - 1;
+    this.changeCount.set(stops.length);
+    this.changePosition.set(this.changeCursor + 1);
+    const target = stops[this.changeCursor];
+    target.scrollIntoView({ block: "center" });
+    (target.querySelector<HTMLElement>("summary") ?? target).focus({ preventScroll: true });
   }
   private useDocument(value: DocumentContent) {
     this.preferences.documents ??= {};
@@ -797,13 +1083,18 @@ export class App implements OnDestroy, AfterViewInit {
   }
   scrollTo(anchor: string, report = true) {
     if (this.sourceView()) {
-      this.sourceView.set(false);
+      this.setSourceView(false);
       setTimeout(() => this.scrollTo(anchor, report), 0);
       return;
     }
     this.attachTaskAnchors();
     let target: HTMLElement | null = null;
-    if (anchor.startsWith("line-")) {
+    // "note:" cannot be produced by a heading slug, which keeps only letters, digits, "-" and "_".
+    if (anchor.startsWith("note:")) {
+      target = document.querySelector<HTMLElement>(
+        '.markdown [data-review-line="' + Number(anchor.slice(5)) + '"]',
+      );
+    } else if (anchor.startsWith("line-")) {
       const line = Number(anchor.slice(5));
       const blocks = Array.from(
         document.querySelectorAll<HTMLElement>(".markdown [data-start]"),
@@ -908,10 +1199,12 @@ export class App implements OnDestroy, AfterViewInit {
       block = this.selection(), edit = this.editingReview();
     if (!d?.canComment || (!block && !edit) || !this.comment().trim() || this.saving()) return;
     const epoch = this.documentEpoch;
+    // Whether the user had read everything in the document before this write: only then does the write move the baseline.
+    const read = this.baseline()?.revision === d.revision;
     this.saving.set(true);
     this.commentStatus.set("");
     try {
-      await api<DocumentContent>(edit ? "comments/edit" : "comments", edit ? {
+      const written = await api<DocumentContent>(edit ? "comments/edit" : "comments", edit ? {
         ...d, revision: edit.revision, line: edit.line, markerText: edit.marker,
         id: edit.id, comment: this.comment(),
       } : {
@@ -922,6 +1215,8 @@ export class App implements OnDestroy, AfterViewInit {
         blockText: block!.text,
         comment: this.comment(),
       });
+      if (read) await this.advanceBaseline(d, written, epoch);
+      void this.loadReviews();
       this.drafts.delete(this.documentKey(d));
       if (epoch !== this.documentEpoch) return;
       this.comment.set("");
@@ -970,12 +1265,15 @@ export class App implements OnDestroy, AfterViewInit {
     const d = this.document(), review = this.deletingReview();
     if (!d?.canComment || !review || this.saving()) return;
     const epoch = this.documentEpoch;
+    const read = this.baseline()?.revision === d.revision;
     this.saving.set(true);
     try {
-      await api("comments/delete", {
+      const written = await api<DocumentContent>("comments/delete", {
         ...d, revision: review.revision, line: review.line,
         markerText: review.marker, id: review.id,
       });
+      if (read) await this.advanceBaseline(d, written, epoch);
+      void this.loadReviews();
       if (epoch !== this.documentEpoch) return;
       this.deletingReview.set(null);
       if (this.editingReview()?.marker === review.marker) this.cancelReviewEdit();
@@ -1193,6 +1491,11 @@ export class App implements OnDestroy, AfterViewInit {
     try {
       const snapshot = await api<Catalog>("catalog");
       this.catalog.set(snapshot);
+      // The overview and the read hints follow document contents, so they refresh when the catalog revision moves.
+      if (snapshot.revision !== this.overviewRevision) {
+        this.overviewRevision = snapshot.revision;
+        void this.refreshOverview();
+      }
       // Navigation or review may start while catalog discovery is in flight.
       // A background refresh must never supersede that foreground request.
       if (
@@ -1229,6 +1532,18 @@ export class App implements OnDestroy, AfterViewInit {
   }
   @HostListener("document:keydown", ["$event"])
   keyboard(event: KeyboardEvent) {
+    if (
+      (event.key === "[" || event.key === "]") &&
+      this.document() &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.metaKey &&
+      !(event.target instanceof Element && event.target.closest("input,textarea,select,[contenteditable]"))
+    ) {
+      this.navigateChange(event.key === "]" ? 1 : -1);
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Escape") {
       const target = event.target instanceof Element ? event.target : null;
       const field = target?.closest("textarea,input,select,.review-delete-confirm");
