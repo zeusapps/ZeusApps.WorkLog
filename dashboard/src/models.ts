@@ -1,3 +1,5 @@
+import type { HistoryRange } from "./range";
+
 export interface Repository {
   id: string;
   label: string;
@@ -27,6 +29,7 @@ export interface Catalog {
   launchRepository: string | null;
   revision: string;
   notices: string[];
+  journalSnapshot: number;
 }
 export interface TimelineQuery {
   from: string;
@@ -93,6 +96,12 @@ export interface DocumentRequest {
   change: string;
   path: string;
   variant?: string;
+  knownRevision?: string;
+}
+/** Answer to a document request whose knownRevision is still current: no text is sent. */
+export interface DocumentUnchanged {
+  revision: string;
+  unchanged: true;
 }
 export interface DocumentContent extends DocumentRequest {
   location: string;
@@ -128,11 +137,13 @@ export interface Preferences {
   theme?: "dark" | "light";
   repositories?: string[] | null;
   history?: {
-    from: string;
-    to: string;
-    timezone: string;
-    groupBy: string;
-    scale: string;
+    range?: HistoryRange;
+    /** Written by earlier versions; never written now. */
+    from?: string;
+    to?: string;
+    timezone?: string;
+    groupBy?: string;
+    scale?: string;
   };
   lastRoute?: string;
   documents?: Record<string, string>;

@@ -47,6 +47,7 @@ function setup() {
     launchRepository: "r",
     revision: "1",
     notices: [],
+    journalSnapshot: 0,
   } as Catalog);
   return { app, navigate, fixture };
 }

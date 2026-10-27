@@ -53,6 +53,7 @@ See proposal.md for the defects. File and line references are at commit `582f8bc
 - Day focus is a transient `focus` signal that overrides the effective range for queries. It is not persisted, and the UI shows "Showing <day> — back to <range label>".
 - Editing the date inputs switches the range to custom. Selecting a preset switches it to relative.
 - A day-rollover check runs in the poll: when `localDate(now)` differs from the last evaluated date, History reloads.
+- `boundary(date, zone)` returns the first instant of the requested local date. In zones whose clocks skip 00:00 (for example `Africa/Cairo` on 2026-04-24), the current search lands on 23:00 of the previous day; when the result maps to the previous local date it advances to the first valid instant of the requested date (QA-006).
 
 Alternative: keep absolute dates but stop saving them on load. Rejected, because a user who explicitly picks "last 30 days" still expects it to roll forward.
 
@@ -86,11 +87,11 @@ Alternative: filesystem watchers. Rejected, as in the original design: they miss
 
 ### 6. Client poll uses revisions
 `poll()` keeps the 2 s interval while visible, but:
-- It reloads the open document only through the existing revision check. The server already returns the cached content when length and mtime are unchanged.
+- It sends the open document's `knownRevision` in the `/api/document` body. When the current revision equals it, the server returns `{ revision, unchanged: true }` without text and skips splitting and task parsing; the client keeps the rendered document. Requests without `knownRevision` get the full response, so the API stays backward compatible (ANALYSIS-002). A GET with ETag and 304 was rejected: the endpoint is a POST with the location in the body, and converting it changes every caller.
 - It re-runs search only when `catalog.revision` changed since the last search.
 - It calls `refreshData()` only when `journalSnapshot` changed, or after the day-rollover check fires.
 
-The fixed every-5th-poll refresh is removed.
+The fixed every-5th-poll refresh is removed. Idle polls do not save preferences, so `dashboard-state.json` is not rewritten while nothing changes (ANALYSIS-003).
 
 ### 7. Search reads use the cache
 Search uses `Read(path)` without `fresh`, relying on the length and mtime check. The cache cap increases to 256 entries, evicting the oldest instead of clearing everything.
@@ -104,6 +105,7 @@ Search uses `Read(path)` without `fresh`, relying on the length and mtime check.
 
 - Task progress can lag up to 60 s if a task file is tracked under an unexpected name. → Invalidation also covers any Markdown file change in a change directory whose name contains "task". The 60 s bound caps staleness.
 - Stat of every Markdown file per catalog request costs more than enumeration alone. → It is still far cheaper than one CLI spawn. The analyzer measures it during review.
+- Markdown stamps come from directory entries (ANALYSIS-001 fix), and NTFS refreshes an entry only for the name a file was written through. A Markdown file changed through a second hard link is therefore noticed on its next read through the listed name or at the 60 s round. → Accepted: git, editors and `openspec archive` do not create hard-linked documents (ANALYSIS-042).
 - Legacy users lose an intentionally chosen custom range once. → Acceptable: the saved dates were written unconditionally, so they cannot be told apart from defaults.
 
 ## Migration Plan

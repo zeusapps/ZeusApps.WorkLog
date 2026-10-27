@@ -2177,3 +2177,28 @@ h1 {
   line-height: 1.6;
   color: var(--success);
 }
+.history-controls {
+  flex-wrap: wrap;
+}
+.field-error,
+.range-focus {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.field-error {
+  color: var(--danger);
+}
+.range-focus {
+  color: var(--text-secondary);
+}
+.link-button {
+  background: none;
+  border: 0;
+  padding: 0 0 0 6px;
+  font-size: inherit;
+  color: var(--teal);
+  text-decoration: underline;
+  cursor: pointer;
+}

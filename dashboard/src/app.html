@@ -137,6 +137,15 @@
           &times;
         </button>
       </div>
+      } @if(preferencesNotice()){
+      <div class="message" role="status">
+        {{preferencesNotice()}}<button
+          aria-label="Dismiss preferences notice"
+          (click)="preferencesNotice.set('')"
+        >
+          &times;
+        </button>
+      </div>
       } @if(notice()){
       <div class="message" role="status">
         {{notice()}}<button
@@ -313,17 +322,34 @@
       } }@else{
       <section class="history-controls panel">
         <div class="range-fields">
+          <div class="segmented" role="group" aria-label="History range">
+            @for(days of rangePresets;track days){<button
+              [class.selected]="range.kind==='relative'&&range.days===days&&!focusedDay()"
+              [attr.aria-pressed]="range.kind==='relative'&&range.days===days&&!focusedDay()"
+              (click)="selectPreset(days)"
+            >
+              Last {{days}} days</button
+            >}<button
+              [class.selected]="range.kind==='custom'&&!focusedDay()"
+              [attr.aria-pressed]="range.kind==='custom'&&!focusedDay()"
+              (click)="datesChanged()"
+            >
+              Custom
+            </button>
+          </div>
           <label
             >From<input
               type="date"
-              [(ngModel)]="from"
-              (change)="controlsChanged()" /></label
+              [(ngModel)]="fromInput"
+              [attr.aria-invalid]="rangeError()?'true':null"
+              (change)="datesChanged()" /></label
           ><span class="range-arrow">&#8594;</span
           ><label
             >Through<input
               type="date"
-              [(ngModel)]="to"
-              (change)="controlsChanged()" /></label
+              [(ngModel)]="toInput"
+              [attr.aria-invalid]="rangeError()?'true':null"
+              (change)="datesChanged()" /></label
           ><label
             >Group by<select [(ngModel)]="groupBy" (change)="controlsChanged()">
               <option value="ticket">Ticket</option>
@@ -332,11 +358,20 @@
           ><label
             >Timezone<input
               aria-label="Reporting timezone"
-              [(ngModel)]="timezone"
-              (change)="controlsChanged()"
+              [(ngModel)]="timezoneInput"
+              [attr.aria-invalid]="timezoneError()?'true':null"
+              (change)="timezoneChanged()"
               placeholder="Europe/Warsaw"
           /></label>
         </div>
+        @if(rangeError()){<p class="field-error" role="alert">{{rangeError()}}</p>}
+        @if(timezoneError()){<p class="field-error" role="alert">{{timezoneError()}}</p>}
+        @if(focusedDay();as day){
+        <p class="range-focus" role="status">
+          Showing {{formatDate(day+'T12:00:00Z')}}
+          <button class="link-button" (click)="clearFocus()">Back to {{rangeLabel(range)}}</button>
+        </p>
+        }
         <div class="segmented" aria-label="Timeline scale">
           @for(unit of ['day','week','month'];track unit){<button
             [class.selected]="scale===unit"

@@ -33,6 +33,10 @@ The dashboard SHALL provide Ongoing work and History views. Ongoing work SHALL l
 - **WHEN** the user enters a timezone name that the browser cannot resolve
 - **THEN** the dashboard explains the problem next to the field, keeps showing the previous results, and does not remember the invalid value
 
+#### Scenario: Day without a midnight
+- **WHEN** the selected timezone skips 00:00 on a day at a range boundary
+- **THEN** the range starts or ends at the first instant of that local day, without including an hour of the neighboring day
+
 #### Scenario: Legacy remembered range
 - **WHEN** the saved preferences contain explicit From and Through dates without a range kind
 - **THEN** History uses the default relative 30-day range
@@ -55,11 +59,11 @@ Dashboard preferences SHALL remain within their storage limit regardless of how 
 - **THEN** one notice explains that preferences could not be saved, and continued scrolling produces no further error banners
 
 ### Requirement: Idle refresh cost
-While the dashboard is visible and neither OpenSpec documents nor the journal change, background refresh SHALL NOT repeat document search, timeline queries, or OpenSpec CLI invocations on every poll. OpenSpec root resolution and task progress SHALL be refreshed when their inputs change or after a bounded refresh interval of at most one minute. The selected document SHALL still reflect an external edit within a few seconds. Search results and History SHALL refresh when document contents or recorded observations change. CLI invocations needed for discovery SHALL NOT be serialized across independent sources.
+While the dashboard is visible and neither OpenSpec documents nor the journal change, background refresh SHALL NOT repeat document search, timeline queries, or OpenSpec CLI invocations on every poll. OpenSpec root resolution and task progress SHALL be refreshed when their inputs change or after a bounded refresh interval of at most one minute. The selected document SHALL still reflect an external edit within a few seconds. Search results and History SHALL refresh when document contents or recorded observations change. CLI invocations needed for discovery SHALL NOT be serialized across independent sources. Refreshing an unchanged selected document SHALL NOT transfer its full contents again, and an idle dashboard SHALL NOT rewrite its saved preferences.
 
 #### Scenario: Idle dashboard
 - **WHEN** the dashboard stays open for one minute with no document or journal changes
-- **THEN** it performs no repeated searches or timeline queries and at most one round of OpenSpec CLI resolution per source
+- **THEN** it performs no repeated searches or timeline queries, does not resend the unchanged open document, does not rewrite saved preferences, and performs at most one round of OpenSpec CLI resolution per source
 
 #### Scenario: Agent edits the open document
 - **WHEN** an agent saves a change to the open design while the dashboard is idle

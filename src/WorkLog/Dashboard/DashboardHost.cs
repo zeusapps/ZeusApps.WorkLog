@@ -116,10 +116,10 @@ internal static class DashboardHost
             { context.Response.StatusCode = 401; await context.Response.WriteAsJsonAsync(new { error = "Launch worklog dashboard to authorize this browser." }, context.RequestAborted); return; }
             try { await next(context); }
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
-            catch (Exception e) when (e is ArgumentException or FileNotFoundException or DashboardConflictException or IOException or UnauthorizedAccessException or JsonException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException)
+            catch (Exception e) when (e is ArgumentException or FileNotFoundException or DashboardConflictException or DashboardPayloadTooLargeException or IOException or UnauthorizedAccessException or JsonException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException)
             {
                 if (context.Response.HasStarted) throw;
-                context.Response.StatusCode = e switch { DashboardConflictException => 409, FileNotFoundException => 404, UnauthorizedAccessException => 403,
+                context.Response.StatusCode = e switch { DashboardConflictException => 409, DashboardPayloadTooLargeException => 413, FileNotFoundException => 404, UnauthorizedAccessException => 403,
                     IOException or Microsoft.Data.Sqlite.SqliteException or InvalidOperationException => 503, _ => 400 };
                 await context.Response.WriteAsJsonAsync(new { error = e.Message }, context.RequestAborted);
             }
@@ -140,7 +140,7 @@ internal static class DashboardHost
         app.MapPut("/api/state", (JsonObject value) => { state.Write(value); return Results.NoContent(); });
         app.MapPost("/api/timeline", (TimelineQuery query, CancellationToken ct) => timeline.Query(query, ct));
         app.MapPost("/api/observations", (ObservationRequest request, CancellationToken ct) => timeline.Observations(request.Query, request.Id, request.Offset, ct, request.Day));
-        app.MapPost("/api/document", (DocumentRequest request, CancellationToken ct) => documents.GetAsync(request, ct));
+        app.MapPost("/api/document", (DocumentRequest request, CancellationToken ct) => documents.ReadAsync(request, ct));
         app.MapPost("/api/comments", (CommentRequest request, CancellationToken ct) => documents.CommentAsync(request, ct));
         app.MapPost("/api/comments/edit", (ReviewMutationRequest request, CancellationToken ct) => documents.MutateCommentAsync(request, delete: false, ct));
         app.MapPost("/api/comments/delete", (ReviewMutationRequest request, CancellationToken ct) => documents.MutateCommentAsync(request, delete: true, ct));

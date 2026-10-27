@@ -5,7 +5,8 @@ using WorkLog.Infrastructure;
 
 namespace WorkLog.Dashboard;
 
-internal sealed record DocumentRequest(string SourceId, string Change, string Path, string? Variant = null);
+internal sealed record DocumentRequest(string SourceId, string Change, string Path, string? Variant = null, string? KnownRevision = null);
+internal sealed record DocumentUnchanged(string Revision, bool Unchanged = true);
 internal sealed record TaskPosition(string? Number, string Text, int Line);
 internal sealed record DocumentContent(string SourceId, string Change, string Path, string? Variant, string Location, string Revision, string Text,
     bool Archived, bool CanComment, TaskPosition[] Tasks);
@@ -21,7 +22,9 @@ internal sealed record LinkTarget(string SourceId, string Change, string Path, s
 internal sealed partial class DocumentService(SourceCatalog catalog)
 {
     public const int MaximumBytes = 2 * 1024 * 1024;
-    private sealed record Cached(long Length, DateTime LastWrite, string Text, string Revision, Encoding Encoding, bool Bom);
+    private sealed record Cached(long Length, DateTime LastWrite, string Text, string Revision, Encoding Encoding, bool Bom, long Order);
+    private const int CacheEntries = 256;
+    private long order;
     private readonly ConcurrentDictionary<string, Cached> cache = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim writeGate = new(1);
     internal int HashReads { get; private set; }
@@ -62,9 +65,11 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
             var (encoding, bomLength) = DetectEncoding(bytes);
             var text = encoding.GetString(bytes, bomLength, bytes.Length - bomLength);
             var value = new Cached(after.Length, after.LastWriteTimeUtc, text,
-                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)), encoding, bomLength > 0);
+                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)), encoding, bomLength > 0, Interlocked.Increment(ref order));
             HashReads++;
-            if (cache.Count >= 64) cache.Clear();
+            // Evict the oldest entry rather than dropping the whole cache.
+            if (cache.Count >= CacheEntries && !cache.ContainsKey(path))
+                cache.TryRemove(cache.MinBy(pair => pair.Value.Order).Key, out _);
             cache[path] = value;
             return value;
         }
@@ -85,7 +90,23 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
     {
         var snapshot = await catalog.GetAsync(cancellationToken);
         var resolved = Resolve(snapshot, request);
+        return Content(request, resolved, Read(resolved.File));
+    }
+
+    /// <summary>
+    /// Reads a document for the API. When the caller already holds the current revision, the text is neither returned nor split into tasks.
+    /// </summary>
+    public async Task<object> ReadAsync(DocumentRequest request, CancellationToken cancellationToken = default)
+    {
+        var snapshot = await catalog.GetAsync(cancellationToken);
+        var resolved = Resolve(snapshot, request);
         var value = Read(resolved.File);
+        return request.KnownRevision is not null && request.KnownRevision == value.Revision
+            ? new DocumentUnchanged(value.Revision) : Content(request, resolved, value);
+    }
+
+    private static DocumentContent Content(DocumentRequest request, (string File, bool Archived, string Location) resolved, Cached value)
+    {
         var tasks = Newlines().Split(value.Text).Select((line, index) => (Match: TaskLine().Match(line), Index: index))
             .Where(x => x.Match.Success).Select(x => new TaskPosition(
                 x.Match.Groups[1].Success ? x.Match.Groups[1].Value : null, x.Match.Groups[2].Value, x.Index)).ToArray();
@@ -170,9 +191,16 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
         if (request.Scope is not ("active" or "archived" or "all")) throw new ArgumentException("scope must be active, archived, or all.");
         var snapshot = await catalog.GetAsync(token);
         var results = new List<SearchMatch>();
-        var unavailable = snapshot.Notices.Concat(snapshot.Sources.Where(s => s.Error is not null).Select(s => s.Location + ": " + s.Error)).ToList();
-        foreach (var change in snapshot.Changes.Where(c => (request.Scope == "all" || c.Archived == (request.Scope == "archived"))
-            && (request.Repositories is null || request.Repositories.Length == 0 || c.Repositories.Intersect(request.Repositories).Any())))
+        // Only notices about the requested repositories can make this search incomplete.
+        var selected = request.Repositories is { Length: > 0 } ? request.Repositories : null;
+        bool InScope(IEnumerable<string> repositories) => selected is null || repositories.Intersect(selected).Any();
+        var unavailable = new List<string>();
+        foreach (var repository in snapshot.Repositories.Where(r => selected is null || selected.Contains(r.Id)))
+            if (!snapshot.Sources.Any(s => s.Repositories.Contains(repository.Id)))
+                unavailable.Add(repository.Label + ": no available OpenSpec source. Recorded history is still available.");
+        unavailable.AddRange(snapshot.Sources.Where(s => s.Error is not null && InScope(s.Repositories)).Select(s => s.Location + ": " + s.Error));
+        unavailable.AddRange((snapshot.SourceNotices ?? []).Where(n => snapshot.Sources.Any(s => s.Id == n.SourceId && InScope(s.Repositories))).Select(n => n.Text));
+        foreach (var change in snapshot.Changes.Where(c => (request.Scope == "all" || c.Archived == (request.Scope == "archived")) && InScope(c.Repositories)))
         {
             foreach (var document in change.Documents)
             {
@@ -180,11 +208,12 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
                 try
                 {
                     var resolved = Resolve(snapshot, new(change.SourceId, change.Name, document.Path, change.Variant));
-                    var lines = Newlines().Split(Read(resolved.File, fresh: true).Text);
+                    var lines = Newlines().Split(Read(resolved.File).Text);
                     string? section = null;
+                    var fence = new MarkdownFence();
                     for (var i = 0; i < lines.Length; i++)
                     {
-                        if (lines[i].StartsWith('#')) section = lines[i].TrimStart('#', ' ');
+                        if (!fence.Consume(lines[i]) && lines[i].StartsWith('#')) section = lines[i].TrimStart('#', ' ');
                         var match = lines[i].IndexOf(request.Query, StringComparison.OrdinalIgnoreCase);
                         if (match < 0) continue;
                         if (results.Count == 50) return new(results.ToArray(), true, unavailable.ToArray());
@@ -203,7 +232,8 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
     {
         if (Uri.TryCreate(target, UriKind.Absolute, out _) || target.StartsWith("//", StringComparison.Ordinal)) throw new ArgumentException("This is not a local document link.");
         var snapshot = await catalog.GetAsync(token);
-        var source = snapshot.Sources.Single(s => s.Id == request.SourceId);
+        var source = snapshot.Sources.SingleOrDefault(s => s.Id == request.SourceId)
+            ?? throw new FileNotFoundException("Document source is unavailable.");
         var current = Resolve(snapshot, request).File;
         var parts = target.Split('#', 2);
         var candidate = parts[0].Length == 0 ? current : System.IO.Path.GetFullPath(Uri.UnescapeDataString(parts[0]), System.IO.Path.GetDirectoryName(current)!);

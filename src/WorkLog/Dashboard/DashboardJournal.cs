@@ -41,6 +41,16 @@ internal sealed class DashboardJournal(string dataDirectory)
         return result.ToArray();
     }
 
+    /// <summary>Highest journal row id, or 0 when no journal exists. Rows are append-only, so a change means new observations.</summary>
+    public long Snapshot()
+    {
+        using var connection = Open();
+        if (connection is null) return 0;
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COALESCE(MAX(rowid),0) FROM entries";
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
     public (long Snapshot, Entry[] Entries) Read(DateTimeOffset to, string[] repositories, long? snapshot, CancellationToken cancellationToken = default)
     {
         using var connection = Open();

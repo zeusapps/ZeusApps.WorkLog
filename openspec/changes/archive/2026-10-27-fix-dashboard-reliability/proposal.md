@@ -25,6 +25,8 @@ These need fixing before the dashboard gains more features.
   - The catalog revision includes document content fingerprints.
   - Search and history refresh only when the catalog revision or the journal snapshot changes.
   - History rolls forward after midnight.
+- An unchanged open document is not resent on each poll: the client sends the revision it has and the server answers "unchanged" without the text. Idle polls no longer rewrite saved preferences.
+- History range boundaries are correct in timezones that skip midnight.
 - Smaller fixes: an unknown link source returns 404 instead of 503. Search section labels ignore `#` lines inside fenced code.
 - Remove the two leftover `<!-- REVIEW ... -->` markers from `openspec/changes/archive/2026-10-26-add-work-dashboard/proposal.md`.
 

@@ -26,23 +26,10 @@ internal sealed record ReviewMarker(int Line, int Start, int End, string Raw, st
         var offsets = new int[lines.Length];
         for (var i = 1; i < offsets.Length; i++) offsets[i] = breaks[i - 1].Index + breaks[i - 1].Length;
         var result = new List<ReviewMarker>();
-        char fence = '\0';
-        var fenceLength = 0;
+        var fence = new MarkdownFence();
         for (var line = 0; line < lines.Length; line++)
         {
-            var match = Regex.Match(lines[line], @"^ {0,3}(`{3,}|~{3,})(.*)$");
-            if (fence != '\0')
-            {
-                if (match.Success && match.Groups[1].Value[0] == fence && match.Groups[1].Length >= fenceLength
-                    && string.IsNullOrWhiteSpace(match.Groups[2].Value)) fence = '\0';
-                continue;
-            }
-            if (match.Success)
-            {
-                fence = match.Groups[1].Value[0];
-                fenceLength = match.Groups[1].Length;
-                continue;
-            }
+            if (fence.Consume(lines[line])) continue;
             var prefix = Regex.Match(lines[line], @"^ {0,3}<!-- REVIEW(?::|(?=\s))");
             if (!prefix.Success) continue;
             var start = offsets[line] + lines[line].IndexOf("<!--", StringComparison.Ordinal);
@@ -73,5 +60,28 @@ internal sealed record ReviewMarker(int Line, int Start, int End, string Raw, st
         var start = end;
         while (start > 0 && !string.IsNullOrWhiteSpace(lines[start - 1])) start--;
         return string.Join(' ', lines[start..(end + 1)]);
+    }
+}
+
+/// <summary>Tracks fenced code blocks line by line. The same rule decides review markers and search section labels.</summary>
+internal struct MarkdownFence
+{
+    private char fence;
+    private int fenceLength;
+
+    /// <summary>Returns true when the line is a fence delimiter or lies inside a fenced block.</summary>
+    public bool Consume(string line)
+    {
+        var match = Regex.Match(line, @"^ {0,3}(`{3,}|~{3,})(.*)$");
+        if (fence != '\0')
+        {
+            if (match.Success && match.Groups[1].Value[0] == fence && match.Groups[1].Length >= fenceLength
+                && string.IsNullOrWhiteSpace(match.Groups[2].Value)) fence = '\0';
+            return true;
+        }
+        if (!match.Success) return false;
+        fence = match.Groups[1].Value[0];
+        fenceLength = match.Groups[1].Length;
+        return true;
     }
 }

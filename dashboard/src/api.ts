@@ -73,6 +73,19 @@ export function boundary(date: string, zone: string): string {
     );
     candidate += wanted - represented;
   }
+  // Zones that skip midnight (a DST jump at 00:00) land on the previous local day:
+  // advance to the first instant whose local date reaches the requested date.
+  const dateOf = (instant: number) => localDate(new Date(instant), zone);
+  if (dateOf(candidate) < date) {
+    let low = Math.floor(candidate / 1000);
+    let high = low + 48 * 3600;
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if (dateOf(middle * 1000) < date) low = middle;
+      else high = middle;
+    }
+    candidate = high * 1000;
+  }
   return new Date(candidate).toISOString();
 }
 export function humanize(value: string): string {

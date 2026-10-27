@@ -22,10 +22,22 @@ import {
 } from "./api";
 import { renderMarkdown, Heading, Review } from "./markdown";
 import {
+  HistoryRange,
+  defaultRange,
+  effectiveRange,
+  normalizeRange,
+  rangeLabel,
+  rangePresets,
+  touchRecent,
+  validDate,
+  validTimezone,
+} from "./range";
+import {
   Catalog,
   Change,
   DocumentContent,
   DocumentRequest,
+  DocumentUnchanged,
   Entry,
   Insight,
   Match,
@@ -37,6 +49,11 @@ import {
   Timeline,
   TimelineQuery,
 } from "./models";
+
+/** Most recently used reading positions and remembered document selections kept in preferences. */
+export const positionLimit = 100;
+export const documentLimit = 200;
+const scrollSaveDelay = 1000;
 
 @Component({
   selector: "worklog-app",
@@ -79,9 +96,27 @@ export class App implements OnDestroy, AfterViewInit {
   searchText = "";
   searchScope = "active";
   searchResults = signal<SearchResults | null>(null);
+  /** Effective History bounds currently queried (the focused day, or the evaluated range). */
   from = "";
   to = "";
+  fromInput = "";
+  toInput = "";
   timezone = "UTC";
+  timezoneInput = "UTC";
+  range: HistoryRange = { ...defaultRange };
+  readonly rangePresets = rangePresets;
+  readonly rangeLabel = rangeLabel;
+  focusedDay = signal<string | null>(null);
+  rangeError = signal("");
+  timezoneError = signal("");
+  preferencesNotice = signal("");
+  private preferencesNoticeShown = false;
+  private rememberedTimezone?: string;
+  private evaluatedDate = "";
+  private journalSnapshot: number | undefined;
+  private searchRevision: string | null = null;
+  private lastSaved = "";
+  protected now = () => new Date();
   groupBy = "ticket";
   scale = "day";
   repoMenu = signal(false);
@@ -102,7 +137,6 @@ export class App implements OnDestroy, AfterViewInit {
   private documentEpoch = 0;
   private detailEpoch = 0;
   private polling = false;
-  private pollCount = 0;
   private drafts = new Map<
     string,
     { selection: Selection | null; comment: string; editing: (Review & { revision: string }) | null }
@@ -194,11 +228,25 @@ export class App implements OnDestroy, AfterViewInit {
               ? [catalog.launchRepository]
               : null,
       );
-      this.timezone = state.history?.timezone ?? info.timezone;
+      // A remembered zone must be accepted by the browser and the server; an older save the server rejects is dropped.
+      // Any other probe failure leaves the zone "not verified": it is kept and History reports its own error.
+      const savedZone =
+        validTimezone(state.history?.timezone) &&
+        (state.history!.timezone === info.timezone ||
+          (await this.serverAcceptsTimezone(state.history!.timezone!).catch(
+            () => true,
+          )))
+          ? state.history!.timezone
+          : undefined;
+      this.rememberedTimezone = savedZone;
+      this.timezone = savedZone ?? info.timezone;
+      this.timezoneInput = this.timezone;
       this.groupBy = state.history?.groupBy ?? "ticket";
       this.scale = state.history?.scale ?? "day";
-      this.to = state.history?.to ?? localDate(new Date(), this.timezone);
-      this.from = state.history?.from ?? addDays(this.to, -29);
+      // A range saved by an earlier version has no kind and becomes the default relative range.
+      this.range = normalizeRange(state.history?.range);
+      this.evaluate();
+      this.journalSnapshot = catalog.journalSnapshot;
       this.ready.set(true);
       if (
         window.location.pathname === "/" &&
@@ -349,7 +397,6 @@ export class App implements OnDestroy, AfterViewInit {
       if (more) page.rows = [...(this.timeline()?.rows ?? []), ...page.rows];
       this.historyQuery = { ...query, snapshot: page.snapshot, offset: 0 };
       this.timeline.set(page);
-      this.remember();
     } catch (error) {
       if (epoch === this.historyEpoch) this.report(error);
     } finally {
@@ -391,10 +438,108 @@ export class App implements OnDestroy, AfterViewInit {
     this.remember();
     await this.loadHistory();
   }
+  /** Computes the effective bounds from the focused day or the remembered range, as of now. */
+  private evaluate() {
+    const now = this.now();
+    this.evaluatedDate = localDate(now, this.timezone);
+    const focus = this.focusedDay();
+    const effective = focus
+      ? { from: focus, to: focus }
+      : effectiveRange(this.range, this.timezone, now);
+    this.from = this.fromInput = effective.from;
+    this.to = this.toInput = effective.to;
+    this.rangeError.set("");
+  }
+  async selectPreset(days: 7 | 30 | 90) {
+    this.range = { kind: "relative", days };
+    this.focusedDay.set(null);
+    this.evaluate();
+    this.remember();
+    await this.loadHistory();
+  }
+  async datesChanged() {
+    const from = this.fromInput,
+      to = this.toInput;
+    if (!validDate(from) || !validDate(to)) {
+      this.rangeError.set("Enter both a From and a Through date.");
+      return;
+    }
+    if (from > to) {
+      this.rangeError.set("From must not be after Through.");
+      return;
+    }
+    this.range = { kind: "custom", from, to };
+    this.focusedDay.set(null);
+    this.evaluate();
+    this.remember();
+    await this.loadHistory();
+  }
+  /** Asks the server for a one-day History slice in `zone`. False only for its 400 "Unknown reporting timezone." rejection. */
+  private async serverAcceptsTimezone(zone: string): Promise<boolean> {
+    const today = localDate(this.now(), zone);
+    try {
+      await api<Timeline>("timeline", {
+        from: boundary(today, zone),
+        to: boundary(addDays(today, 1), zone),
+        timezone: zone,
+        groupBy: "ticket",
+        repositories: this.selectedRepos() ?? [],
+      });
+      return true;
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 400 &&
+        error.message === "Unknown reporting timezone."
+      )
+        return false;
+      throw error;
+    }
+  }
+  async timezoneChanged() {
+    const zone = this.timezoneInput.trim();
+    if (!validTimezone(zone)) {
+      this.timezoneError.set(
+        "This browser does not know the timezone \u201c" +
+          zone +
+          "\u201d. Use a name such as Europe/Warsaw.",
+      );
+      return;
+    }
+    if (zone !== this.timezone) {
+      let accepted: boolean;
+      try {
+        accepted = await this.serverAcceptsTimezone(zone);
+      } catch (error) {
+        this.report(error);
+        return;
+      }
+      if (!accepted) {
+        // Nothing changes: the previous zone, results and saved preferences stay in effect.
+        this.timezoneError.set(
+          "The server does not accept the timezone \u201c" +
+            zone +
+            "\u201d. Use a name such as Europe/Warsaw.",
+        );
+        return;
+      }
+    }
+    this.timezoneError.set("");
+    this.timezone = this.timezoneInput = zone;
+    this.rememberedTimezone = zone;
+    this.evaluate();
+    this.remember();
+    await this.refreshData();
+  }
   async focusDay(date: string) {
-    this.from = date;
-    this.to = date;
-    await this.controlsChanged();
+    this.focusedDay.set(date);
+    this.evaluate();
+    await this.loadHistory();
+  }
+  async clearFocus() {
+    this.focusedDay.set(null);
+    this.evaluate();
+    await this.loadHistory();
   }
   async openChange(change: Change, path?: string, anchor?: string) {
     const same =
@@ -524,6 +669,7 @@ export class App implements OnDestroy, AfterViewInit {
     request: DocumentRequest,
     anchor?: string,
     poll = false,
+    skipUnchanged = false,
   ) {
     const old = this.document();
     const same = old && this.documentKey(old) === this.documentKey(request);
@@ -540,8 +686,21 @@ export class App implements OnDestroy, AfterViewInit {
       }
     }
     try {
-      const value = await api<DocumentContent>("document", request);
+      const body: DocumentRequest = {
+        sourceId: request.sourceId,
+        change: request.change,
+        path: request.path,
+        variant: request.variant,
+      };
+      if (skipUnchanged && same) body.knownRevision = old.revision;
+      const answer = await api<DocumentContent | DocumentUnchanged>(
+        "document",
+        body,
+      );
       if (epoch !== this.documentEpoch) return;
+      // The open document is current: keep what is rendered and parse nothing.
+      if ("unchanged" in answer && answer.unchanged) return;
+      const value = answer as DocumentContent;
       if (poll && same && value.revision === old.revision && value.canComment === old.canComment) {
         this.document.set(value);
         return;
@@ -573,9 +732,7 @@ export class App implements OnDestroy, AfterViewInit {
             ? "Document updated. Your edit is retained; saving checks the original note."
             : "Document updated. Your comment is retained; reselect its passage before saving.",
         );
-      this.preferences.documents ??= {};
-      this.preferences.documents[value.sourceId + ":" + value.change] =
-        value.path;
+      if (!poll) this.useDocument(value);
       setTimeout(() => {
         if (epoch !== this.documentEpoch) return;
         this.attachTaskAnchors();
@@ -603,6 +760,19 @@ export class App implements OnDestroy, AfterViewInit {
     } finally {
       if (epoch === this.documentEpoch) this.documentLoading.set(false);
     }
+  }
+  private useDocument(value: DocumentContent) {
+    this.preferences.documents ??= {};
+    touchRecent(
+      this.preferences.documents,
+      value.sourceId + ":" + value.change,
+      value.path,
+      documentLimit,
+    );
+    const key = this.documentKey(value);
+    const position = this.preferences.positions?.[key];
+    if (position !== undefined)
+      touchRecent(this.preferences.positions!, key, position, positionLimit);
   }
   taskAnchor(
     task: { number: string | null; text: string; line: number },
@@ -843,11 +1013,15 @@ export class App implements OnDestroy, AfterViewInit {
   onScroll(event: Event) {
     const d = this.document();
     if (!d) return;
+    this.rememberPosition(
+      this.documentKey(d),
+      (event.target as HTMLElement).scrollTop,
+    );
+    this.remember(scrollSaveDelay);
+  }
+  rememberPosition(key: string, top: number) {
     this.preferences.positions ??= {};
-    this.preferences.positions[this.documentKey(d)] = (
-      event.target as HTMLElement
-    ).scrollTop;
-    this.remember();
+    touchRecent(this.preferences.positions, key, top, positionLimit);
   }
   searchChanged() {
     clearTimeout(this.searchTimer);
@@ -863,6 +1037,7 @@ export class App implements OnDestroy, AfterViewInit {
     if (!query) return;
     const epoch = ++this.searchEpoch;
     this.searchLoading.set(true);
+    this.searchRevision = this.catalog()?.revision ?? null;
     try {
       const value = await api<SearchResults>("search", {
         query,
@@ -956,25 +1131,54 @@ export class App implements OnDestroy, AfterViewInit {
         c.repositories.includes(this.detail()?.repository ?? ""),
     );
   }
-  private remember() {
+  private remember(delay = 350) {
     if (!this.ready()) return;
     clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
-      this.preferences = {
-        ...this.preferences,
-        schemaVersion: 1,
-        repositories: this.selectedRepos(),
-        history: {
-          from: this.from,
-          to: this.to,
-          timezone: this.timezone,
-          groupBy: this.groupBy,
-          scale: this.scale,
-        },
-        lastRoute: this.router.url,
-      };
-      void api("state", this.preferences, "PUT").catch((e) => this.report(e));
-    }, 350);
+    this.saveTimer = setTimeout(() => void this.persist(), delay);
+  }
+  /** Saves preferences when they differ from the last successful save. The timezone is saved only once the user chose it. */
+  private async persist() {
+    if (!this.ready()) return;
+    const history: NonNullable<Preferences["history"]> = {
+      range: this.range,
+      groupBy: this.groupBy,
+      scale: this.scale,
+    };
+    if (this.rememberedTimezone) history.timezone = this.rememberedTimezone;
+    this.preferences = {
+      ...this.preferences,
+      schemaVersion: 1,
+      repositories: this.selectedRepos(),
+      history,
+      lastRoute: this.router.url,
+    };
+    const body = JSON.stringify(this.preferences);
+    if (body === this.lastSaved) return;
+    try {
+      await api("state", this.preferences, "PUT");
+      this.lastSaved = body;
+    } catch (error) {
+      this.preferencesFailed(error);
+    }
+  }
+  private preferencesFailed(error: unknown) {
+    if (error instanceof ApiError && error.status === 401) {
+      this.report(error);
+      return;
+    }
+    // One notice per visit; the in-memory preferences stay in effect.
+    if (this.preferencesNoticeShown) return;
+    this.preferencesNoticeShown = true;
+    this.preferencesNotice.set(
+      "Preferences could not be saved" +
+        (error instanceof Error && error.message
+          ? " (" + error.message + ")"
+          : "") +
+        ". Your current view is unaffected.",
+    );
+  }
+  private dayRolledOver() {
+    return localDate(this.now(), this.timezone) !== this.evaluatedDate;
   }
   private async poll() {
     if (
@@ -1005,10 +1209,18 @@ export class App implements OnDestroy, AfterViewInit {
             (!d.variant || c.variant === d.variant),
         );
         this.selectedChange.set(candidates.length === 1 ? candidates[0] : null);
-        await this.loadDocument(d, undefined, true);
+        // An archive move changes the document's state without changing its text, so it needs the full response.
+        const moved = candidates.length === 1 && candidates[0].archived !== d.archived;
+        await this.loadDocument(d, undefined, true, !moved);
       }
-      if (this.searchText.trim()) void this.search();
-      if (++this.pollCount % 5 === 0) await this.refreshData();
+      if (this.searchText.trim() && snapshot.revision !== this.searchRevision)
+        void this.search();
+      const rolled = this.dayRolledOver();
+      if (rolled || snapshot.journalSnapshot !== this.journalSnapshot) {
+        this.journalSnapshot = snapshot.journalSnapshot;
+        if (rolled) this.evaluate();
+        await this.refreshData();
+      }
     } catch (error) {
       this.report(error);
     } finally {
@@ -1018,6 +1230,21 @@ export class App implements OnDestroy, AfterViewInit {
   @HostListener("document:keydown", ["$event"])
   keyboard(event: KeyboardEvent) {
     if (event.key === "Escape") {
+      const target = event.target instanceof Element ? event.target : null;
+      const field = target?.closest("textarea,input,select,.review-delete-confirm");
+      if (field && (this.document() || this.copies().length || this.detail())) {
+        // Escape leaves the field or the confirmation first; it closes the reader only from outside them.
+        if (event.isComposing) return;
+        if (this.deletingReview()) this.deletingReview.set(null);
+        else if (this.selection() && !this.comment().trim() && !this.editingReview())
+          this.selection.set(null);
+        if (field instanceof HTMLElement && field.matches("textarea,input,select")) field.blur();
+        document
+          .querySelector<HTMLElement>(".reader")
+          ?.focus({ preventScroll: true });
+        event.preventDefault();
+        return;
+      }
       if (this.detail()) {
         this.detail.set(null);
         return;

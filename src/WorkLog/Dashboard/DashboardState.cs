@@ -26,10 +26,12 @@ internal sealed class DashboardState(string dataDirectory)
     {
         state["schemaVersion"] = 1;
         var text = state.ToJsonString();
-        if (System.Text.Encoding.UTF8.GetByteCount(text) > 65_536) throw new ArgumentException("Dashboard preferences exceed 64 KiB.");
+        if (System.Text.Encoding.UTF8.GetByteCount(text) > 65_536) throw new DashboardPayloadTooLargeException("Dashboard preferences exceed 64 KiB.");
         lock (gate)
         {
             AtomicFile.Write(path, state.ToJsonString());
         }
     }
 }
+
+internal sealed class DashboardPayloadTooLargeException(string message) : Exception(message);

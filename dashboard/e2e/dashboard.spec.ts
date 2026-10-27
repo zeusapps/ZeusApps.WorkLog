@@ -519,6 +519,128 @@ test("copies section and task links with useful missing-target fallbacks", async
   ).toHaveCount(0);
 });
 
+const savedState = (page: Page) =>
+  page.request.get("/api/state").then((r) => r.json() as Promise<any>);
+const dayCount = (from: string, through: string) =>
+  Math.round((Date.parse(through) - Date.parse(from)) / 86_400_000);
+
+test("Escape leaves the comment field first and closes the reader second", async ({ page }) => {
+  await authorize(page);
+  await page.getByRole("button", { name: "Repository filters", exact: true }).click();
+  const reader = page.getByRole("dialog", { name: "OpenSpec document reader" });
+  await expect(reader).toBeVisible();
+  await page.locator(".markdown p").filter({ hasText: "Choose one project" }).click();
+  const comment = page.getByRole("textbox", { name: "Review comment" });
+  await comment.fill("Keep this draft while I check something");
+  await comment.press("Escape");
+  await expect(reader).toBeVisible();
+  await expect(comment).toHaveValue("Keep this draft while I check something");
+  await expect(page.locator(".reader")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(reader).toHaveCount(0);
+});
+
+test("a focused history day is temporary and a reload restores the remembered range", async ({ page }) => {
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await page.getByRole("button", { name: "Work history", exact: false }).click();
+  await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible();
+  const saved = page.waitForResponse(
+    (r) => r.url().endsWith("/api/state") && r.request().method() === "PUT" && r.request().postDataJSON().history?.range?.days === 7,
+  );
+  await page.getByRole("button", { name: "Last 7 days", exact: true }).click();
+  await saved;
+  const from = page.getByLabel("From", { exact: true });
+  const through = page.getByLabel("Through", { exact: true });
+  await expect.poll(async () => dayCount(await from.inputValue(), await through.inputValue())).toBe(6);
+  await page.locator(".daily-item").first().click();
+  await expect(page.getByRole("button", { name: "Back to last 7 days" })).toBeVisible();
+  await expect.poll(async () => dayCount(await from.inputValue(), await through.inputValue())).toBe(0);
+  const focused = await from.inputValue();
+  expect(JSON.stringify(await savedState(page))).not.toContain(focused);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Back to/ })).toHaveCount(0);
+  await expect.poll(async () => dayCount(await from.inputValue(), await through.inputValue())).toBe(6);
+  const state = await savedState(page);
+  expect(state.history.range).toEqual({ kind: "relative", days: 7 });
+  expect(state.history).not.toHaveProperty("from");
+  expect(state.history).not.toHaveProperty("to");
+  const restored = page.waitForResponse(
+    (r) => r.url().endsWith("/api/state") && r.request().method() === "PUT" && r.request().postDataJSON().history?.range?.days === 30,
+  );
+  await page.getByRole("button", { name: "Last 30 days", exact: true }).click();
+  await restored;
+  await expect.poll(async () => dayCount(await from.inputValue(), await through.inputValue())).toBe(29);
+});
+
+test("a relative history range rolls forward when the dashboard stays open for three days", async ({ page }) => {
+  await page.clock.install({ time: new Date() });
+  const queries: { from: string; to: string }[] = [];
+  page.on("request", (r) => {
+    // The History query spans weeks; the Ongoing query spans 14 days.
+    if (r.url().endsWith("/api/timeline") && Date.parse(r.postDataJSON().to) - Date.parse(r.postDataJSON().from) > 20 * 86_400_000)
+      queries.push(r.postDataJSON());
+  });
+  await authorize(page);
+  await page.getByRole("button", { name: "Work history", exact: false }).click();
+  await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible();
+  const from = page.getByLabel("From", { exact: true });
+  const through = page.getByLabel("Through", { exact: true });
+  await expect(through).not.toHaveValue("");
+  const [startFrom, startThrough] = [await from.inputValue(), await through.inputValue()];
+  expect(dayCount(startFrom, startThrough)).toBe(29);
+  const shift = (date: string, days: number) => new Date(Date.parse(date + "T12:00:00Z") + days * 86_400_000).toISOString().slice(0, 10);
+  queries.length = 0;
+  await page.clock.fastForward(3 * 86_400_000);
+  await expect(through).toHaveValue(shift(startThrough, 3));
+  await expect(from).toHaveValue(shift(startFrom, 3));
+  await expect.poll(() => queries.length).toBeGreaterThan(0);
+  const last = queries.at(-1)!;
+  expect(Math.abs(Date.parse(last.to) - Date.parse(shift(startThrough, 4) + "T00:00:00Z"))).toBeLessThan(86_400_000);
+  expect((await savedState(page)).history.range).toEqual({ kind: "relative", days: 30 });
+});
+
+test("reading positions stay bounded however many documents were read", async ({ page }) => {
+  await authorize(page);
+  const seeded: Record<string, number> = {};
+  for (let i = 0; i < 150; i++) seeded[`seed-${String(i).padStart(3, "0")}:old:design.md:`] = i;
+  const seed = await page.request.put("/api/state", { data: { schemaVersion: 1, repositories: null, positions: seeded } });
+  expect(seed.status()).toBe(204);
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Pick up where you left off" })).toBeVisible();
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await page.getByRole("button", { name: "Shipping reports", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "OpenSpec document reader" })).toBeVisible();
+  const saved = page.waitForResponse(
+    (r) => r.url().endsWith("/api/state") && r.request().method() === "PUT"
+      && Object.keys(r.request().postDataJSON().positions ?? {}).some((k) => k.includes(":shipping-reports:")),
+  );
+  await page.locator(".document-scroll").evaluate((el) => el.dispatchEvent(new Event("scroll")));
+  const body = (await saved).request().postDataJSON();
+  const keys = Object.keys(body.positions);
+  expect(keys).toHaveLength(100);
+  expect(keys.at(-1)).toContain(":shipping-reports:");
+  expect(keys).not.toContain("seed-000:old:design.md:");
+  expect(keys).toContain("seed-149:old:design.md:");
+  expect((await saved).ok()).toBe(true);
+});
+
+test("search reports unavailable sources only for the selected repositories", async ({ page }) => {
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await page.getByRole("button", { name: "example/worklog", exact: true }).click();
+  await expect(page.getByRole("button", { name: /example\/worklog/ }).first()).toBeVisible();
+  const search = page.getByRole("textbox", { name: "Search OpenSpec documents" });
+  await search.fill("timeline");
+  await expect(page.locator(".search-result").first()).toBeVisible();
+  // Only the selected repository is searched, so another repository's unavailable store is not reported.
+  await expect(page.locator(".search-panel details.source-notices")).toHaveCount(0);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await expect(page.locator(".search-result").first()).toBeVisible();
+  await search.fill("");
+});
+
 test("keeps history available when a declared store cannot be resolved",async({page})=>{
   await authorize(page);
   await page.getByRole('button',{name:'All repositories',exact:true}).click();

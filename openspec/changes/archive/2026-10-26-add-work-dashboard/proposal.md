@@ -7,11 +7,7 @@ WorkLog records useful activity facts, but users cannot visually follow work ove
 ## What Changes
 
 - Add `worklog dashboard` to launch an offline-capable Angular interface, served as prebuilt static assets by the local executable over a private JSON API. Node.js is needed only for development and builds, never by users.
-
-<!-- REVIEW: test comment -->
 - Provide Ongoing work and History views with a shared repository filter supporting all, one, or several repositories; use the launch repository as the initial default when available and remember subsequent selections.
-
-<!-- REVIEW: foo bar -->
 - Default to a dark theme with a remembered light/dark toggle covering dashboard views and document review.
 - Visualize ticket/change work as elapsed spans with dots only on dates containing recorded observations, with date-range, timezone, and grouping controls, drill-down, and factual insights.
 - Discover active OpenSpec changes independently of journal activity and render proposal, design, tasks, and spec documents for active and archived changes, including configured standalone stores.
