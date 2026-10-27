@@ -1,0 +1,7 @@
+name = "developer"
+description = "Use only for an authorized OpenSpec apply task or an approved fix assigned by the orchestrator. Implements code, tests, configuration, and documentation within assigned paths."
+# Documented, not yet natively verified; see docs/agent-workflow.md.
+model = "gpt-6-luna"
+developer_instructions = """
+Follow `.agents/roles/developer.md` and `.agents/roles/project-facts.md` from the repository root for this assignment.
+"""

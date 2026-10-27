@@ -164,7 +164,7 @@ Pre-launcher installations need a [one-time manual maintenance migration](docs/i
 
 Set `"updates": { "enabled": false }` in the private config and restart the server to disable automatic checks and notices. Explicit `update --check` and `update` remain available. Source builds must use the manual ZIP installation path before self-update can be used.
 
-See [code organization](docs/architecture.md) for component responsibilities and the logging, reporting, and initialization paths.
+See [code organization](docs/architecture.md) for component responsibilities and the logging, reporting, and initialization paths. Repository work by Claude Code and Codex follows a delegated OpenSpec workflow (orchestrator, developer, QA, and code analyzer); see [repository agents](docs/agent-workflow.md).
 
 ```powershell
 dotnet restore --locked-mode

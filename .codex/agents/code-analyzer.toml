@@ -1,0 +1,8 @@
+name = "code-analyzer"
+description = "Use only for an orchestrator-assigned review of a stable implementation target. Independently analyzes duplication, simplification, complexity, architecture, and performance, and writes only the assigned change-local report and evidence."
+# Documented, not yet natively verified; see docs/agent-workflow.md.
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
+developer_instructions = """
+Follow `.agents/roles/code-analyzer.md` and `.agents/roles/project-facts.md` from the repository root for this assignment, and write the report in the `.agents/templates/analysis-report.md` format.
+"""
