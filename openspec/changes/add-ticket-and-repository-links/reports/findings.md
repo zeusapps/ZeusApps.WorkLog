@@ -104,5 +104,5 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../.ag
 - Findings: QA-001 and ANALYSIS-001 verified; ANALYSIS-002..005 deferred suggestions; no open blocking findings.
 - Nonblocking follow-ups: ANALYSIS-002 and ANALYSIS-004 (later maintenance change); ANALYSIS-003 (reconsider in `add-ongoing-board`); ANALYSIS-005 (only if measured latency warrants); ANALYSIS-001 residual edge cases (unbalanced `)` in recorded URLs, trailing `\` in IDs or labels).
 - Evidence gaps / provider restrictions: the declared-store e2e scenario fails identically on baseline `9243722` (QA-007 follow-up from `fix-dashboard-reliability`, pre-existing). Packaged e2e not repeated after A4. Not performed: live midnight rollover with Ongoing open, key probes inside the ticket input, and the 1,000-observation cap end to end (unit-tested only).
-- Commit: pending
+- Commit: `eb010e0` on branch `change/add-ticket-and-repository-links` (not pushed; push needs separate authorization)
 - OpenSpec task reconciliation: tasks 1.1–5.2 verified by qa-001 and qa-002 evidence.
