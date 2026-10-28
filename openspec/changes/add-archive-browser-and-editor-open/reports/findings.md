@@ -85,4 +85,4 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../.ag
 - User decisions: apply before `add-ticket-and-repository-links`; Cursor format accepted as unconfirmed; vertical document list moved to a separate change.
 - Hygiene: re-run by the orchestrator over the change root and changed docs after qa-004; only hits are pattern-name lists inside QA reports. No `<!-- REVIEW` markers in the change root.
 - Follow-ups outside this change: the DevInstallTests mtime-ordering failure; the QA-007 declared-store e2e scenario; the reader's vertical document list.
-- Commit: pending.
+- Commit: `ff771fd` on branch `change/add-archive-browser-and-editor-open`.
