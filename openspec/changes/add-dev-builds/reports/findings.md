@@ -282,5 +282,5 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../.ag
   - The launcher CTRL+C step needs an interactive console. It passed in the maintainer's interactive run.
   - Task 3.3 used the product installer API, because `worklog update` has no local fixture endpoint (user decision).
   - No switch, rollback, or retire was run on the real installation. The manual `0.3.9001` payload is untouched.
-- Commit: see below.
+- Commit: `3c7dfd1` on branch `change/add-dev-builds`. Not pushed; a push needs separate user authorization.
 - OpenSpec task reconciliation: 11/11 verified.
