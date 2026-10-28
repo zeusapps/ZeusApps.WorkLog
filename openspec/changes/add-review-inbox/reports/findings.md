@@ -81,4 +81,4 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../.ag
 - No scope deferral. One planning change by user decision: the marker cache is bounded by the catalog (design Decision 1, task 1.2).
 - Parity: not applicable (dashboard-only; confirmed by qa-001).
 - Hygiene: passing in qa-002 over the committed change files; the orchestrator re-ran the search over findings.md, analysis-002.md, design.md and tasks.md written afterwards: only pattern-list quotes and loopback literals.
-- Commit: pending.
+- Commit: `50df7b8` on `change/add-review-inbox` (implementation and change artifacts). Not pushed; archive and publication need separate user requests.
