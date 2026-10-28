@@ -10,8 +10,12 @@ WorkLog's original purpose is to track activity over time. Its most frequent pra
 - **Yesterday** is the most recent earlier local date with recorded observations in the selected repositories. This handles weekends, holidays, and absences without a working-day calendar. The view names the date ("Thursday 22 Oct — last recorded day") and can step to the previous or next recorded day.
   - One line per work item (ticket grouping): title, ticket links, recorded status as of the end of that day, and that day's latest summary.
   - Other observations from that day are collapsed and can be expanded.
+  - An observation with neither a ticket nor a change gets its own line, titled with its summary, instead of one nameless line per repository.
   - Order: done, then in progress, then started.
-- **Today** lists work items whose latest recorded status is not done and that had recorded activity within the last 14 days, plus items already recorded today.
+- **Today** is derived from the Ongoing board (`add-ongoing-board`) and follows the user's priority order:
+  - In-progress cards, except quiet ones (no observation in the last 14 days).
+  - Plus cards with an observation recorded today, from any column.
+  - Proposed changes are not listed; the view can show how many there are.
 - **Blockers** is always empty, with a prompt for the user to fill in. It is never inferred.
 - Add "Copy for daily", which copies the three sections as concise Markdown or plain text, with ticket links optional. The choice is remembered.
 - Uses the shared repository filter and the History timezone. No separate client or scope configuration.
@@ -29,9 +33,9 @@ None.
 
 ## Impact
 
-- Server: `POST /api/daily`, which reuses `TimelineService.Project` for the selected day and adds a read-only lookup of the previous and next recorded days in `DashboardJournal`.
-- Client: `/daily` route and navigation entry, the digest rendering, copy formatting, and preferences (`daily.format`, `daily.links`).
+- Server: `POST /api/daily`, which reuses `TimelineService.Project` for the selected day, splits unlinked observations into separate lines, and adds a read-only lookup of the previous and next recorded days in `DashboardJournal`. It builds only the Yesterday digest.
+- Client: `/daily` route and navigation entry, the digest rendering, Today derived from the board model (`buildBoard` and `byPriority` from `dashboard/src/board.ts`) over the inputs Ongoing already loads, copy formatting, and preferences (`daily.format`, `daily.links`).
 - Ticket links come from `dashboard/src/links.ts` (`add-ticket-and-repository-links`).
 - The quality of each line depends on the summaries agents log. `improve-observation-summaries` is a complementary optional change.
 - No journal schema or MCP contract changes.
-- Prerequisites: `add-agent-workflow`, `fix-dashboard-reliability`, `add-ticket-and-repository-links`.
+- Prerequisites: `add-agent-workflow`, `fix-dashboard-reliability`, `add-ticket-and-repository-links`, `add-ongoing-board`.

@@ -26,7 +26,7 @@ The Daily view SHALL select, by default, the most recent local date before the c
 - **THEN** the view states that no earlier recorded work exists
 
 ### Requirement: Concise yesterday digest
-For the selected day, the Daily view SHALL show one line per work item with observations on that day, using ticket grouping. Each line SHALL show the item title, its tickets with links when available, associated change names, its latest recorded status as of the end of that day, and the summary of its latest observation on that day, or an explicit no-summary label. Other observations of that item on that day SHALL be collapsed and available on request. Lines SHALL be ordered by status (done, in progress, started), then by latest observation time, newest first. The digest SHALL NOT infer working hours, completion, or progress beyond recorded observations, and SHALL NOT treat a later observation as already recorded on the selected day.
+For the selected day, the Daily view SHALL show one line per work item with observations on that day, using ticket grouping. Each line SHALL show the item title, its tickets with links when available, associated change names, its latest recorded status as of the end of that day, and the summary of its latest observation on that day, or an explicit no-summary label. Other observations of that item on that day SHALL be collapsed and available on request. An observation with neither a ticket nor a change SHALL be shown as its own line, titled with its summary or an explicit no-summary label, with no collapsed observations. Lines SHALL be ordered by status (done, in progress, started), then by latest observation time, newest first. The digest SHALL NOT infer working hours, completion, or progress beyond recorded observations, and SHALL NOT treat a later observation as already recorded on the selected day.
 
 #### Scenario: Several observations for one ticket
 - **WHEN** a ticket has three observations on the selected day, the last of which is done
@@ -36,16 +36,28 @@ For the selected day, the Daily view SHALL show one line per work item with obse
 - **WHEN** a ticket was in progress at the end of the selected day and recorded done the next day
 - **THEN** the digest for the selected day shows it as in progress
 
+#### Scenario: Unlinked work on the selected day
+- **WHEN** two observations with neither a ticket nor a change were recorded on the selected day
+- **THEN** the digest shows two lines, each titled with its own summary
+
 ### Requirement: Today and blockers
-The Daily view SHALL list under Today the work items whose latest recorded status is not done and that have an observation within the last 14 days, plus work items with observations recorded today, without duplicates, ordered by latest observation time. Active OpenSpec changes without observations SHALL NOT be listed individually under Today; the view MAY indicate how many exist. The Blockers section SHALL be empty with a prompt for the user and SHALL NOT be derived from recorded data.
+The Daily view SHALL derive Today from the Ongoing board of the same repository selection. Today SHALL list the board's In progress cards, except cards showing the quiet indication, plus cards from any column with an observation recorded today, each card once, in the board's priority order. Proposed change cards SHALL NOT be listed under Today; the view MAY indicate how many exist. The Blockers section SHALL be empty with a prompt for the user and SHALL NOT be derived from recorded data.
 
 #### Scenario: Work in progress continues
 - **WHEN** a ticket's latest observation, recorded yesterday, is in_progress
 - **THEN** it appears under Today
 
 #### Scenario: Completed work does not continue
-- **WHEN** a ticket's latest observation is done
+- **WHEN** a ticket's latest observation is done, or an active change has all of its tasks ticked
 - **THEN** it does not appear under Today unless it has an observation recorded today
+
+#### Scenario: Today follows the priority order
+- **WHEN** two In-progress cards are ranked on the board with the second above the first
+- **THEN** Today lists them in that ranked order
+
+#### Scenario: Quiet work is left out
+- **WHEN** an active change's latest observation is in_progress and was recorded 20 days ago
+- **THEN** it does not appear under Today
 
 ### Requirement: Copy for daily
 The Daily view SHALL provide an action that copies the Yesterday, Today, and Blockers sections as concise text, in a Markdown or plain-text format selected by the user, with ticket links included or omitted as selected. The format and link choices SHALL be remembered. The copied Yesterday section SHALL name the selected date. Each copied line SHALL contain only recorded facts: title or ticket IDs, recorded status, and the latest summary. The Blockers section SHALL be copied as an empty placeholder.
