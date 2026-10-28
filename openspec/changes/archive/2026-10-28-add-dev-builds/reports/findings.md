@@ -4,7 +4,7 @@ Orchestrator-owned ledger. Reviewers write their assigned reports; developers wr
 
 ## Current orchestrator
 
-Advisory marker; resume and hand-off rules are in the [workflow](../../../../.agents/workflows/openspec-delegation.md#mixed-client-operation).
+Advisory marker; resume and hand-off rules are in the [workflow](../../../../../.agents/workflows/openspec-delegation.md#mixed-client-operation).
 
 - Client / version: Claude Code 2.1.312
 - Session identity: f25921b7-0c78-457f-9581-5041c8ca773d
@@ -284,3 +284,7 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../.ag
   - No switch, rollback, or retire was run on the real installation. The manual `0.3.9001` payload is untouched.
 - Commit: `3c7dfd1` on branch `change/add-dev-builds`. Not pushed; a push needs separate user authorization.
 - OpenSpec task reconciliation: 11/11 verified.
+- User acceptance and archive: on 2026-10-28 the user asked to archive, commit, and merge to main. Archive preconditions:
+  - No lines start with `<!-- REVIEW` in the change root.
+  - The completion criteria above hold.
+  - The delta spec was synced into `openspec/specs/application-distribution/spec.md` before archiving: "Development builds" was added, and "Non-blocking stable release discovery" and "Explicit verified Windows update" were modified.
