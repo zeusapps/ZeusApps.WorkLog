@@ -33,10 +33,10 @@ internal sealed class UpdateCommand : Command
                 var outcome = UpdateInstaller.ReadOutcome(settings.DataDirectory, root ?? UpdateInstallation.CurrentDirectory);
                 if (selection is not null)
                 {
-                    output.WriteLine($"Running {ApplicationInfo.Version}; selected {selection.Current.Version} for new processes; generation {selection.Generation}.");
+                    output.WriteLine($"Running {ApplicationInfo.DisplayVersion}; selected {VersionDisplay.ForInstalled(root, selection.Current.Version)} for new processes; generation {selection.Generation}.");
                     if (outcome?.OperationId == selection.OperationId)
                     {
-                        output.WriteLine($"activated: {selection.Current.Version}. Selection committed. Existing conversations adopt at normal reconnect/restart.");
+                        output.WriteLine($"activated: {VersionDisplay.ForInstalled(root, selection.Current.Version)}. Selection committed. Existing conversations adopt at normal reconnect/restart.");
                         return 0;
                     }
                     else
@@ -65,15 +65,16 @@ internal sealed class UpdateCommand : Command
             var release = releaseCheck.Release;
             if (release is null)
             {
-                output.WriteLine($"Running {ApplicationInfo.Version}; selected {selection?.Current.Version ?? "n/a (source)"}; no stable Windows release candidate is available.");
+                output.WriteLine($"Running {ApplicationInfo.DisplayVersion}; selected {Selected(root, selection)}; no stable Windows release candidate is available.");
                 return 0;
             }
-            if (!release.IsNewerThan(ApplicationInfo.Version) || selection is not null && !release.IsNewerThan(selection.Current.Version))
+            if (!release.IsNewerThan(InstallationLayout.EffectiveVersion(root, ApplicationInfo.Version))
+                || selection is not null && !release.IsNewerThan(InstallationLayout.EffectiveVersion(root, selection.Current.Version)))
             {
-                output.WriteLine($"Up to date: running {ApplicationInfo.Version}; selected {selection?.Current.Version ?? "n/a (source)"}; published {release.Version}.");
+                output.WriteLine($"Up to date: running {ApplicationInfo.DisplayVersion}; selected {Selected(root, selection)}; published {release.Version}.");
                 return 0;
             }
-            output.WriteLine($"Running {ApplicationInfo.Version}; selected {selection?.Current.Version ?? "n/a (source)"}; available {release.Version}. Compatibility is verified before activation. {release.ReleaseUrl}");
+            output.WriteLine($"Running {ApplicationInfo.DisplayVersion}; selected {Selected(root, selection)}; available {release.Version}. Compatibility is verified before activation. {release.ReleaseUrl}");
             if (result.GetValue(check))
                 return 0;
             var prepared = await installer.DownloadAsync(client, root!, settings.DataDirectory, ApplicationInfo.Version, release, token);
@@ -83,4 +84,7 @@ internal sealed class UpdateCommand : Command
             return 0;
         });
     }
+
+    private static string Selected(string? root, PayloadSelection? selection) =>
+        selection is null ? "n/a (source)" : VersionDisplay.ForInstalled(root, selection.Current.Version);
 }

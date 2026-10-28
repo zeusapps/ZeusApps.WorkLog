@@ -24,7 +24,8 @@ public sealed class PayloadInstaller
     {
         ValidateRoot(root, dataDirectory);
         var original = InstallationLayout.ReadSelection(root);
-        if (!release.IsValid() || !release.IsNewerThan(original.Current.Version) || !release.IsNewerThan(runningVersion))
+        if (!release.IsValid() || !release.IsNewerThan(InstallationLayout.EffectiveVersion(root, original.Current.Version))
+            || !release.IsNewerThan(InstallationLayout.EffectiveVersion(root, runningVersion)))
             throw new InvalidOperationException("Only a release newer than running and selected versions can activate.");
         var stage = Path.Combine(Path.GetFullPath(dataDirectory), "updates", "staging", Guid.NewGuid().ToString("N"));
         InstallationLayout.EnsureNoReparsePoints(stage);
@@ -57,7 +58,8 @@ public sealed class PayloadInstaller
         ValidateRoot(root, dataDirectory);
         original ??= InstallationLayout.ReadSelection(root);
         var candidate = new ReleaseInfo(version, "", "", "");
-        if (!candidate.IsNewerThan(runningVersion) || !candidate.IsNewerThan(original.Current.Version))
+        if (!candidate.IsNewerThan(InstallationLayout.EffectiveVersion(root, runningVersion))
+            || !candidate.IsNewerThan(InstallationLayout.EffectiveVersion(root, original.Current.Version)))
             throw new InvalidOperationException("Candidate is not newer than running and selected versions.");
         var id = Path.GetFileName(stage);
         if (!Guid.TryParseExact(id, "N", out _) || stage != Path.Combine(dataDirectory, "updates", "staging", id))
@@ -84,15 +86,15 @@ public sealed class PayloadInstaller
             var current = InstallationLayout.ReadSelection(prepared.Root);
             if (current.Generation != prepared.Original.Generation || current != prepared.Original)
             {
-                if (InstallationLayout.ParseVersion(current.Current.Version) >= InstallationLayout.ParseVersion(prepared.Version))
+                if (InstallationLayout.ParseVersion(InstallationLayout.EffectiveVersion(prepared.Root, current.Current.Version)) >= InstallationLayout.ParseVersion(prepared.Version))
                 {
                     WriteOutcome(prepared, "superseded", "Candidate already selected or superseded. Selection unchanged.");
                     return current;
                 }
                 throw new IOException("Selection changed after preparation, possibly through rollback. Retry a fresh explicit update.");
             }
-            if (InstallationLayout.ParseVersion(prepared.Version) <= InstallationLayout.ParseVersion(current.Current.Version)
-                || InstallationLayout.ParseVersion(prepared.Version) <= InstallationLayout.ParseVersion(prepared.RunningVersion))
+            if (InstallationLayout.ParseVersion(prepared.Version) <= InstallationLayout.ParseVersion(InstallationLayout.EffectiveVersion(prepared.Root, current.Current.Version))
+                || InstallationLayout.ParseVersion(prepared.Version) <= InstallationLayout.ParseVersion(InstallationLayout.EffectiveVersion(prepared.Root, prepared.RunningVersion)))
                 throw new InvalidOperationException("Stale candidate cannot downgrade the selected payload.");
             var archive = Path.Combine(prepared.StageDirectory, ReleaseInfo.PackageName(prepared.Version));
             if (ReleasePackage.VerifyChecksum(archive, archive + ".sha256", ReleaseInfo.PackageName(prepared.Version)) != prepared.ArchiveHash)
@@ -141,11 +143,15 @@ public sealed class PayloadInstaller
         }
     }
 
-    public async Task<PayloadSelection> RollbackAsync(string root, string dataDirectory, CancellationToken token = default)
+    /// <param name="expected">When given, the rollback is refused unless the selection under the publisher lock still equals it.</param>
+    public async Task<PayloadSelection> RollbackAsync(string root, string dataDirectory, CancellationToken token = default,
+        PayloadSelection? expected = null)
     {
         ValidateRoot(root, dataDirectory);
         using var lease = await AcquirePublisherAsync(root, token);
         var current = InstallationLayout.ReadSelection(root);
+        if (expected is not null && current != expected)
+            throw new IOException("The selection changed since it was recorded. Nothing was rolled back.");
         var previous = current.Previous ?? throw new InvalidOperationException("No previous payload is recorded. Follow manual recovery instructions.");
         _ = InstallationLayout.ValidateReference(root, previous);
         await verify(InstallationLayout.PayloadDirectory(root, previous.Version), previous.Version, token);

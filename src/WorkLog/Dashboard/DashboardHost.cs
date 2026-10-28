@@ -135,7 +135,8 @@ internal static class DashboardHost
             { HttpOnly = true, SameSite = SameSiteMode.Strict, IsEssential = true, Path = "/", MaxAge = TimeSpan.FromDays(365) });
             return Results.Ok();
         });
-        app.MapGet("/api/info", () => new { timezone = TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id });
+        app.MapGet("/api/info", () => new { timezone = TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id,
+            version = Cli.ApplicationInfo.DisplayVersion });
         app.MapGet("/api/catalog", (CancellationToken ct) => catalog.GetAsync(ct));
         app.MapGet("/api/state", () => state.Read());
         app.MapPut("/api/state", (JsonObject value) => { state.Write(value); return Results.NoContent(); });

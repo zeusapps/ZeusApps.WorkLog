@@ -18,7 +18,7 @@ internal sealed class ClientRegistrationChecks(SmokeWorkspace workspace, SmokePr
             ["DOTNET_ROOT"] = Path.Combine(workspace.Root, "no-runtime"),
             ["DOTNET_MULTILEVEL_LOOKUP"] = "0"
         });
-        if (output.Trim() != ApplicationInfo.Version)
+        if (output.Trim().Split(' ')[0] != ApplicationInfo.Version)
         {
             throw new InvalidOperationException("Self-contained version check failed.");
         }

@@ -73,7 +73,7 @@ public sealed class CliTests
 
         var version = await RunAsync(workspace, "--version");
         Assert.Equal(0, version.ExitCode);
-        Assert.Equal(ApplicationInfo.Version, version.Output.Trim());
+        Assert.Equal(ApplicationInfo.Version, version.Output.Trim().Split(' ')[0]);
     }
 
     [Fact]

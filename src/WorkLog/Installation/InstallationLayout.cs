@@ -6,7 +6,9 @@ namespace WorkLog.Installation;
 
 public sealed record LauncherManifest(string Version, int LauncherContract, int SharedDataContract, int JournalSchema);
 public sealed record PayloadManifest(string Version, string Runtime, bool SelfContained, int PackageFormat,
-    int LauncherContract, int SharedDataContract, int JournalSchema, Dictionary<string, string> Files);
+    int LauncherContract, int SharedDataContract, int JournalSchema, Dictionary<string, string> Files, BuildMarker? Build = null);
+// Optional, additive marker of a development build (package format 2 is unchanged; readers that do not know it ignore it).
+public sealed record BuildMarker(string? Channel, string? Commit, bool Dirty, string? BuiltAt, string? BaseVersion);
 public sealed record PayloadReference(string Version, string ManifestHash);
 public sealed record PayloadSelection(PayloadReference Current, PayloadReference? Previous, long Generation, string OperationId);
 
@@ -14,12 +16,61 @@ public sealed record PayloadSelection(PayloadReference Current, PayloadReference
 public static class InstallationLayout
 {
     public const int LauncherContract = 1, SharedDataContract = 1, JournalSchema = 2, PackageFormat = 2;
+    /// <summary>Versions whose PATCH is at least this value are development builds of base MAJOR.MINOR.</summary>
+    public const int DevPatchStart = 9000;
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web) { WriteIndented = true };
     public static readonly string[] PayloadFiles = ["worklog.exe", "README.md", "INSTALL.md", "worklog.pdb"];
 
     public static Version? ParseVersion(string? value) => value is not null && value.Length <= 64
         && Regex.IsMatch(value, @"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$", RegexOptions.CultureInvariant)
         && Version.TryParse(value, out var version) ? version : null;
+
+    public static bool IsDevVersion(string? value) => ParseVersion(value) is { } version && version.Build >= DevPatchStart;
+
+    /// <summary>The marker, when it is a well-formed dev marker consistent with <paramref name="version"/>; otherwise null.</summary>
+    public static BuildMarker? ValidMarker(string version, BuildMarker? marker)
+    {
+        if (marker is null || !IsDevVersion(version) || marker.Channel != "dev" || ParseVersion(marker.BaseVersion) is not { } baseVersion
+            || baseVersion.Build >= DevPatchStart || ParseVersion(version) is not { } dev || dev.Major != baseVersion.Major || dev.Minor != baseVersion.Minor
+            || marker.Commit is not { Length: >= 7 and <= 40 } commit || !commit.All(Uri.IsHexDigit)
+            || !DateTimeOffset.TryParse(marker.BuiltAt, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out _))
+            return null;
+        return marker;
+    }
+
+    /// <summary>The version that stable releases are compared with: the base version of a development build
+    /// (an unmarked development-range version counts as MAJOR.MINOR.0), otherwise the version itself.</summary>
+    public static string EffectiveVersion(string version, PayloadManifest? manifest = null)
+    {
+        if (!IsDevVersion(version))
+            return version;
+        if (ValidMarker(version, manifest?.Build) is { } marker)
+            return marker.BaseVersion!;
+        var parsed = ParseVersion(version)!;
+        return $"{parsed.Major}.{parsed.Minor}.0";
+    }
+
+    /// <summary>Effective version of an installed payload, tolerating an unreadable manifest as unmarked.</summary>
+    public static string EffectiveVersion(string? root, string version)
+    {
+        if (!IsDevVersion(version))
+            return version;
+        return EffectiveVersion(version, root is null ? null : TryReadManifest(root, version));
+    }
+
+    /// <summary>Reads a published payload's release.json without verifying file hashes. Null when unavailable.</summary>
+    public static PayloadManifest? TryReadManifest(string root, string version)
+    {
+        try
+        {
+            var manifest = Read<PayloadManifest>(Path.Combine(PayloadDirectory(root, version), "release.json"));
+            return manifest.Version == version ? manifest : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or ArgumentException)
+        {
+            return null;
+        }
+    }
 
     public static T Read<T>(string path, int maximumBytes = 16384)
     {

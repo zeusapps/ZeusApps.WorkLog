@@ -152,6 +152,26 @@ describe("history range", () => {
     fixture.destroy();
   });
 
+  it("shows the server's version label in the footer", async () => {
+    const { app, server, fixture } = setup();
+    server.info = { timezone: "UTC", version: "0.3.9001 dev 50df7b8 (2026-10-28 09:12 UTC)" } as typeof server.info;
+    await app["start"]();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector(".page-footer .version-label")?.textContent).toBe(
+      "0.3.9001 dev 50df7b8 (2026-10-28 09:12 UTC)",
+    );
+    fixture.destroy();
+  });
+
+  it("shows no version label when the server sends none", async () => {
+    const { app, fixture } = setup();
+    await app["start"]();
+    fixture.detectChanges();
+    expect(app.versionLabel()).toBe("");
+    expect(fixture.nativeElement.querySelector(".version-label")).toBeNull();
+    fixture.destroy();
+  });
+
   it("does not write dates when History loads and saves the timezone only after the user chose it", async () => {
     const { app, server, fixture } = setup();
     app.ready.set(true);

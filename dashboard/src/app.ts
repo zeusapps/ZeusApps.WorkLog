@@ -144,6 +144,8 @@ export class App implements OnDestroy, AfterViewInit {
   focusedDay = signal<string | null>(null);
   rangeError = signal("");
   timezoneError = signal("");
+  /** The running application's one version label (plain version, or the development label). Empty when unknown. */
+  versionLabel = signal("");
   preferencesNotice = signal("");
   private preferencesNoticeShown = false;
   private rememberedTimezone?: string;
@@ -273,9 +275,10 @@ export class App implements OnDestroy, AfterViewInit {
       const [catalog, state, info] = await Promise.all([
         api<Catalog>("catalog"),
         api<Preferences>("state"),
-        api<{ timezone: string }>("info"),
+        api<{ timezone: string; version?: string }>("info"),
       ]);
       this.catalog.set(catalog);
+      this.versionLabel.set(info.version ?? "");
       this.preferences = state;
       this.applyTheme(state.theme === "light" ? "light" : "dark");
       const known = new Set(catalog.repositories.map((r) => r.id));

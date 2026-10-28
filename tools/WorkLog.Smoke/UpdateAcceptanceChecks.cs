@@ -24,7 +24,8 @@ internal sealed class UpdateAcceptanceChecks(string executable)
         Initialize();
         var selected = InstallationLayout.ReadSelection(Install);
         var actual = await CommandAsync(EntryPoint, ["--version"]);
-        Require(actual.Output.Trim() == selected.Current.Version, "Bootstrap launcher version mismatch.");
+        // A development build prints "<version> dev ...": only the first token is the version.
+        Require(actual.Output.Trim().Split(' ')[0] == selected.Current.Version, "Bootstrap launcher version mismatch.");
         await using (var server = await PackagedServer.StartAsync(EntryPoint, Data, Path.Combine(root, "bootstrap-mcp.log")))
             Require(server.Version == selected.Current.Version, "Bootstrap MCP version mismatch.");
         var status = await CommandAsync(EntryPoint, ["update", "--status", "--data-dir", Data]);

@@ -164,6 +164,8 @@ The stable launcher selects an immutable version folder for each new process. A 
 
 Pre-launcher installations need a [one-time manual maintenance migration](docs/installation.md#one-time-migration-from-the-legacy-layout). Launcher changes and incompatible data changes also require maintenance. Journal schema remains 2; ordinary updates require matching launcher/shared-data contracts. Published payloads are retained on disk; automatic cleanup is deferred. Rerun init when managed instructions need refreshing; owned registrations always use the stable launcher.
 
+Maintainers can try an unreleased local build on their versioned installation, with a way back, through the `install-dev-build` agent skill or `scripts/install-dev.ps1`. Development builds use versions with PATCH 9000 or higher, show a `dev` label in `worklog --version`, `update --status` and the dashboard footer, and never block a later stable release. See [development builds](docs/releases.md#development-builds).
+
 Set `"updates": { "enabled": false }` in the private config and restart the server to disable automatic checks and notices. Explicit `update --check` and `update` remain available. Source builds must use the manual ZIP installation path before self-update can be used.
 
 See [code organization](docs/architecture.md) for component responsibilities and the logging, reporting, and initialization paths. Repository work by Claude Code and Codex follows a delegated OpenSpec workflow (orchestrator, developer, QA, and code analyzer); see [repository agents](docs/agent-workflow.md).

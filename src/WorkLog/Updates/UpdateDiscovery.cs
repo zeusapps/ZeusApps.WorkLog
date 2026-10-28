@@ -28,7 +28,7 @@ public sealed class UpdateDiscovery(LocalSettings settings, ReleaseClient client
             try
             {
                 selected = InstallationLayout.ReadSelection(root, verifyPayload: false).Current.Version;
-                if (cache.Release is not { } candidate || !candidate.IsNewerThan(selected))
+                if (cache.Release is not { } candidate || !candidate.IsNewerThan(InstallationLayout.EffectiveVersion(root, selected)))
                     return null;
                 static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
                 command = "& " + Quote(Path.Combine(root, "worklog.exe")) + " update --data-dir " + Quote(settings.DataDirectory);
@@ -40,7 +40,7 @@ public sealed class UpdateDiscovery(LocalSettings settings, ReleaseClient client
         }
         return cache.ValidatedAt is { } validated && validated <= clock.GetUtcNow()
             && clock.GetUtcNow() - validated < TimeSpan.FromDays(7)
-            && cache.Release is { } release && release.IsValid() && release.IsNewerThan(installed)
+            && cache.Release is { } release && release.IsValid() && release.IsNewerThan(InstallationLayout.EffectiveVersion(root, installed))
                 ? new(installed, release.Version, release.ReleaseUrl, command, selected) : null;
     }
 

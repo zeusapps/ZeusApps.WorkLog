@@ -50,7 +50,11 @@ internal sealed class WorktreeAcceptanceChecks(SmokeWorkspace workspace, SmokePr
             settings.Configuration.Updates.Enabled = false;
             settings.Save();
             foreach (var client in new[] { "git", "codex", "claude", workspace.Executable })
-                versions[Path.GetFileName(client)] = (await RunAsync(client, ["--version"], Main)).Output.Trim();
+            {
+                var printed = (await RunAsync(client, ["--version"], Main)).Output.Trim();
+                // The packaged worklog prints "<version> dev ..." for a development build; compare only its first token.
+                versions[Path.GetFileName(client)] = client == workspace.Executable ? printed.Split(' ')[0] : printed;
+            }
             await InitAsync(Main, "both", "--ticket-provider", "jira", "--ticket-scope", "worktree.example.invalid");
             identity = new RepositoryRegistry(new LocalSettings(Data)).Get(Main).Identity;
             await GitAsync(Main, "worktree", "add", "-b", "worktree-smoke", Worktree);

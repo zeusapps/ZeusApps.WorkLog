@@ -280,6 +280,12 @@
           "System.CommandLine": "[2.0.13, )",
           "Tomlyn": "[0.19.0, )"
         }
+      },
+      "worklog.devinstall": {
+        "type": "Project",
+        "dependencies": {
+          "worklog": "[0.3.0, )"
+        }
       }
     }
   }

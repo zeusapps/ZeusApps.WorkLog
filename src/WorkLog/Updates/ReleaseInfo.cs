@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Text.RegularExpressions;
+using WorkLog.Installation;
 
 namespace WorkLog.Updates;
 
@@ -19,7 +20,8 @@ public sealed record ReleaseInfo(string Version, string ReleaseUrl, string Packa
     public bool IsNewerThan(string installed) => ParseVersion(Version) is { } available
         && ParseVersion(installed) is { } current && available > current;
 
-    public bool IsValid() => ParseVersion(Version) is not null
+    /// <summary>Published offers must be stable: the development range (PATCH 9000 or higher) is never offered.</summary>
+    public bool IsValid() => ParseVersion(Version) is not null && !InstallationLayout.IsDevVersion(Version)
         && ReleaseUrl == ReleasesUrl + "/tag/v" + Version
         && PackageUrl == DownloadUrl(Version)
         && ChecksumUrl == DownloadUrl(Version) + ".sha256";

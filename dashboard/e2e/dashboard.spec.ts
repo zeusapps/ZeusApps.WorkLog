@@ -60,6 +60,8 @@ test("opens design first, searches across scope, and renders without remote reso
   page.on("pageerror", (e) => errors.push(e.message));
   await authorize(page);
   await expect(page.locator(".change-card")).toHaveCount(4);
+  // The footer names the running version: the plain version, or the development label whose first token is the bare version.
+  await expect(page.locator(".page-footer .version-label")).toHaveText(/^\d+\.\d+\.\d+( dev .+)?$/);
   if (process.env["WORKLOG_DASHBOARD_NO_NODE"] === "true")
     await expect(page.locator(".card-footer").first()).toContainText(
       "Task progress unavailable",

@@ -12,6 +12,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <InternalsVisibleTo Include="WorkLog.Tests" />
     <InternalsVisibleTo Include="WorkLog.Smoke" />
+    <InternalsVisibleTo Include="WorkLog.DevInstall" />
     <PackageReference Include="System.CommandLine" Version="2.0.13" />
     <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />

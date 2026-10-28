@@ -96,7 +96,8 @@ public static partial class ReleasePackage
                 process.Kill();
             throw;
         }
-        if (process.ExitCode != 0 || (await output).Trim() != version)
+        // The first token is the bare version; a development build appends its label after it.
+        if (process.ExitCode != 0 || (await output).Trim().Split(' ')[0] != version)
             throw new InvalidOperationException("Release executable version verification failed: " + await error);
         await error;
     }

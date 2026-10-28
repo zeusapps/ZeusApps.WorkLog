@@ -649,7 +649,7 @@
       <footer class="page-footer">
         <span class="brand-mini">w.</span
         ><span>A little clarity for the work you do.</span
-        ><span>Private. Local. Yours.</span>
+        >@if(versionLabel()){<span class="version-label" data-testid="version-label">{{versionLabel()}}</span>}<span>Private. Local. Yours.</span>
       </footer>
       }
     </main>
