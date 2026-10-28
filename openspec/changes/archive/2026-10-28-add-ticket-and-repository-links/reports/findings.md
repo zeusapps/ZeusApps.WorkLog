@@ -4,7 +4,7 @@ Orchestrator-owned ledger. Reviewers write their assigned reports; developers wr
 
 ## Current orchestrator
 
-Advisory marker; resume and hand-off rules are in the [workflow](../../../../.agents/workflows/openspec-delegation.md#mixed-client-operation).
+Advisory marker; resume and hand-off rules are in the [workflow](../../../../../.agents/workflows/openspec-delegation.md#mixed-client-operation).
 
 - Client / version: Claude Code 2.1.312
 - Session identity: 7b4534dc-9e1e-4f7c-aa54-9b7bc061c7e7
