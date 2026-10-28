@@ -101,6 +101,12 @@ public sealed class McpTests
         var ticketSchema = ResolveSchema(entrySchema.GetProperty("properties").GetProperty("tickets").GetProperty("items"), loggingSchema);
         AssertDescription(ticketSchema, "scope", "Provider namespace");
 
+        var inputSchema = loggingTool.ProtocolTool.InputSchema;
+        var entryInput = ResolveSchema(inputSchema.GetProperty("properties").GetProperty("entry"), inputSchema);
+        AssertDescription(entryInput, "summary", "about 140 characters");
+        AssertDescription(entryInput, "summary", "remaining step");
+        Assert.DoesNotContain("summary", entryInput.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
+
         var reportSchema = Assert.Single(tools, tool => tool.Name == "query_work").ProtocolTool.OutputSchema!.Value;
         AssertDescription(reportSchema, "from", "Inclusive lower bound");
         AssertDescription(reportSchema, "to", "Exclusive upper bound");
@@ -112,6 +118,7 @@ public sealed class McpTests
         // Without an optional idempotency key, repeated progress entries are intentionally distinct.
         Assert.False(loggingTool.ProtocolTool.Annotations.IdempotentHint);
         Assert.True(Assert.Single(tools, tool => tool.Name == "query_work").ProtocolTool.Annotations!.ReadOnlyHint);
+        // The first observation intentionally omits the optional summary and must still be saved.
         var logged = await client.CallToolAsync("log_work", new Dictionary<string, object?>
         {
             ["entry"] = new { status = "started", change = "mcp-test", branch = "hotfix/DEP-123-test", occurredAt = "2026-10-20T09:00:00Z", idempotencyKey = "mcp-test" }

@@ -107,6 +107,21 @@ Observation outside this change: a rollback creates its health-probe data folder
 
 `openspec update --force` (OpenSpec CLI 1.13.1) in a disposable copy of the repository under `artifacts/` refreshed the generated OpenSpec skills for Claude Code and Codex and left both `install-dev-build` directories (each one `SKILL.md`) byte-identical to the originals. The generated skill, command and Codex configuration files were also unchanged by that update.
 
+## Observation summary guidance validation
+
+The `improve-observation-summaries` change replaces the managed-instruction sentence about summaries with one shared sentence (one short result-focused sentence of about 140 characters; `in_progress` states what was achieved and what remains, `done` what was completed; no process narration, status repetition, secrets or personal data) and adds the same guidance as the description of the `log_work` `summary` input. The summary stays optional and is not validated beyond existing limits.
+
+| Check | Clients covered | Result |
+| --- | --- | --- |
+| `InstructionOptionsTests`: rendered blocks contain the identical summary sentence, differ only by the agent name, and restore the previous 15-line block when the sentence is substituted back | Claude Code and Codex (one shared renderer) | passed |
+| `McpTests`: the stdio `tools/list` input schema for `log_work` exposes the `summary` description and does not require it; the first observation in the protocol test omits the summary and is saved | both (client-neutral tool contract) | passed |
+| `worklog init --dry-run` on a disposable Git repository with an isolated `--data-dir` | both (`--clients both` default) | planned the Claude Code block in `CLAUDE.local.md` and the Codex block in `.codex/config.toml` with managed instructions enabled, plus the normal registration and ownership files; wrote nothing |
+| `dotnet restore --locked-mode`, `dotnet build -c Release --no-restore`, `dotnet test -c Release --no-build --no-restore` | n/a | passed, 0 warnings, 0 errors, 340 tests passed |
+| `./scripts/package.ps1 -OutputDirectory artifacts/releases/improve-observation-summaries-validation` | n/a | passed (stable `0.3.0` package) |
+| `dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- <packaged worklog.exe>` (default isolated run, no live agents) | both | `SMOKE PASSED` |
+
+A dry run on a fresh repository lists the owned blocks as planned writes; it cannot show a refresh of previously installed text without a non-dry-run init, which would modify the real Claude configuration and was not run. Rerunning `worklog init` on an initialized repository replaces the owned block through the same renderer.
+
 ## Windows Claude project-alias validation
 
 On Windows 10.0.26300.0 with Git 2.51.0.windows.2 and Claude Code 2.1.306, the isolated baseline reproduced F7: with a registration stored only under `aliasrepo`, `claude mcp get worklog` connected from that lowercase launch path but reported no server from the `AliasRepo` launch path. The exact commands, launch directories and outputs are retained under `artifacts/smoke/f33059acba494ad2a9bd8fecbabe5fbb/`; `claude-aliases/baseline.json` records versions and both results. This is versioned native evidence, not a documented guarantee about every Claude release.

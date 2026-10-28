@@ -12,6 +12,28 @@ namespace WorkLog.Tests.Integration;
 
 public sealed class InstructionOptionsTests
 {
+    private const string SummaryGuidance = "Include a summary with every observation: one short sentence (about 140 characters) stating the concrete outcome, decision, or remaining step; for in_progress what was achieved and what remains, for done what was completed. Do not narrate process, repeat the status, or include secrets or personal data.";
+
+    [Fact]
+    public void RenderedInstructionsShareSummaryGuidanceAndOtherwiseKeepPriorText()
+    {
+        var claude = AgentInstructions.Render("repo-id", "claude");
+        var codex = AgentInstructions.Render("repo-id", "codex");
+        Assert.Contains(SummaryGuidance, claude);
+        Assert.Contains(SummaryGuidance, codex);
+        Assert.DoesNotContain("small factual summary", claude);
+        // Apart from the agent name, the blocks are identical, so the guidance cannot diverge per client.
+        Assert.Equal(claude.Replace("Agent: claude.", "Agent: <agent>."), codex.Replace("Agent: codex.", "Agent: <agent>."));
+        // Substituting the previous sentence back must restore the prior block lines exactly.
+        var normalized = claude.Replace("\r\n", "\n");
+        var restored = normalized.Replace(SummaryGuidance + "\n", "Include a small factual summary when useful. ");
+        var lines = restored.Split('\n');
+        Assert.Contains("Include a small factual summary when useful. Ticket details can come from separate official issue MCPs.", lines);
+        Assert.Equal(15, lines.Length);
+        Assert.Contains("Log done when this session establishes the feature is complete for reporting; archive timing is independent.", lines);
+        Assert.Contains("Report logging failures; do not claim entries were saved if a call failed.", lines);
+    }
+
     [Fact]
     public void FreshOptOutRegistersBothClientsWithoutCopyingInstructions()
     {

@@ -72,7 +72,7 @@ Both tools advertise output schemas and return MCP `structuredContent` with a JS
 }
 ```
 
-The initialized repository supplies repository identity; direct servers can instead receive `entry.repository`. Branches are snapshots supplied by the agent. At least a change or qualified ticket is required. Timestamp defaults to now; summaries, agent, and sessionId are optional. Reuse an idempotency key only to retry identical input. A change gets one initial started record across both agents; subsequent work uses in_progress.
+The initialized repository supplies repository identity; direct servers can instead receive `entry.repository`. Branches are snapshots supplied by the agent. At least a change or qualified ticket is required. Timestamp defaults to now; summaries, agent, and sessionId are optional. When a summary is given, write one short sentence (about 140 characters) with the concrete outcome, decision, or remaining step, readable in a stand-up report: for `in_progress` say what was achieved and what remains, for `done` what was completed. Do not narrate process, repeat the status, or include secrets or personal data. Managed instructions give both Claude Code and Codex this same guidance, and the `log_work` tool schema repeats it, so it also applies when managed instructions are disabled. Summary content is not validated beyond existing limits. Reuse an idempotency key only to retry identical input. A change gets one initial started record across both agents; subsequent work uses in_progress.
 
 `query_work` accepts a `period` object:
 

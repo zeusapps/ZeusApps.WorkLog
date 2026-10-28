@@ -12,7 +12,8 @@ internal static class AgentInstructions
         Log done when this session establishes the feature is complete for reporting; archive timing is independent.
         Required pending migration/testing means in_progress. Do not infer done solely from checked tasks or archive.
         Multiple features and resumed work are allowed. Never log idle days or infer work merely because a change is open.
-        Include a small factual summary when useful. Ticket details can come from separate official issue MCPs.
+        Include a summary with every observation: one short sentence (about 140 characters) stating the concrete outcome, decision, or remaining step; for in_progress what was achieved and what remains, for done what was completed. Do not narrate process, repeat the status, or include secrets or personal data.
+        Ticket details can come from separate official issue MCPs.
         Do not guess ticket provider/scope or uncertain completion. Respect the user's completion decision.
         Generate an idempotencyKey per observation and reuse that key only when retrying the same input.
         Report logging failures; do not claim entries were saved if a call failed.
