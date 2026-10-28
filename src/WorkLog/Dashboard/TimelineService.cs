@@ -5,11 +5,11 @@ using WorkLog.Reporting;
 
 namespace WorkLog.Dashboard;
 
-internal sealed record TimelineQuery(string From, string To, string Timezone, string GroupBy = "ticket", string[]? Repositories = null, long? Snapshot = null, int Offset = 0);
+internal sealed record TimelineQuery(string From, string To, string Timezone, string GroupBy = "ticket", string[]? Repositories = null, long? Snapshot = null, int Offset = 0, string? Ticket = null);
 internal sealed record TimelineRow(string Id, string Repository, string Title, string Status, DateTimeOffset FirstAt, DateTimeOffset? StartedAt,
     DateTimeOffset LastAt, double ElapsedSeconds, string[] ActivityDates, string[] CompletionDates, string[] ResumedDates,
     string[] Changes, Ticket[] Tickets, int ObservationCount, int VisibleCount, bool ClippedStart);
-internal sealed record InsightItem(string ItemId, string Title, string Repository, DateTimeOffset At);
+internal sealed record InsightItem(string ItemId, string Title, string Repository, DateTimeOffset At, Ticket[] Tickets);
 internal sealed record ActivityDay(string Date, int Items);
 internal sealed record TimelineInsights(TimelineRow[] LongestSpans, InsightItem[] Completions, InsightItem[] SubsequentWork, ActivityDay[] Days);
 internal sealed record TimelinePage(long Snapshot, TimelineRow[] Rows, int Total, int? NextOffset, TimelineInsights Insights);
@@ -36,12 +36,15 @@ internal sealed class TimelineService(DashboardJournal journal)
     internal static TimelinePage Project(TimelineQuery query, ReportingPeriod period, long snapshot, Entry[] entries)
     {
         string Day(Entry entry) => TimeZoneInfo.ConvertTime(entry.OccurredAt, period.Zone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var ticket = string.IsNullOrWhiteSpace(query.Ticket) ? null : query.Ticket.Trim();
         var rows = new List<TimelineRow>();
         var completions = new List<InsightItem>();
         var resumed = new List<InsightItem>();
         var days = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var group in entries.GroupBy(e => IdFor(e, query.GroupBy)))
         {
+            // The ticket filter selects identities; the selected identities keep every lifecycle entry, so spans and counts do not change.
+            if (ticket is not null && !group.Any(e => TicketFilter.Matches(e, ticket))) continue;
             var all = group.OrderBy(e => e.OccurredAt).ThenBy(e => e.Id, StringComparer.Ordinal).ToArray();
             var visible = all.Where(e => e.OccurredAt >= period.From).ToArray();
             if (visible.Length == 0) continue;
@@ -72,9 +75,9 @@ internal sealed class TimelineService(DashboardJournal journal)
                 var day = Day(entry);
                 if (!days.TryGetValue(day, out var identities)) days[day] = identities = new(StringComparer.Ordinal);
                 identities.Add(group.Key);
-                if (entry.Status == "done") completions.Add(new(group.Key, title, first.Repository, entry.OccurredAt));
+                if (entry.Status == "done") completions.Add(new(group.Key, title, first.Repository, entry.OccurredAt, tickets));
             }
-            resumed.AddRange(subsequent.Where(e => e.OccurredAt >= period.From).Select(e => new InsightItem(group.Key, title, first.Repository, e.OccurredAt)));
+            resumed.AddRange(subsequent.Where(e => e.OccurredAt >= period.From).Select(e => new InsightItem(group.Key, title, first.Repository, e.OccurredAt, tickets)));
         }
         var ordered = rows.OrderByDescending(r => r.LastAt).ThenBy(r => r.Id, StringComparer.Ordinal).ToArray();
         var page = ordered.Skip(query.Offset).Take(50).ToArray();

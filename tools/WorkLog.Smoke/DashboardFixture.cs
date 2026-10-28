@@ -19,6 +19,8 @@ internal static class DashboardFixture
         var b = Repository(root, "bell-tower");
         settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(a)] = new(new("example/worklog"));
         settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(b)] = new(new("example/bell-tower"));
+        var links = Repository(root, "links-demo");
+        settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(links)] = new(new("github.com/example/links-demo"));
         var storeMember = Repository(root, "store-member");
         File.WriteAllText(Path.Combine(storeMember, "openspec", "config.yaml"), "store: dashboard-fixture-missing-" + Guid.NewGuid().ToString("N") + "\n");
         settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(storeMember)] = new(new("example/store-member"));
@@ -51,6 +53,19 @@ internal static class DashboardFixture
         Log("done", "update-rollout", 15, "Verified compatible payload activation.", "WL-120");
         for (var i = 0; i < 125; i++) Log("in_progress", "large-history", 2, "Synthetic continuation observation " + i, "WL-190");
         for (var i = 0; i < 55; i++) Log(i % 3 == 0 ? "done" : "in_progress", "recorded-work-" + i, 3 + i % 20, "Synthetic timeline fixture " + i, "WL-" + (200 + i));
+        Change(links, "quiet-change", "# Quiet change\n\nA change whose latest recorded observation is old.\n");
+        Change(links, "never-logged", "# Never logged\n\nA change without any recorded observation.\n");
+        var linksJournal = new Journal(settings, new("github.com/example/links-demo"));
+        void LogLink(Journal target, string status, string branch, Ticket ticket, int days, string summary, string? change = null) => target.Log(new(status, change, branch,
+            Tickets: [ticket], Summary: summary, OccurredAt: now.AddDays(-days).ToString("O"), Agent: "fixture"));
+        LogLink(linksJournal, "started", "feature/DEP-12", new("jira", "company.atlassian.net", "DEP-12"), 6, "Started the linked Jira work.");
+        LogLink(linksJournal, "in_progress", "feature/DEP-12", new("jira", "company.atlassian.net", "DEP-12"), 2, "Continued the linked Jira work.");
+        LogLink(linksJournal, "in_progress", "feature/DEP-12-other", new("jira", "other.atlassian.net", "DEP-12"), 1, "Same ID on a different Jira site.");
+        LogLink(linksJournal, "in_progress", "main", new("azure-devops", "contoso/Payments", "4211"), 1, "Azure DevOps work item.");
+        LogLink(linksJournal, "in_progress", "main", new("jira", "tracker", "REC-5", "https://tracker.example.invalid/browse/REC-5"), 1, "Ticket with a recorded URL.");
+        LogLink(linksJournal, "in_progress", "main", new("jira", "Some Site", "UNK-7"), 1, "Ticket with an unrecognized scope.");
+        linksJournal.Log(new("in_progress", "quiet-change", Summary: "Old recorded observation.", OccurredAt: now.AddDays(-20).ToString("O"), Agent: "fixture"));
+        LogLink(new Journal(settings, new("local:links-demo-local")), "in_progress", "feature/DEP-30", new("jira", "company.atlassian.net", "DEP-30"), 1, "Work in a local-only repository.");
         new Journal(settings, new("example/bell-tower")).Log(new("in_progress", "shipping-reports", Summary: "Prepared report evidence.", OccurredAt: now.AddDays(-1).ToString("O"), Agent: "fixture"));
         AtomicFile.Write(Path.Combine(root, "fixture.json"), Json.Encode(new { root, data = settings.DataDirectory, repo = a, otherRepo = b, worktree }));
         Console.WriteLine(root);

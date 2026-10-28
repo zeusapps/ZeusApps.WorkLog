@@ -50,6 +50,15 @@ export interface TimelineQuery {
   repositories: string[];
   snapshot?: number;
   offset?: number;
+  /** Optional History ticket filter; sent only when set. */
+  ticket?: string;
+}
+/** A recorded issue reference; WorkLog never contacts the issue service. */
+export interface Ticket {
+  provider: string;
+  scope: string;
+  id: string;
+  url?: string | null;
 }
 export interface Row {
   id: string;
@@ -64,6 +73,7 @@ export interface Row {
   completionDates: string[];
   resumedDates: string[];
   changes: string[];
+  tickets: Ticket[];
   observationCount: number;
   visibleCount: number;
   clippedStart: boolean;
@@ -73,6 +83,7 @@ export interface Insight {
   title: string;
   repository: string;
   at: string;
+  tickets?: Ticket[];
 }
 export interface Timeline {
   snapshot: number;
@@ -95,7 +106,9 @@ export interface Entry {
   occurredAt: string;
   agent: string | null;
   branch: string | null;
-  tickets: { id: string; provider: string; scope: string; url?: string }[];
+  tickets: Ticket[];
+  /** Ticket ID taken from the branch name but not qualified; shown without a link. */
+  extractedTicketId?: string | null;
 }
 export interface ObservationPage {
   entries: Entry[];
@@ -187,6 +200,7 @@ export interface Preferences {
     timezone?: string;
     groupBy?: string;
     scale?: string;
+    ticket?: string;
   };
   lastRoute?: string;
   documents?: Record<string, string>;

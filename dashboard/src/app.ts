@@ -21,7 +21,10 @@ import {
   localDate,
 } from "./api";
 import { renderMarkdown, Heading, Review } from "./markdown";
-import { archiveEntries, editorLabel, editorPresets, firstVisibleLine, sourceLineAfter, validEditor } from "./archive";
+import { activityFor, archiveEntries, editorLabel, editorPresets, firstVisibleLine, sourceLineAfter, validEditor } from "./archive";
+import { branchUrl, repositoryUrl, ticketTitle, ticketUrl } from "./links";
+import { activityOf, quietDays } from "./quiet";
+import { markdownObservationLimit, workItemMarkdown } from "./workitem-markdown";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
 import {
   baselineKey,
@@ -132,6 +135,8 @@ export class App implements OnDestroy, AfterViewInit {
   /** First and latest recorded observation of every change name in the selected repositories. */
   activity = signal<ChangeActivity[]>([]);
   private activityKey = "";
+  /** The repository selection (as JSON) the loaded activity covers; null until the first load. */
+  private activityScope = signal<string | null>(null);
   private activityEpoch = 0;
   /** The remembered editor preset for Open in editor. */
   editor = signal<EditorPreset>("vscode");
@@ -169,6 +174,19 @@ export class App implements OnDestroy, AfterViewInit {
   protected now = () => new Date();
   groupBy = "ticket";
   scale = "day";
+  /** The History ticket filter as typed, and the trimmed filter the timeline is queried with ("" when off). */
+  ticketInput = "";
+  ticket = "";
+  readonly ticketUrl = ticketUrl;
+  readonly ticketTitle = ticketTitle;
+  readonly repositoryUrl = repositoryUrl;
+  readonly branchUrl = branchUrl;
+  readonly quietDays = quietDays;
+  /** A short confirmation after a copy action, and the text to copy by hand when the clipboard is unavailable. */
+  copyToast = signal("");
+  manualCopy = signal<{ title: string; text: string; multiline: boolean } | null>(null);
+  markdownBusy = signal(false);
+  private toastTimer?: ReturnType<typeof setTimeout>;
   repoMenu = signal(false);
   detail = signal<
     (Partial<Row> & { id: string; title: string; repository: string }) | null
@@ -280,6 +298,7 @@ export class App implements OnDestroy, AfterViewInit {
     clearInterval(this.timer);
     clearTimeout(this.saveTimer);
     clearTimeout(this.searchTimer);
+    clearTimeout(this.toastTimer);
   }
   private async start() {
     try {
@@ -328,6 +347,7 @@ export class App implements OnDestroy, AfterViewInit {
       this.timezone = savedZone ?? info.timezone;
       this.timezoneInput = this.timezone;
       this.groupBy = state.history?.groupBy ?? "ticket";
+      this.ticket = this.ticketInput = state.history?.ticket?.trim() ?? "";
       this.scale = state.history?.scale ?? "day";
       // A range saved by an earlier version has no kind and becomes the default relative range.
       this.range = normalizeRange(state.history?.range);
@@ -436,11 +456,11 @@ export class App implements OnDestroy, AfterViewInit {
     }
   }
   /**
-   * Loads the recorded activity of the selected repositories for the Archive view. Skipped while another view is open,
-   * and when neither the journal nor the selection moved since the last load.
+   * Loads the recorded activity of the selected repositories for the Archive view and the quiet indicators of Ongoing work.
+   * Skipped while History is open, and when neither the journal nor the selection moved since the last load.
    */
   async loadActivity() {
-    if (this.view() !== "archive") return;
+    if (this.view() === "history") return;
     const repositories = this.selectedRepos() ?? [];
     const key = this.journalSnapshot + "|" + JSON.stringify(repositories);
     if (key === this.activityKey) return;
@@ -449,6 +469,7 @@ export class App implements OnDestroy, AfterViewInit {
       const list = await api<ChangeActivity[]>("activity/changes", { repositories });
       if (epoch !== this.activityEpoch) return;
       this.activity.set(list);
+      this.activityScope.set(JSON.stringify(repositories));
       this.activityKey = key;
     } catch (error) {
       if (epoch === this.activityEpoch) this.report(error);
@@ -553,6 +574,18 @@ export class App implements OnDestroy, AfterViewInit {
         r.changes.includes(change.name),
     );
   }
+  /**
+   * Whether an active change has no recorded observations, a latest one older than 14 days, or a recent one.
+   * Null while the recorded activity of the current selection is not loaded, so nothing is claimed early.
+   */
+  changeActivity(change: Change) {
+    const scope = this.activityScope();
+    if (scope === null || (scope !== "[]" && scope !== JSON.stringify(this.selectedRepos() ?? []))) return null;
+    return activityOf(activityFor(change, this.activity())?.lastAt, this.now(), this.timezone);
+  }
+  latestActivity(change: Change) {
+    return activityFor(change, this.activity());
+  }
   trackChange(_index: number, c: Change) {
     return c.sourceId + c.variant;
   }
@@ -594,6 +627,7 @@ export class App implements OnDestroy, AfterViewInit {
       timezone: this.timezone,
       groupBy: this.groupBy,
       repositories: this.selectedRepos() ?? [],
+      ...(this.ticket ? { ticket: this.ticket } : {}),
     };
   }
   async loadHistory(more = false) {
@@ -650,6 +684,17 @@ export class App implements OnDestroy, AfterViewInit {
     } catch (error) {
       if (epoch === this.ongoingEpoch) this.report(error);
     }
+  }
+  async ticketChanged() {
+    const value = this.ticketInput.trim();
+    this.ticketInput = value;
+    if (value === this.ticket) return;
+    this.ticket = value;
+    await this.controlsChanged();
+  }
+  async clearTicket() {
+    this.ticket = this.ticketInput = "";
+    await this.controlsChanged();
   }
   async controlsChanged() {
     this.remember();
@@ -817,7 +862,7 @@ export class App implements OnDestroy, AfterViewInit {
     const url = this.router.parseUrl(this.router.url);
     const route = url.root.children["primary"]?.segments[0]?.path;
     this.view.set(route === "history" ? "history" : route === "archive" ? "archive" : "ongoing");
-    if (route === "archive") void this.loadActivity();
+    if (route !== "history") void this.loadActivity();
     const source = url.queryParams["source"] as string | undefined,
       change = url.queryParams["change"] as string | undefined,
       path = url.queryParams["doc"] as string | undefined;
@@ -1269,6 +1314,11 @@ export class App implements OnDestroy, AfterViewInit {
     }
     this.selectBlock(event);
   }
+  /** The one explicit external navigation: opens an http(s) address in a new tab without handing over the opener. */
+  openExternal(event: Event, url: string) {
+    event.preventDefault();
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
   private async followLink(target: string) {
     if (/^https?:\/\//i.test(target)) {
       window.open(target, "_blank", "noopener,noreferrer");
@@ -1465,7 +1515,12 @@ export class App implements OnDestroy, AfterViewInit {
     const row =
       "id" in item
         ? item
-        : { id: item.itemId, title: item.title, repository: item.repository };
+        : {
+            id: item.itemId,
+            title: item.title,
+            repository: item.repository,
+            tickets: item.tickets ?? [],
+          };
     this.detail.set(row);
     this.detailDay.set(day ?? null);
     this.observations.set([]);
@@ -1519,7 +1574,69 @@ export class App implements OnDestroy, AfterViewInit {
       title: d.title,
       repository: d.repository,
       at: "",
+      tickets: d.tickets,
     });
+  }
+  private showToast(text: string) {
+    this.copyToast.set(text);
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => this.copyToast.set(""), 3000);
+  }
+  private async copyText(text: string, title: string, done: string, multiline = false) {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.manualCopy.set(null);
+      this.showToast(done);
+    } catch {
+      this.manualCopy.set({ title, text, multiline });
+    }
+  }
+  copyTicket(id: string) {
+    return this.copyText(id, "Copy this ticket ID", "Ticket ID copied.");
+  }
+  /** Copies the open work item as Markdown, loading further observation pages up to the bounded maximum first. */
+  async copyMarkdown() {
+    const d = this.detail();
+    if (!d || !this.detailQuery || this.markdownBusy()) return;
+    const epoch = this.detailEpoch;
+    this.markdownBusy.set(true);
+    try {
+      let entries = [...this.observations()];
+      let next = this.observationNext();
+      while (next !== null && entries.length < markdownObservationLimit) {
+        const page = await api<ObservationPage>("observations", {
+          query: this.detailQuery,
+          id: d.id,
+          offset: next,
+          day: this.detailDay(),
+        });
+        if (epoch !== this.detailEpoch) return;
+        entries = entries.concat(page.entries);
+        next = page.nextOffset;
+      }
+      const text = workItemMarkdown({
+        title: d.title,
+        repository: d.repository,
+        repositoryLabel: this.repositoryLabel(d.repository),
+        tickets: d.tickets ?? [],
+        changes: d.changes ?? [],
+        firstAt: d.firstAt,
+        lastAt: d.lastAt,
+        status: d.status,
+        day: this.detailDay(),
+        entries,
+        total: this.observationTotal(),
+        timezone: this.timezone,
+        formatDate: (v) => this.formatDate(v),
+        formatDateTime: (v) => this.formatDate(v) + " " + this.formatTime(v),
+        statusLabel: (v) => this.statusLabel(v),
+      });
+      await this.copyText(text, "Copy this Markdown", "Markdown copied.", true);
+    } catch (error) {
+      if (epoch === this.detailEpoch) this.report(error);
+    } finally {
+      this.markdownBusy.set(false);
+    }
   }
   associatedChanges() {
     const names = new Set([
@@ -1547,6 +1664,7 @@ export class App implements OnDestroy, AfterViewInit {
       groupBy: this.groupBy,
       scale: this.scale,
     };
+    if (this.ticket) history.ticket = this.ticket;
     if (this.rememberedTimezone) history.timezone = this.rememberedTimezone;
     this.preferences = {
       ...this.preferences,

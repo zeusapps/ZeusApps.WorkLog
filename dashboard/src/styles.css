@@ -2504,3 +2504,99 @@ tr.changed-since-read {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* External ticket and repository links, copy actions, and the quiet-change chip. */
+.ticket-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 6px;
+  font-size: 10px;
+}
+.ticket-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ticket-link,
+.repository-web-link,
+.branch-link {
+  color: var(--teal);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.ticket-id {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.ticket-copy {
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 1px 6px;
+  font-size: 8px;
+}
+.ticket-copy:hover {
+  color: var(--text-secondary);
+}
+.row-head {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 270px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding-bottom: 8px;
+  min-width: 0;
+}
+.row-head > .timeline-label {
+  width: 100%;
+  border-right: 0;
+  padding-bottom: 4px;
+}
+.row-head > .ticket-links {
+  margin-top: 0;
+  padding: 0 22px;
+}
+.work-item .work-list-item {
+  margin-top: 0;
+}
+.work-item {
+  border-top: 1px solid var(--border);
+  padding-bottom: 12px;
+}
+.work-item .work-list-item {
+  border-top: 0;
+  padding-bottom: 6px;
+}
+.ongoing-panel .section-heading + .work-item {
+  margin-top: 14px;
+}
+.work-item > .ticket-links {
+  margin-top: 0;
+}
+.insight-item > .ticket-links {
+  margin: 0 0 10px;
+}
+.branch-line {
+  display: block;
+  margin-top: 4px;
+}
+.activity-detail header .ticket-links {
+  margin-top: 8px;
+}
+.copy-markdown {
+  margin-top: 10px;
+}
+.chip.quiet-chip {
+  background: var(--surface-subtle);
+  border-color: var(--border);
+  color: var(--muted);
+  white-space: normal;
+}
+.clipboard-fallback textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 11px;
+}

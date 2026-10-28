@@ -162,3 +162,32 @@ The implementation run did not launch a real editor. The following is a live obs
 On 2026-10-28 the maintainer installed dev build `0.3.9002 dev c53e647 dirty` (built from the reviewed working tree) on their Windows installation through `scripts/install-dev.ps1` Switch, restarted their dashboard, and observed that "Open in editor" from the reader header and the outline heading pencil action both opened VS Code at the expected position.
 
 Not observed in the live check: the source view, the Cursor preset, and System default app. The Cursor link format remains unconfirmed by vendor documentation and was not live-checked; treat the Cursor preset as unverified.
+
+## Ticket and repository links (add-ticket-and-repository-links)
+
+### Validation results
+
+Run on Windows against the working tree of this change, fixture runs against the Release build. QA also ran the packaged-build e2e (`./scripts/package.ps1`, `WORKLOG_DASHBOARD_EXECUTABLE`, `WORKLOG_DASHBOARD_NO_NODE=true`) with `--grep-invert "declared store cannot"`: 25 of 25 passed (the excluded scenario fails identically on baseline `9243722`, verified by QA). The developer did not rerun the packaged build.
+
+| Check | Result |
+| --- | --- |
+| `npm test --prefix dashboard` | 122 of 122 tests in 14 files passed (new: `links.spec.ts`, `quiet.spec.ts`, `workitem-markdown.spec.ts`, `app.links.spec.ts`) |
+| `dotnet build -c Release --no-restore` | 0 warnings, 0 errors |
+| `dotnet test -c Release --no-build --no-restore` | 353 of 353 passed (new: `TicketFilterTests` parity with `SqliteEntryStore.ReadPage`, `TimelineTicketFilterTests`) |
+| Browser acceptance, fixture run against the Release build (`npm run test:e2e --prefix dashboard`, OpenSpec CLI on the PATH) | with the existing scenario "keeps history available when a declared store cannot be resolved" excluded (`--grep-invert "declared store cannot"`): 25 of 25 passed, including the four new scenarios. The serial run without the exclusion stops at that scenario, which fails identically on the unchanged baseline `9243722` (the store-member's local change card is shown; QA-007, pre-existing, unchanged by this change), so the scenarios after it do not run. |
+| Browser acceptance, packaged run (QA, `--grep-invert "declared store cannot"`) | 25 of 25 passed |
+
+The fixture gained a `links-demo` repository (identity `github.com/example/links-demo`, with changes `quiet-change` and `never-logged`), a local-only identity (`local:links-demo-local`), and Jira (two sites), Azure DevOps, recorded-URL and unrecognized-scope tickets. The existing History scenario now expects 68 rows after "Load more work items" (was 61).
+
+### What the checks cover
+
+- Link rules (`links.spec.ts`): recorded URL precedence; Jira host scope (case, whitespace, non-host scopes); Azure DevOps organization, organization/project and `visualstudio.com` scopes, non-numeric IDs and unrecognized scopes; GitHub, GitLab, Bitbucket and Azure DevOps HTTPS and SSH identities; `local:` and `path:` identities; percent-encoding of branches with `/`, spaces and `#`.
+- Rendering (`app.links.spec.ts`): an unlinkable ticket renders without an anchor and with a copy action; a link click goes only through the explicit external-navigation handler (`window.open` with `noopener,noreferrer`); repository and branch links appear on a recognized host and not for a `local:` identity; clipboard fallback.
+- Ticket filter: `TicketFilterTests` runs nine fixture entries through `SqliteEntryStore.ReadPage` and `TicketFilter.Matches` for twelve filters (bare, qualified, padded, unresolved, a different site, a colon-containing ID, partial qualified forms) and asserts identical entry IDs; `TimelineTicketFilterTests` asserts a filtered row equals the unfiltered row (span, counts, clipped start) and that the observations drill-down is not filtered. The scenario asserts the filter, its indicator, Clear, a qualified filter excluding another site, the full recorded span, and restoration after a reload.
+- Copy as Markdown: format and truncation notice in `workitem-markdown.spec.ts`; the scenario reads the real clipboard for a two-observation ticket and for a 125-observation item whose second page is loaded before copying. The 1,000-observation cap is covered by the unit test only, because the fixture has no work item that large.
+- Quiet changes: 13-day, 14-day, 15-day and no-activity cases and the selected timezone in `quiet.spec.ts`; the cards in `app.links.spec.ts` (nothing is claimed before the activity of the current selection loads) and in the scenario.
+- No external request is made during the link scenario (all requests stay on the dashboard origin); link targets are read from `href` and the click is captured without navigating.
+
+### Notes
+
+- The ticket predicate mirrors SQLite `trim()`, which removes spaces only; stored ticket fields are trimmed on write, so the difference concerns only hand-edited journal rows.

@@ -338,8 +338,11 @@
           </div>
           @let comments=commentCount(change);
           @let updated=updatedDocs(change);
-          @if(comments||updated.length){
+          @let quiet=changeActivity(change);
+          @if(comments||updated.length||quiet?.kind==='quiet'||quiet?.kind==='none'){
           <div class="card-chips">
+            @if(quiet?.kind==='quiet'){<span class="chip quiet-chip">No activity recorded in the last {{quietDays}} days &middot; latest {{formatDate(latestActivity(change)!.lastAt)}}</span>}
+            @if(quiet?.kind==='none'){<span class="chip quiet-chip">No recorded activity</span>}
             @if(comments){<span class="chip comments-chip">{{comments}} {{comments===1?'comment':'comments'}}</span>}
             @if(updated.length){<span class="chip updated-chip" [attr.title]="'Differs from your last read: '+updated.join(', ')">Updated since read</span>}
           </div>
@@ -358,7 +361,7 @@
               <strong>{{change.completedTasks}} / {{change.totalTasks}}</strong>
               tasks}@else{Task progress unavailable}</span
             ><span class="status-dot" [class.done]="row?.status==='done'"></span
-            ><span>{{row?statusLabel(row.status):'No recorded activity'}}</span>
+            ><span>{{row?statusLabel(row.status):latestActivity(change)?statusLabel(latestActivity(change)!.lastStatus):'No observations'}}</span>
           </div>
         </article>
         }@empty{
@@ -381,7 +384,7 @@
           <h2>Other ongoing work</h2>
           <span class="muted small">Latest recorded status · last 14 days</span>
         </div>
-        @for(row of ongoingTickets();track row.id){<button
+        @for(row of ongoingTickets();track row.id){<div class="work-item"><button
           class="work-list-item"
           (click)="openItem(row,undefined,true)"
         >
@@ -392,7 +395,7 @@
           ><span class="badge">{{statusLabel(row.status)}}</span
           ><span class="muted small">{{formatDate(row.lastAt)}}</span
           ><span>&#8599;</span></button
-        >}
+        ><ng-container *ngTemplateOutlet="ticketList;context:{$implicit:row.tickets}"></ng-container></div>}
       </section>
       } }@else if(view()==='archive'){
       <section class="panel archive-panel" aria-labelledby="archive-title">
@@ -480,6 +483,14 @@
               <option value="change">Change</option>
             </select></label
           ><label
+            >Ticket<input
+              aria-label="Ticket filter"
+              [(ngModel)]="ticketInput"
+              (change)="ticketChanged()"
+              placeholder="DEP-12 or jira:site:DEP-12"
+              spellcheck="false"
+          /></label
+          ><label
             >Timezone<input
               aria-label="Reporting timezone"
               [(ngModel)]="timezoneInput"
@@ -490,6 +501,12 @@
         </div>
         @if(rangeError()){<p class="field-error" role="alert">{{rangeError()}}</p>}
         @if(timezoneError()){<p class="field-error" role="alert">{{timezoneError()}}</p>}
+        @if(ticket){
+        <p class="range-focus ticket-filter-active" role="status">
+          Showing work items with an observation for ticket <strong>{{ticket}}</strong>
+          <button class="link-button" (click)="clearTicket()">Clear ticket filter</button>
+        </p>
+        }
         @if(focusedDay();as day){
         <p class="range-focus" role="status">
           Showing {{formatDate(day+'T12:00:00Z')}}
@@ -562,6 +579,7 @@
             </div>
             @for(row of timeline()?.rows??[];track row.id){
             <div class="timeline-row">
+              <div class="row-head">
               <button class="timeline-label row-label" (click)="openItem(row)">
                 <span
                   class="row-marker"
@@ -574,7 +592,8 @@
                     {{row.activityDates.length}} activity dates</small
                   ></span
                 >
-              </button>
+              </button><ng-container *ngTemplateOutlet="ticketList;context:{$implicit:row.tickets}"></ng-container>
+              </div>
               <div class="timeline-track">
                 <div
                   class="elapsed-bar"
@@ -601,8 +620,8 @@
         </div>
         @if(!loading()&&!timeline()?.rows?.length){
         <div class="compact-empty">
-          No recorded observations in this period. Try a wider date range or
-          another repository.
+          No recorded observations in this period. Try a wider date range,
+          another repository{{ticket?', or clear the ticket filter':''}}.
         </div>
         }
         @if(timeline()?.nextOffset!==null&&timeline()?.nextOffset!==undefined){<button
@@ -646,7 +665,7 @@
             <h2>Longest recorded spans</h2>
             <span>&#8599;</span>
           </div>
-          @for(row of data.insights.longestSpans;track row.id){<button
+          @for(row of data.insights.longestSpans;track row.id){<div class="insight-item"><button
             class="insight-row"
             (click)="openItem(row)"
           >
@@ -658,7 +677,7 @@
             ><span class="duration-pill"
               >{{elapsed(row.elapsedSeconds)}}</span
             ></button
-          >}@empty{
+          ><ng-container *ngTemplateOutlet="ticketList;context:{$implicit:row.tickets}"></ng-container></div>}@empty{
           <p class="muted">Nothing recorded in this period.</p>
           }
         </section>
@@ -668,12 +687,12 @@
             <i class="tiny-dot green"></i>
           </div>
           @for(item of data.insights.completions.slice(0,5);track
-          $index){<button class="insight-row" (click)="openItem(item)">
+          $index){<div class="insight-item"><button class="insight-row" (click)="openItem(item)">
             <span
               ><strong>{{humanize(item.title)}}</strong
               ><small>{{formatDate(item.at)}}</small></span
             ><span class="check-mark">&#10003;</span></button
-          >}@empty{
+          ><ng-container *ngTemplateOutlet="ticketList;context:{$implicit:item.tickets}"></ng-container></div>}@empty{
           <p class="muted">No completions recorded in this period.</p>
           }
         </section>
@@ -683,14 +702,14 @@
             <span>&#8644;</span>
           </div>
           @for(item of data.insights.subsequentWork.slice(0,5);track
-          $index){<button class="insight-row" (click)="openItem(item)">
+          $index){<div class="insight-item"><button class="insight-row" (click)="openItem(item)">
             <span
               ><strong>{{humanize(item.title)}}</strong
               ><small
                 >Work recorded after completion · {{formatDate(item.at)}}</small
               ></span
             ><span>&#8599;</span></button
-          >}@empty{
+          ><ng-container *ngTemplateOutlet="ticketList;context:{$implicit:item.tickets}"></ng-container></div>}@empty{
           <p class="muted">No subsequent work recorded after completion.</p>
           }
         </section>
@@ -995,7 +1014,13 @@
     <div>
       <div class="eyebrow">RECORDED ACTIVITY</div>
       <h2>{{humanize(row.title)}}</h2>
-      <p>{{repositoryLabel(row.repository)}}</p>
+      <p>
+        @if(repositoryUrl(row.repository);as repoUrl){<a class="repository-web-link" [href]="repoUrl" target="_blank" rel="noopener noreferrer" (click)="openExternal($event,repoUrl)">{{repositoryLabel(row.repository)}}</a>}@else{<span>{{repositoryLabel(row.repository)}}</span>}
+      </p>
+      <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:row.tickets}"></ng-container>
+      <button class="text-button copy-markdown" [disabled]="detailLoading()||markdownBusy()" (click)="copyMarkdown()">
+        {{markdownBusy()?'Preparing Markdown...':'Copy as Markdown'}}
+      </button>
     </div>
     <button
       class="icon-button"
@@ -1057,6 +1082,10 @@
         >{{entry.agent??'Agent not recorded'}} @if(entry.change){·
         {{entry.change}}}</small
       >
+      @if(entry.branch){<small class="branch-line">Branch
+        @if(branchUrl(entry.repository,entry.branch);as url){<a class="branch-link" [href]="url" target="_blank" rel="noopener noreferrer" (click)="openExternal($event,url)">{{entry.branch}}</a>}@else{<code>{{entry.branch}}</code>}
+      </small>}
+      <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:entry.tickets,extracted:entry.extractedTicketId}"></ng-container>
     </article>
     }@if(detailLoading()){
     <p class="muted" role="status">Loading observations...</p>
@@ -1085,6 +1114,24 @@
     (focus)="$any($event.target).select()"
   /><button class="text-button" (click)="copyFallback.set('')">Close</button>
 </div>
+} @if(manualCopy();as manual){
+<div class="clipboard-fallback panel">
+  <strong>{{manual.title}}</strong
+  >@if(manual.multiline){<textarea
+    aria-label="Text for manual copying"
+    rows="8"
+    readonly
+    [value]="manual.text"
+    (focus)="$any($event.target).select()"
+  ></textarea>}@else{<input
+    aria-label="Text for manual copying"
+    [value]="manual.text"
+    readonly
+    (focus)="$any($event.target).select()"
+  />}<button class="text-button" (click)="manualCopy.set(null)">Close</button>
+</div>
+} @if(copyToast()){
+<div class="reader-toast copy-toast" role="status">{{copyToast()}}</div>
 } @if(notice() && document()){
 <div class="reader-toast" role="status">
   {{notice()}}<button
@@ -1096,3 +1143,19 @@
   </button>
 </div>
 }
+<ng-template #ticketList let-tickets let-extracted="extracted">
+  @if(tickets?.length||extracted){
+  <span class="ticket-links">
+    @for(t of tickets;track t.provider+'|'+t.scope+'|'+t.id){
+    <span class="ticket-ref">
+      @if(ticketUrl(t);as url){<a class="ticket-link" [href]="url" target="_blank" rel="noopener noreferrer" [attr.title]="ticketTitle(t)" (click)="openExternal($event,url)">{{t.id}}</a>}@else{<span class="ticket-id" [attr.title]="ticketTitle(t)">{{t.id}}</span>}<button type="button" class="ticket-copy" [attr.aria-label]="'Copy ticket ID '+t.id" (click)="copyTicket(t.id)">Copy ID</button>
+    </span>
+    }
+    @if(extracted){
+    <span class="ticket-ref">
+      <span class="ticket-id" title="Taken from the branch name; provider and site unknown">{{extracted}}</span><button type="button" class="ticket-copy" [attr.aria-label]="'Copy ticket ID '+extracted" (click)="copyTicket(extracted)">Copy ID</button>
+    </span>
+    }
+  </span>
+  }
+</ng-template>

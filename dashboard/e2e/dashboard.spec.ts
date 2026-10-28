@@ -332,7 +332,7 @@ test("shows factual history, continuation and observation details", async ({
   ).toBeVisible();
   await expect(page.locator(".timeline-row")).toHaveCount(50);
   await page.getByRole("button", { name: "Load more work items" }).click();
-  await expect(page.locator(".timeline-row")).toHaveCount(61);
+  await expect(page.locator(".timeline-row")).toHaveCount(68);
   await page.screenshot({
     path: testInfo.outputPath("history.png"),
     fullPage: true,
@@ -988,4 +988,159 @@ test("Open in editor records the expected document and line for a heading, the r
     })).status);
   expect(rejected).toBe(400);
   expect((await launches()).length).toBe(count);
+});
+
+async function openHistory(page: Page) {
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await page.getByRole("button", { name: "Work history", exact: false }).click();
+  await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible();
+  // A filter remembered by an earlier scenario must not leak into this one.
+  if (await page.getByRole("textbox", { name: "Ticket filter" }).inputValue()) await page.getByRole("button", { name: "Clear ticket filter" }).click();
+  await expect(page.locator(".ticket-filter-active")).toHaveCount(0);
+}
+const ticketFilter = (page: Page) => page.getByRole("textbox", { name: "Ticket filter" });
+
+test("links tickets, repositories and branches from recorded facts without navigating", async ({ page, context }) => {
+  const external: string[] = [];
+  page.on("request", (r) => {
+    if (!r.url().startsWith(base) && !r.url().startsWith("data:")) external.push(r.url());
+  });
+  await authorize(page);
+  await openHistory(page);
+  await ticketFilter(page).fill("DEP-12");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row")).toHaveCount(2);
+  const hrefs = await page.locator(".timeline-row .ticket-link").evaluateAll((anchors) => anchors.map((a) => a.getAttribute("href")).sort());
+  expect(hrefs).toEqual(["https://company.atlassian.net/browse/DEP-12", "https://other.atlassian.net/browse/DEP-12"]);
+  // Azure DevOps organization/project, a recorded URL, an unrecognized scope, and a local-only repository.
+  await ticketFilter(page).fill("4211");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://dev.azure.com/contoso/Payments/_workitems/edit/4211");
+  await ticketFilter(page).fill("REC-5");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://tracker.example.invalid/browse/REC-5");
+  await ticketFilter(page).fill("UNK-7");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row")).toHaveCount(1);
+  await expect(page.locator(".timeline-row .ticket-id")).toHaveText("UNK-7");
+  await expect(page.locator(".timeline-row a")).toHaveCount(0);
+  // Copy ID works without a link.
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+  await page.locator(".timeline-row").getByRole("button", { name: "Copy ticket ID UNK-7" }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("UNK-7");
+  // A link opens only after an explicit click, through window.open without the opener.
+  await ticketFilter(page).fill("jira:company.atlassian.net:DEP-12");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row")).toHaveCount(1);
+  await page.evaluate(() => {
+    (window as unknown as { opened: unknown[] }).opened = [];
+    window.open = ((...args: unknown[]) => ((window as unknown as { opened: unknown[] }).opened.push(args), null)) as typeof window.open;
+  });
+  const startUrl = page.url();
+  await page.locator(".timeline-row .ticket-link").click();
+  expect(await page.evaluate(() => (window as unknown as { opened: unknown[] }).opened)).toEqual([
+    ["https://company.atlassian.net/browse/DEP-12", "_blank", "noopener,noreferrer"],
+  ]);
+  expect(page.url()).toBe(startUrl);
+  // Drill-down: repository and branch links on a recognized host.
+  await page.locator(".timeline-row .row-label").click();
+  const detail = page.getByRole("dialog", { name: "Recorded work detail" });
+  await expect(detail.locator(".repository-web-link")).toHaveAttribute("href", "https://github.com/example/links-demo");
+  await expect(detail.locator(".branch-link").first()).toHaveAttribute("href", "https://github.com/example/links-demo/tree/feature/DEP-12");
+  await page.getByRole("button", { name: "Close activity detail" }).click();
+  // No repository or branch link for a local-only identity.
+  await ticketFilter(page).fill("DEP-30");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row")).toHaveCount(1);
+  await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://company.atlassian.net/browse/DEP-30");
+  await page.locator(".timeline-row .row-label").click();
+  await expect(detail.locator(".observation")).toHaveCount(1);
+  await expect(detail.locator(".repository-web-link")).toHaveCount(0);
+  await expect(detail.locator(".branch-link")).toHaveCount(0);
+  await expect(detail.locator(".branch-line")).toContainText("feature/DEP-30");
+  await page.getByRole("button", { name: "Close activity detail" }).click();
+  await page.getByRole("button", { name: "Clear ticket filter" }).click();
+  expect(external).toEqual([]);
+});
+
+test("filters History by ticket, keeps the full lifecycle, and remembers the filter", async ({ page }) => {
+  await authorize(page);
+  await openHistory(page);
+  await expect(page.locator(".timeline-row")).toHaveCount(50);
+  await ticketFilter(page).fill("  jira:other.atlassian.net:DEP-12  ");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row")).toHaveCount(1);
+  await expect(page.locator(".ticket-filter-active")).toContainText("jira:other.atlassian.net:DEP-12");
+  await ticketFilter(page).fill("jira:company.atlassian.net:DEP-12");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row")).toHaveCount(1);
+  // The company ticket's two observations are 4 days apart: the filter keeps its whole recorded span.
+  await expect(page.locator(".timeline-row .row-label small")).toContainText("2 activity dates");
+  await ticketFilter(page).fill("DEP-12");
+  await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row")).toHaveCount(2);
+  await expect.poll(async () => page.evaluate(async () => (await (await fetch("/api/state")).json()).history?.ticket), { timeout: 20_000 }).toBe("DEP-12");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible({ timeout: 45_000 });
+  await expect(ticketFilter(page)).toHaveValue("DEP-12");
+  await expect(page.locator(".timeline-row")).toHaveCount(2);
+  await page.getByRole("button", { name: "Clear ticket filter" }).click();
+  await expect(page.locator(".ticket-filter-active")).toHaveCount(0);
+  await expect(page.locator(".timeline-row")).toHaveCount(50);
+  await expect(ticketFilter(page)).toHaveValue("");
+  await expect.poll(async () => page.evaluate(async () => (await (await fetch("/api/state")).json()).history?.ticket ?? null), { timeout: 20_000 }).toBeNull();
+});
+
+test("copies a work item as Markdown, loading every observation page", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+  await authorize(page);
+  await openHistory(page);
+  await ticketFilter(page).fill("jira:company.atlassian.net:DEP-12");
+  await ticketFilter(page).press("Enter");
+  await page.locator(".timeline-row .row-label").click();
+  await expect(page.locator(".observation")).toHaveCount(2);
+  await page.getByRole("button", { name: "Copy as Markdown" }).click();
+  await expect(page.locator(".copy-toast")).toHaveText("Markdown copied.");
+  // The Windows clipboard returns CRLF line breaks.
+  const text = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  const lines = text.split("\n");
+  expect(lines[0]).toBe("### DEP-12");
+  expect(lines[1]).toContain("Tickets: [DEP-12](https://company.atlassian.net/browse/DEP-12)");
+  expect(lines[1]).toContain("(https://github.com/example/links-demo)");
+  expect(lines[2]).toMatch(/^Recorded: .+ → .+ · Latest status: In progress · Times in .+$/);
+  const items = lines.filter((l) => l.startsWith("- "));
+  expect(items).toHaveLength(2);
+  expect(items[0]).toContain("Recorded start — Started the linked Jira work.");
+  expect(items[1]).toContain("In progress — Continued the linked Jira work.");
+  expect(text).not.toContain("truncated");
+  await page.getByRole("button", { name: "Close activity detail" }).click();
+  // A work item with more observations than one page: the second page is loaded before copying.
+  await page.getByRole("button", { name: "Clear ticket filter" }).click();
+  await page.locator(".timeline-row .row-label").filter({ hasText: "WL-190" }).click();
+  await expect(page.locator(".observation")).toHaveCount(100);
+  await page.getByRole("button", { name: "Copy as Markdown" }).click();
+  await expect(page.locator(".copy-toast")).toHaveText("Markdown copied.");
+  const large = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  expect(large.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(125);
+  expect(large).not.toContain("truncated");
+});
+
+test("marks quiet active changes and changes without recorded activity", async ({ page }, testInfo) => {
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await page.getByRole("button", { name: /links-demo/ }).first().click();
+  const card = (name: string) => page.locator(".change-card").filter({ has: page.getByRole("button", { name, exact: true }) });
+  await expect(card("Quiet change")).toBeVisible();
+  await expect(card("Quiet change").locator(".quiet-chip")).toContainText(/No activity recorded in the last 14 days . latest \d{1,2} \w{3} \d{4}/);
+  await expect(card("Never logged").locator(".quiet-chip")).toHaveText("No recorded activity");
+  await expect(page.locator(".change-card")).toHaveCount(2);
+  // Ongoing items show ticket links.
+  await expect(page.locator(".ongoing-panel .ticket-link[href='https://dev.azure.com/contoso/Payments/_workitems/edit/4211']")).toBeVisible();
+  await expect(page.locator(".ongoing-panel .ticket-id", { hasText: "UNK-7" })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("quiet.png"), fullPage: true });
+  // A change with recent activity gets no chip.
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await page.getByRole("button", { name: /example\/worklog/ }).first().click();
+  await expect(card("Activity timeline")).not.toHaveCount(0);
+  await expect(card("Activity timeline").locator(".quiet-chip")).toHaveCount(0);
 });
