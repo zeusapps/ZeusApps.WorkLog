@@ -21,6 +21,7 @@ import {
   localDate,
 } from "./api";
 import { renderMarkdown, Heading, Review } from "./markdown";
+import { archiveEntries, editorLabel, editorPresets, firstVisibleLine, sourceLineAfter, validEditor } from "./archive";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
 import {
   baselineKey,
@@ -48,6 +49,8 @@ import {
 import {
   Catalog,
   Change,
+  ChangeActivity,
+  EditorPreset,
   DocumentContent,
   DocumentRequest,
   DocumentUnchanged,
@@ -85,7 +88,7 @@ export class App implements OnDestroy, AfterViewInit {
   catalog = signal<Catalog | null>(null);
   preferences: Preferences = { schemaVersion: 1 };
   selectedRepos = signal<string[] | null>(null);
-  view = signal<"ongoing" | "history">("ongoing");
+  view = signal<"ongoing" | "history" | "archive">("ongoing");
   ready = signal(false);
   unauthorized = signal(false);
   error = signal("");
@@ -124,6 +127,16 @@ export class App implements OnDestroy, AfterViewInit {
   editingReview = signal<(Review & { revision: string }) | null>(null);
   deletingReview = signal<(Review & { revision: string }) | null>(null);
   sourceView = signal(false);
+  /** Case-insensitive name filter of the Archive view. */
+  archiveFilter = signal("");
+  /** First and latest recorded observation of every change name in the selected repositories. */
+  activity = signal<ChangeActivity[]>([]);
+  private activityKey = "";
+  private activityEpoch = 0;
+  /** The remembered editor preset for Open in editor. */
+  editor = signal<EditorPreset>("vscode");
+  readonly editorPresets = editorPresets;
+  readonly editorLabel = editorLabel;
   selection = signal<Selection | null>(null);
   comment = signal("");
   commentStatus = signal("");
@@ -188,6 +201,14 @@ export class App implements OnDestroy, AfterViewInit {
   readonly elapsed = elapsed;
   readonly activeChanges = computed(() =>
     this.filteredChanges().filter((c) => !c.archived),
+  );
+  readonly archiveList = computed(() =>
+    archiveEntries(
+      this.catalog()?.changes ?? [],
+      (repositories) => this.inScope(repositories),
+      this.archiveFilter(),
+      this.activity(),
+    ),
   );
   readonly filteredChanges = computed(
     () =>
@@ -280,6 +301,7 @@ export class App implements OnDestroy, AfterViewInit {
       this.catalog.set(catalog);
       this.versionLabel.set(info.version ?? "");
       this.preferences = state;
+      this.editor.set(validEditor(state.editor));
       this.applyTheme(state.theme === "light" ? "light" : "dark");
       const known = new Set(catalog.repositories.map((r) => r.id));
       const saved = state.repositories?.filter((r) => known.has(r));
@@ -413,6 +435,25 @@ export class App implements OnDestroy, AfterViewInit {
       if (epoch === this.reviewEpoch) this.report(error);
     }
   }
+  /**
+   * Loads the recorded activity of the selected repositories for the Archive view. Skipped while another view is open,
+   * and when neither the journal nor the selection moved since the last load.
+   */
+  async loadActivity() {
+    if (this.view() !== "archive") return;
+    const repositories = this.selectedRepos() ?? [];
+    const key = this.journalSnapshot + "|" + JSON.stringify(repositories);
+    if (key === this.activityKey) return;
+    const epoch = ++this.activityEpoch;
+    try {
+      const list = await api<ChangeActivity[]>("activity/changes", { repositories });
+      if (epoch !== this.activityEpoch) return;
+      this.activity.set(list);
+      this.activityKey = key;
+    } catch (error) {
+      if (epoch === this.activityEpoch) this.report(error);
+    }
+  }
   async loadReadSummary() {
     const epoch = ++this.summaryEpoch;
     try {
@@ -431,6 +472,68 @@ export class App implements OnDestroy, AfterViewInit {
   }
   updatedDocs(change: Change) {
     return updatedDocuments(change, this.readSummary());
+  }
+  setEditor(value: unknown) {
+    this.editor.set(validEditor(value));
+    this.preferences.editor = this.editor();
+    this.remember();
+  }
+  /** The zero-based source line at the top of the reader: the first rendered block at or below its top edge. */
+  readerLine(): number {
+    const scroller = document.querySelector<HTMLElement>(".reader .document-scroll");
+    if (!scroller) return 0;
+    if (this.sourceView()) {
+      const text = scroller.querySelector<HTMLElement>(".source-text");
+      const rect = scroller.getBoundingClientRect();
+      if (text) {
+        // The text wraps and may sit below other content, so ask the layout which character is at the top edge.
+        const box = text.getBoundingClientRect();
+        if (box.top >= rect.top) return 0;
+        const x = Math.min(Math.max(box.left + 1, rect.left + 1), rect.right - 1);
+        const y = rect.top + 2;
+        const caret = document.caretPositionFromPoint?.(x, y);
+        const node = caret?.offsetNode ?? document.caretRangeFromPoint?.(x, y)?.startContainer;
+        const offset = caret?.offset ?? document.caretRangeFromPoint?.(x, y)?.startOffset ?? 0;
+        if (node && text.contains(node)) {
+          const before = document.createRange();
+          before.setStart(text, 0);
+          before.setEnd(node, offset);
+          return sourceLineAfter(before.toString());
+        }
+      }
+      const style = text ? getComputedStyle(text) : null;
+      const height = parseFloat(style?.lineHeight ?? "") || (parseFloat(style?.fontSize ?? "") || 12) * 1.5;
+      return Math.max(0, Math.floor(scroller.scrollTop / height));
+    }
+    const top = scroller.getBoundingClientRect().top;
+    return firstVisibleLine(
+      Array.from(scroller.querySelectorAll<HTMLElement>(".markdown [data-start]")).map((e) => ({
+        start: Number(e.dataset["start"]),
+        top: e.getBoundingClientRect().top,
+      })),
+      top,
+    );
+  }
+  /** Opens the document at a line in the remembered editor. The server resolves the file; only the document identity and line are sent. */
+  async openInEditor(
+    d: { sourceId: string; change: string; path: string; variant?: string | null },
+    line: number,
+  ) {
+    try {
+      await api("open", {
+        document: { sourceId: d.sourceId, change: d.change, path: d.path, variant: d.variant ?? null },
+        line,
+        editor: this.editor(),
+      });
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) this.report(error);
+      else this.notice.set(error instanceof Error ? error.message : String(error));
+    }
+  }
+  /** Opens the reader's document at the reader's current position, or at an explicit line (a heading). */
+  async openCurrentInEditor(line?: number) {
+    const d = this.document();
+    if (d) await this.openInEditor({ ...d, variant: d.variant ?? this.selectedChange()?.variant }, line ?? this.readerLine());
   }
   async openReview(item: ReviewItem) {
     const change = this.catalog()?.changes.find(
@@ -474,10 +577,11 @@ export class App implements OnDestroy, AfterViewInit {
     this.searchResults.set(null);
     this.remember();
     void this.loadReviews();
+    void this.loadActivity();
     await this.refreshData();
     if (this.searchText.trim()) void this.search();
   }
-  async changeView(view: "ongoing" | "history") {
+  async changeView(view: "ongoing" | "history" | "archive") {
     await this.router.navigate(["/" + view]);
   }
   async refreshData() {
@@ -711,11 +815,9 @@ export class App implements OnDestroy, AfterViewInit {
   private async routeChanged() {
     if (this.navigating) return;
     const url = this.router.parseUrl(this.router.url);
-    this.view.set(
-      url.root.children["primary"]?.segments[0]?.path === "history"
-        ? "history"
-        : "ongoing",
-    );
+    const route = url.root.children["primary"]?.segments[0]?.path;
+    this.view.set(route === "history" ? "history" : route === "archive" ? "archive" : "ongoing");
+    if (route === "archive") void this.loadActivity();
     const source = url.queryParams["source"] as string | undefined,
       change = url.queryParams["change"] as string | undefined,
       path = url.queryParams["doc"] as string | undefined;
@@ -1525,6 +1627,7 @@ export class App implements OnDestroy, AfterViewInit {
       if (rolled || snapshot.journalSnapshot !== this.journalSnapshot) {
         this.journalSnapshot = snapshot.journalSnapshot;
         if (rolled) this.evaluate();
+        void this.loadActivity();
         await this.refreshData();
       }
     } catch (error) {

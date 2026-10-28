@@ -28,6 +28,16 @@ Remembered text is stored in `dashboard-reads/` in the selected data directory (
 
 Copied routes retain change identity across an archive move at the same local endpoint. Heading/task targets that disappear or are ambiguous open the available document with a notice. Task links use current numbers and do not preserve identity across renumbering. The reader always displays current files, not their Git revision at the selected historical date. Documents over 2 MiB are explicitly unavailable rather than truncated.
 
+### Archive view and Open in editor
+
+The Archive view (`/archive`) lists archived changes found in the sources of the selected repositories, newest archive date first, using the `yyyy-MM-dd-` prefix of the archive directory; archives without a recognizable date prefix follow the dated ones. Each entry shows the logical change name, archive date, documents, source, the open review comments left in it, and the latest recorded observation status and date for that change name in any of the change's repositories, or "No activity recorded". The recorded date comes from the journal and is independent of the archive date. The name filter is case-insensitive. Selecting an entry opens the read-only reader.
+
+Open in editor opens the current document at the first visible block in the reader, and the matching line for headings, search results and review comments. Presets are fixed: VS Code (`vscode://file/<path>:<line>:<column>`), Cursor (`cursor://file/<path>:<line>:<column>`) and System default app (the file path itself, opened without a position). The choice is remembered in `dashboard-state.json`. If the editor's URL handler is not registered (for example a portable install) the dashboard reports that the editor could not be opened and you can choose another preset. Archived documents can be opened as well; the action never changes a file.
+
+Security boundary: `POST /api/open` accepts only a document identity (source, change, document path), a line, and one of the preset names. The server resolves the file itself under the same containment rules as reading documents (traversal, absolute paths and links leaving the source are refused), builds the link, and launches it through the operating system. Unknown presets, unauthorized, cross-origin and unexpected-host requests are rejected without launching anything. No command line, argument, or file path from the browser is ever used.
+
+Test switch: when the environment variable `WORKLOG_DASHBOARD_TEST_LAUNCH_LOG` names a file, the dashboard appends each editor target to that file instead of launching anything. It exists for the browser acceptance suite only; leave it unset in normal use.
+
 Stop the original dashboard command with Ctrl+C when finished. Its MCP peers continue independently. Installation updates do not transfer a running dashboard into another payload; restart it to adopt the selected version. The dashboard uses separate private UI files and retains journal schema 2 and existing repository identities.
 
 A new review marker looks like this in the raw Markdown file:

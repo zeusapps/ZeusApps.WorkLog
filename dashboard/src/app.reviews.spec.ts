@@ -12,6 +12,7 @@ const change: Change = {
   directoryName: "demo",
   variant: "v",
   archived: false,
+  archivedOn: null,
   repositories: ["r"],
   documents: [
     { path: "design.md", label: "design", fingerprint: "100:5000" },
@@ -34,6 +35,7 @@ const archived: Change = {
   directoryName: "2026-10-01-old",
   variant: "v3",
   archived: true,
+  archivedOn: "2026-10-01",
   documents: [{ path: "design.md", label: "design", fingerprint: "8:80" }],
 };
 const idA = "a".repeat(32);

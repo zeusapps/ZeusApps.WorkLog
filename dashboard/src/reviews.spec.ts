@@ -80,6 +80,7 @@ const change: Change = {
   directoryName: "demo",
   variant: "v",
   archived: false,
+  archivedOn: null,
   repositories: ["r"],
   documents: [
     { path: "design.md", label: "design", fingerprint: "100:5000" },

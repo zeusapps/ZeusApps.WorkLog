@@ -123,3 +123,42 @@ In-process measurements of `DocumentService.ReviewsAsync` (Release, fixture of 9
 | 900 | 1,648 ms median (1,469 to 2,107 ms), every document reparsed on every call | 666 ms, 900 parses | 0.53 ms median (0.36 to 10.4 ms), zero parses |
 
 The target of under about 50 ms is met at 900 documents, above the former 512 bound.
+
+## Archive view and Open in editor (add-archive-browser-and-editor-open)
+
+### Editor URL handler formats (task 1.4)
+
+Confirmed on 2026-10-28.
+
+| Preset | Format | Status | Source |
+| --- | --- | --- | --- |
+| VS Code | `vscode://file/{full path to file}:line:column`, for example `vscode://file/c:/myProject/package.json:5:10` | Confirmed by vendor documentation | VS Code docs, "Opening VS Code with URLs" in `docs/configure/command-line.md` (https://github.com/microsoft/vscode-docs), fetched with `ctx7` from `/microsoft/vscode-docs` |
+| Cursor | `cursor://file/{full path to file}:line:column` | Not confirmed by vendor documentation. The Cursor documentation retrieved with `ctx7` (`/websites/cursor`) documents only `cursor://anysphere.cursor-deeplink/...` links (MCP and prompt installs), not file links. Community reports (Cursor forum, "Open in Cursor URL Handler" and "Does Cursor have a unique open scheme?") describe `cursor://file/{path}:{line}` working for local files, as expected of a VS Code fork. | Community reports only |
+
+Decision: the Cursor preset uses the VS Code form because Cursor is a VS Code fork and community reports show it working. Until a live observation on Windows confirms it (see the live observation below), treat the Cursor preset as unverified; "System default app" is the fallback and a launch failure is reported with a suggestion to choose another preset. `line` is zero-based in the API and one-based in the link (`line+1`), the column is always 1, forward slashes are used, and every path segment is percent-encoded as UTF-8 except a leading drive designator such as `C:`.
+
+### Validation results
+
+Run on Windows against the working tree of this change, fixture runs and packaged runs labeled separately.
+
+| Check | Result |
+| --- | --- |
+| `npm ci --prefix dashboard --no-audit --no-fund` | passed |
+| `npm test --prefix dashboard` | 94 of 94 tests in 10 files passed (new: `archive.spec.ts`, `app.archive.spec.ts`; includes the source-view line count and the caret-based reading position) |
+| `dotnet restore --locked-mode` | passed |
+| `dotnet build -c Release --no-restore` | 0 warnings, 0 errors |
+| `dotnet test -c Release --no-build --no-restore` | 350 of 351 passed (11 new in `ArchiveAndOpenTests`, including a `.md` link to a `.cmd` file being rejected for all three presets and a `.md` link to a `.md` file still opening). The one failure, `DevInstallTests.PreflightRefusesStaleUnmarkedAndCorruptPackagesAndChangesNothing`, expects the message "Source file" but receives "Source directory dashboard\src changed after ...": it compares the working tree's modification times with a fixture package, so the result depends on directory-versus-file modification-time ordering in the tree under test. It passed in one QA run, failed in another, and fails on a clean `c53e647` worktree, so it is unrelated to this change (including the open endpoint) and was not fixed here. |
+| Browser acceptance, fixture run against the Release build (`npm run test:e2e --prefix dashboard`, OpenSpec CLI on the PATH) | the serial run stops at the existing scenario "keeps history available when a declared store cannot be resolved" (QA-007, pre-existing, unchanged): 15 passed, 1 failed, 6 not run. With that scenario excluded (`--grep-invert "declared store"`): 21 of 21 passed, including the three new scenarios. |
+| Browser acceptance, packaged run (`scripts/package.ps1` output, `WORKLOG_DASHBOARD_EXECUTABLE`, `WORKLOG_DASHBOARD_NO_NODE=true`) | 22 of 22 passed on the current tree (rerun in the fix round from a fresh `scripts/package.ps1` build), including the Archive view, the Open in editor, the source-view reading-position and the declared-store scenarios |
+
+The new scenarios: the Archive view lists three archives newest first with the undated one last, filters case-insensitively, shows "No activity recorded" and "Recorded done" with a date separate from the archive date, shows the leftover comment count, and opens an entry read-only; and Open in editor posts the expected document and line for a heading, the reader position, a search result and an archived document, with the preset selecting the scheme and being saved in the preferences, and a forged request (path traversal, unknown preset) being rejected without a launch. A third scenario scrolls the source view of a long wrapped paragraph and asserts the recorded line is the first visible source line (3), not the scroll distance divided by the row height. These scenarios use the test-only recording launcher (`WORKLOG_DASHBOARD_TEST_LAUNCH_LOG` naming a file; the dashboard appends targets to it instead of launching). `dashboard/e2e/server.mjs` sets it; the packaged build ignores it unless set.
+
+Server tests cover: archive dates from directory prefixes (dated, undated, impossible dates); latest status with ties on the occurrence time broken by id; repository filtering; missing journal returns empty and creates nothing; an unsupported schema is refused without migration; URI building (drive colon kept, spaces and non-ASCII encoded); open for active and archived documents, unknown presets and negative lines (400), traversal, absolute and encoded paths (400), a directory junction escaping the source (change unavailable), unauthorized (401), cross-origin, cross-site and wrong-host requests (403) with no launch recorded in any rejected case, ignored extra client fields, and an unavailable editor (503 with "Could not open Cursor. Choose another editor.").
+
+### Live observation (task 3.2)
+
+The implementation run did not launch a real editor. The following is a live observation by the maintainer, not an automated result.
+
+On 2026-10-28 the maintainer installed dev build `0.3.9002 dev c53e647 dirty` (built from the reviewed working tree) on their Windows installation through `scripts/install-dev.ps1` Switch, restarted their dashboard, and observed that "Open in editor" from the reader header and the outline heading pencil action both opened VS Code at the expected position.
+
+Not observed in the live check: the source view, the Cursor preset, and System default app. The Cursor link format remains unconfirmed by vendor documentation and was not live-checked; treat the Cursor preset as unverified.

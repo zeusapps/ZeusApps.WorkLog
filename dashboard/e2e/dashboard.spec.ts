@@ -12,6 +12,7 @@ const fixture = async () =>
     otherRepo: string;
     worktree: string;
     executable: string;
+    launchLog: string;
   };
 async function authorize(page: Page) {
   const info = await fixture();
@@ -835,4 +836,156 @@ test("lists a comment left behind in an archived change as read-only", async ({ 
   await inbox.getByRole("button", { name: "All", exact: true }).click();
   await expect(inbox.locator(".review-entry").filter({ hasText: "E2E leftover" })).toHaveCount(1);
   await expect(inbox.locator(".review-entry").filter({ hasText: "E2E active control" })).toHaveCount(1);
+});
+
+const launches = async () =>
+  (await readFile((await fixture()).launchLog, "utf8").catch(() => ""))
+    .split("\n")
+    .filter(Boolean);
+const lastLaunch = async () => (await launches()).at(-1);
+const archiveNav = (page: Page) =>
+  page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: /Archive/ });
+const readerDialog = (page: Page) => page.getByRole("dialog", { name: "OpenSpec document reader" });
+
+test("the Archive view lists archives newest first, filters by name, shows activity and leftover comments, and opens read-only", async ({ page }, testInfo) => {
+  const info = await fixture();
+  await writeChange(info.repo, "archive/2026-10-03-zz-e2e-newest", {
+    "design.md": "# Newest\n\nAn archived passage.\n\n<!-- REVIEW: E2E archive leftover -->\n",
+  });
+  await writeChange(info.repo, "archive/2026-09-15-zz-e2e-older", { "design.md": "# Older\n\nAn older archived passage.\n" });
+  await writeChange(info.repo, "archive/zz-e2e-undated", { "design.md": "# Undated\n\nNo date prefix.\n" });
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await archiveNav(page).click();
+  await expect(page).toHaveURL(/\/archive/);
+  const filter = page.getByRole("searchbox", { name: "Filter archived changes" });
+  await filter.fill("ZZ-E2E");
+  const entries = page.getByTestId("archive-entry");
+  await expect(entries).toHaveCount(3);
+  await expect(entries.getByTestId("archive-name")).toHaveText(["zz-e2e-newest", "zz-e2e-older", "zz-e2e-undated"]);
+  await expect(entries.getByTestId("archive-date")).toHaveText(["Archived 2026-10-03", "Archived 2026-09-15", "Archive date unknown"]);
+  await expect(entries.nth(0).getByTestId("archive-comments")).toHaveText("1 comment");
+  await expect(entries.nth(1).getByTestId("archive-comments")).toHaveCount(0);
+  await expect(entries.nth(0).getByTestId("archive-activity")).toHaveText("No activity recorded");
+  await filter.fill("zz-e2e-old");
+  await expect(entries).toHaveCount(1);
+  await expect(entries.getByTestId("archive-name")).toHaveText("zz-e2e-older");
+  await filter.fill("no-such-archive-name");
+  await expect(entries).toHaveCount(0);
+  await expect(page.locator(".archive-panel .compact-empty")).toContainText("No archived change names contain");
+  // Recorded activity is separate from the archive date: the fixture journal records done for update-rollout.
+  await filter.fill("update-rollout");
+  await expect(entries).toHaveCount(1);
+  await expect(entries.getByTestId("archive-date")).toHaveText("Archived 2026-10-01");
+  await expect(entries.getByTestId("archive-activity")).toContainText("Recorded done");
+  await page.screenshot({ path: testInfo.outputPath("archive-activity.png"), fullPage: true });
+  await filter.fill("zz-e2e-newest");
+  await entries.getByTestId("archive-name").click();
+  await expect(readerDialog(page)).toBeVisible();
+  await expect(page.locator(".reader-provenance .badge")).toHaveText("Archived");
+  await expect(page.locator(".markdown h1")).toHaveText("Newest");
+  await expect(page.getByRole("button", { name: "Save comment" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit review comment", exact: true })).toHaveCount(0);
+  await closeReader(page);
+  await expect(page).toHaveURL(/\/archive$/);
+  await expect(filter).toHaveValue("zz-e2e-newest");
+});
+
+test("Open in editor from the source view uses the first visible source line, not the scroll distance", async ({ page }) => {
+  const info = await fixture();
+  const wrapped = "wrapped ".repeat(500).trim();
+  await writeChange(info.repo, "zz-e2e-wrapped", {
+    "design.md": ["# Wrapped target", "", wrapped, "", ...Array.from({ length: 60 }, (_, i) => "Tail line " + i), ""].join("\n"),
+  });
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await cardFor(page, "Zz e2e wrapped").getByRole("button", { name: /^Design/ }).click();
+  await expect(page.locator(".markdown h1")).toHaveText("Wrapped target");
+  await readerDialog(page).getByLabel("Editor for Open in editor").selectOption("vscode");
+  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await expect(page.locator(".source-text")).toContainText("Tail line 59");
+  const before = (await launches()).length;
+  const target = "/openspec/changes/zz-e2e-wrapped/design.md";
+  // Several wrapped rows into the long paragraph (source line 3): a scroll distance divided by the row height would be far larger.
+  const rows = await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>(".reader .document-scroll")!;
+    const text = scroller.querySelector<HTMLElement>(".source-text")!;
+    const row = parseFloat(getComputedStyle(text).lineHeight);
+    scroller.scrollTo({ top: text.offsetTop + row * 8, behavior: "instant" });
+    return Math.floor(scroller.scrollTop / row);
+  });
+  expect(rows).toBeGreaterThan(3);
+  await page.getByTestId("open-in-editor").click();
+  await expect.poll(async () => (await launches()).length).toBe(before + 1);
+  expect((await lastLaunch())!.endsWith(target + ":3:1")).toBe(true);
+  // Past the paragraph the top edge is on a later source line.
+  await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>(".reader .document-scroll")!;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior: "instant" });
+  });
+  await page.getByTestId("open-in-editor").click();
+  await expect.poll(async () => (await launches()).length).toBe(before + 2);
+  const line = Number((await lastLaunch())!.match(/:(\d+):1$/)![1]);
+  expect(line).toBeGreaterThan(5);
+  expect(line).toBeLessThanOrEqual(65);
+});
+
+test("Open in editor records the expected document and line for a heading, the reader, a search result, and an archived document", async ({ page }, testInfo) => {
+  const info = await fixture();
+  await writeChange(info.repo, "zz-e2e-editor", {
+    "design.md": "# Editor target\n\nFirst paragraph.\n\n## Second section\n\nUnique zzeditor sentence.\n",
+  });
+  await writeChange(info.repo, "archive/2026-10-04-zz-e2e-editor-old", { "design.md": "# Old editor target\n\nArchived body.\n" });
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  await cardFor(page, "Zz e2e editor").getByRole("button", { name: /^Design/ }).click();
+  await expect(page.locator(".markdown h1")).toHaveText("Editor target");
+  const before = (await launches()).length;
+  const target = "/openspec/changes/zz-e2e-editor/design.md";
+  // A heading opens at its own line (zero-based 4, one-based 5).
+  await page.getByRole("button", { name: "Open Second section in editor" }).click();
+  await expect.poll(async () => (await launches()).length).toBe(before + 1);
+  const heading = (await lastLaunch())!;
+  expect(heading).toMatch(/^vscode:\/\/file\//);
+  expect(heading.endsWith(target + ":5:1")).toBe(true);
+  // At the top of the document the first visible block is the title on line 1.
+  await page.getByTestId("open-in-editor").click();
+  await expect.poll(async () => (await launches()).length).toBe(before + 2);
+  expect((await lastLaunch())!.endsWith(target + ":1:1")).toBe(true);
+  // The preset selects the scheme.
+  await readerDialog(page).getByLabel("Editor for Open in editor").selectOption("cursor");
+  await page.getByTestId("open-in-editor").click();
+  await expect.poll(async () => (await launches()).length).toBe(before + 3);
+  expect((await lastLaunch())!).toMatch(/^cursor:\/\/file\/.*zz-e2e-editor\/design\.md:1:1$/);
+  await page.screenshot({ path: testInfo.outputPath("open-in-editor.png") });
+  await closeReader(page);
+  // A search result opens at the matching line (zero-based 6, one-based 7).
+  await page.getByRole("textbox", { name: "Search OpenSpec documents" }).fill("zzeditor");
+  await page.getByRole("button", { name: "Open search result in editor" }).first().click();
+  await expect.poll(async () => (await launches()).length).toBe(before + 4);
+  expect((await lastLaunch())!).toMatch(/^cursor:\/\/file\/.*zz-e2e-editor\/design\.md:7:1$/);
+  await page.getByRole("button", { name: "Clear search" }).click();
+  // An archived document may be opened too.
+  await archiveNav(page).click();
+  await page.getByRole("searchbox", { name: "Filter archived changes" }).fill("zz-e2e-editor-old");
+  await page.getByTestId("archive-name").click();
+  await expect(page.locator(".markdown h1")).toHaveText("Old editor target");
+  await readerDialog(page).getByLabel("Editor for Open in editor").selectOption("vscode");
+  await page.getByTestId("open-in-editor").click();
+  await expect.poll(async () => (await launches()).length).toBe(before + 5);
+  expect((await lastLaunch())!).toMatch(/^vscode:\/\/file\/.*2026-10-04-zz-e2e-editor-old\/design\.md:1:1$/);
+  // The preset is saved with the other preferences.
+  await expect
+    .poll(async () => page.evaluate(async () => (await (await fetch("/api/state")).json()).editor), { timeout: 20_000 })
+    .toBe("vscode");
+  // The server accepts no client path or command: such a request is rejected and nothing more is recorded.
+  const count = (await launches()).length;
+  const rejected = await page.evaluate(async () =>
+    (await fetch("/api/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document: { sourceId: "x", change: "zz-e2e-editor", path: "../../../outside.md" }, line: 0, editor: "powershell" }),
+    })).status);
+  expect(rejected).toBe(400);
+  expect((await launches()).length).toBe(count);
 });

@@ -16,12 +16,23 @@ export interface Change {
   directoryName: string;
   variant: string;
   archived: boolean;
+  /** The yyyy-MM-dd prefix of the archive directory; null for an active change or an undated archive. */
+  archivedOn: string | null;
   repositories: string[];
   documents: { path: string; label: string; fingerprint: string }[];
   completedTasks: number | null;
   totalTasks: number | null;
   error: string | null;
 }
+/** First and latest recorded observation of a change name in one repository. */
+export interface ChangeActivity {
+  repository: string;
+  change: string;
+  firstAt: string;
+  lastAt: string;
+  lastStatus: string;
+}
+export type EditorPreset = "vscode" | "cursor" | "system";
 export interface Catalog {
   repositories: Repository[];
   sources: Source[];
@@ -180,4 +191,5 @@ export interface Preferences {
   lastRoute?: string;
   documents?: Record<string, string>;
   positions?: Record<string, number>;
+  editor?: EditorPreset;
 }

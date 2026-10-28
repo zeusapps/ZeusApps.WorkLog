@@ -22,10 +22,12 @@ const info = JSON.parse(await readFile(join(root, "fixture.json"), "utf8"));
 const executable =
   process.env.WORKLOG_DASHBOARD_EXECUTABLE ??
   join(workspace, "src/WorkLog/bin/Release/net10.0/worklog.dll");
+// Test-only recording launcher: with this variable set the dashboard appends editor targets to this file instead of launching an editor.
+const launchLog = join(root, "editor-launches.log");
 await mkdir(join(workspace, "dashboard/test-results"), { recursive: true });
 await writeFile(
   join(workspace, "dashboard/test-results/fixture.json"),
-  JSON.stringify({ ...info, executable }),
+  JSON.stringify({ ...info, executable, launchLog }),
 );
 const args = [
   "dashboard",
@@ -39,7 +41,10 @@ const args = [
 ];
 const isDll = executable.endsWith(".dll");
 let restarting = false;
-const runtimeEnvironment = { ...process.env };
+const runtimeEnvironment = {
+  ...process.env,
+  WORKLOG_DASHBOARD_TEST_LAUNCH_LOG: launchLog,
+};
 if (process.env.WORKLOG_DASHBOARD_NO_NODE === "true")
   runtimeEnvironment.PATH = (process.env.PATH ?? "")
     .split(delimiter)

@@ -25,6 +25,12 @@
       >
         <span class="nav-icon">&#9684;</span> Work history
       </button>
+      <button
+        [class.active]="view()==='archive'"
+        (click)="changeView('archive')"
+      >
+        <span class="nav-icon">&#9707;</span> Archive
+      </button>
     </nav>
     <div class="sidebar-divider"></div>
     <div class="sidebar-label">REPOSITORIES</div>
@@ -55,7 +61,7 @@
     <header class="topbar">
       <div class="breadcrumb">
         Workspace <span>/</span>
-        <strong>{{view()==='ongoing'?'Ongoing work':'Work history'}}</strong>
+        <strong>{{view()==='ongoing'?'Ongoing work':view()==='archive'?'Archive':'Work history'}}</strong>
       </div>
       <div class="topbar-right">
         <button
@@ -81,16 +87,16 @@
       <div class="page-heading">
         <div>
           <div class="eyebrow">
-            {{view()==='ongoing'?'MAKE ROOM FOR FOCUS':'SEE THE BIGGER
+            {{view()==='ongoing'?'MAKE ROOM FOR FOCUS':view()==='archive'?'WHAT YOU FINISHED':'SEE THE BIGGER
             PICTURE'}}
           </div>
           <h1>
-            {{view()==='ongoing'?'Your work, in motion.':'Your work, in
+            {{view()==='ongoing'?'Your work, in motion.':view()==='archive'?'Your work, archived.':'Your work, in
             perspective.'}}
           </h1>
           <p>
             {{view()==='ongoing'?'A clear view of what you are building, and the
-            thinking behind it.':'Follow the threads of your work, one recorded
+            thinking behind it.':view()==='archive'?'Completed changes and the plans behind them, open for reading.':'Follow the threads of your work, one recorded
             moment at a time.'}}
           </p>
         </div>
@@ -183,12 +189,15 @@
       <section class="panel search-panel">
         <div class="section-heading">
           <h2>Search results</h2>
+          <select class="editor-select" aria-label="Editor for Open in editor" [ngModel]="editor()" (ngModelChange)="setEditor($event)">
+            @for(p of editorPresets;track p.value){<option [value]="p.value">{{p.label}}</option>}
+          </select>
           <span class="muted"
             >{{searchLoading()?'Searching...':(searchResults()?.matches?.length??0)+'
             matches'}}</span
           >
         </div>
-        @for(match of searchResults()?.matches??[];track $index){<button
+        @for(match of searchResults()?.matches??[];track $index){<div class="search-result-row"><button
           class="search-result"
           (click)="openMatch(match)"
         >
@@ -204,7 +213,7 @@
           </div>
           <p>{{match.excerpt}}</p>
           <span class="result-line">Line {{match.line+1}} &#8599;</span></button
-        >} @if(!searchLoading()&&searchResults()?.matches?.length===0){
+        ><button type="button" class="secondary-button row-action" aria-label="Open search result in editor" (click)="openInEditor(match,match.line)">Open in editor</button></div>} @if(!searchLoading()&&searchResults()?.matches?.length===0){
         <div class="compact-empty">
           No passages match this search in the selected sources.
         </div>
@@ -262,6 +271,9 @@
                 (click)="inboxScope.set(scope.value)"
               >{{scope.label}}</button>}
             </div>
+            <select class="editor-select" aria-label="Editor for Open in editor" [ngModel]="editor()" (ngModelChange)="setEditor($event)">
+              @for(p of editorPresets;track p.value){<option [value]="p.value">{{p.label}}</option>}
+            </select>
             <span class="muted small review-total">{{reviewTotal()}} open</span>
           </div>
         </div>
@@ -276,7 +288,7 @@
           @for(document of group.documents;track document.path){
           <div class="review-document">
             <div class="result-path">{{document.path}} · {{document.items.length}}</div>
-            @for(item of document.items;track item.line){<button
+            @for(item of document.items;track item.line){<div class="review-entry-row"><button
               type="button"
               class="review-entry"
               (click)="openReview(item)"
@@ -284,7 +296,7 @@
               @if(item.quote){<span class="review-quote">&ldquo;{{item.quote}}&rdquo;</span>}
               <span class="review-comment-text">{{item.comment}}@if(item.truncated){ &hellip;}</span>
               <span class="result-line">Line {{item.line+1}} &#8599;</span>
-            </button>}
+            </button><button type="button" class="secondary-button row-action" aria-label="Open review comment in editor" (click)="openInEditor(item,item.line)">Open in editor</button></div>}
           </div>
           }
         </section>
@@ -382,7 +394,56 @@
           ><span>&#8599;</span></button
         >}
       </section>
-      } }@else{
+      } }@else if(view()==='archive'){
+      <section class="panel archive-panel" aria-labelledby="archive-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="archive-title">Archived changes</h2>
+            <p>Newest archive date first. Documents open read-only.</p>
+          </div>
+          <span class="muted small" data-testid="archive-count">{{archiveList().length}} {{archiveList().length===1?'change':'changes'}}</span>
+        </div>
+        <input
+          class="archive-filter"
+          type="search"
+          aria-label="Filter archived changes"
+          placeholder="Filter by change name..."
+          [ngModel]="archiveFilter()"
+          (ngModelChange)="archiveFilter.set($event)"
+        />
+        @for(entry of archiveList();track entry.change.sourceId+entry.change.variant){
+        @let archived=entry.change;
+        @let comments=commentCount(archived);
+        <article class="archive-entry" data-testid="archive-entry">
+          <div class="archive-heading">
+            <button class="change-title" data-testid="archive-name" (click)="openChange(archived)">{{archived.name}}</button>
+            <span class="badge archived" data-testid="archive-date">{{archived.archivedOn?'Archived '+archived.archivedOn:'Archive date unknown'}}</span>
+            @if(comments){<span class="chip comments-chip" data-testid="archive-comments">{{comments}} {{comments===1?'comment':'comments'}}</span>}
+          </div>
+          <div class="card-repository">
+            {{archived.repositories.map(repositoryLabel.bind(this)).join(' · ')}}
+            <span class="card-source">{{sourceShort(archived.sourceId)}}</span>
+          </div>
+          <div class="card-documents">
+            @for(doc of archived.documents.slice(0,6);track doc.path){<button
+              (click)="openChange(archived,doc.path)"
+            >
+              {{doc.label==='design'?'Design':doc.label==='proposal'?'Proposal':doc.label==='tasks'?'Tasks':'Spec'}}
+              &#8599;</button
+            >}
+          </div>
+          <div class="archive-activity" data-testid="archive-activity">
+            @if(entry.activity;as recorded){<span class="status-dot" [class.done]="recorded.lastStatus==='done'"></span>
+            {{statusLabel(recorded.lastStatus)}} · {{formatDate(recorded.lastAt)}}}@else{No activity recorded}
+          </div>
+        </article>
+        }@empty{
+        <div class="compact-empty">
+          {{archiveFilter().trim()?'No archived change names contain "'+archiveFilter().trim()+'".':'No archived changes were found in the selected repositories.'}}
+        </div>
+        }
+      </section>
+      }@else{
       <section class="history-controls panel">
         <div class="range-fields">
           <div class="segmented" role="group" aria-label="History range">
@@ -716,7 +777,12 @@
       >
         Mark change read</button
       >}
-      <button class="secondary-button" (click)="copyLink()">
+      <select class="editor-select" aria-label="Editor for Open in editor" [ngModel]="editor()" (ngModelChange)="setEditor($event)">
+        @for(p of editorPresets;track p.value){<option [value]="p.value">{{p.label}}</option>}
+      </select>
+      <button class="secondary-button" data-testid="open-in-editor" [disabled]="documentLoading()" (click)="openCurrentInEditor()">
+        Open in editor &#8599;</button
+      ><button class="secondary-button" (click)="copyLink()">
         Copy link &#8599;</button
       ><button
         class="icon-button"
@@ -756,7 +822,7 @@
       {{readerComments().length}} open {{readerComments().length===1?'comment':'comments'}} in this change@if(selectedChange()){ ·
       {{documentCommentCount(selectedChange()!,doc.path)}} in this document}
     </summary>
-    @for(item of readerComments();track item.path+item.line){<button
+    @for(item of readerComments();track item.path+item.line){<div class="review-entry-row"><button
       type="button"
       class="review-entry"
       (click)="openReview(item)"
@@ -764,7 +830,7 @@
       <span class="result-path">{{item.path}}</span>
       @if(item.quote){<span class="review-quote">&ldquo;{{item.quote}}&rdquo;</span>}
       <span class="review-comment-text">{{item.comment}}@if(item.truncated){ &hellip;}</span>
-    </button>}
+    </button><button type="button" class="secondary-button row-action" aria-label="Open review comment in editor" (click)="openInEditor(item,item.line)">Open in editor</button></div>}
   </details>
   } @if(readMarks();as marks){
   <div class="read-banner" role="status">
@@ -819,6 +885,13 @@
           (click)="copyLink(heading.id)"
         >
           &#8599;
+        </button
+        ><button
+          class="copy-section"
+          [attr.aria-label]="'Open '+heading.text+' in editor'"
+          (click)="openCurrentInEditor(heading.line)"
+        >
+          &#9998;
         </button>
       </div>
       }@if(doc.tasks.length){

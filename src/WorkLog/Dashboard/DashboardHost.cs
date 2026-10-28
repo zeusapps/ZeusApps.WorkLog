@@ -21,6 +21,7 @@ internal sealed record DashboardLock(int Pid, int Port, string Instance);
 internal sealed record ObservationRequest(TimelineQuery Query, string Id, int Offset = 0, string? Day = null);
 internal sealed record LinkRequest(DocumentRequest Document, string Target);
 internal sealed record BootstrapRequest(string Token);
+internal sealed record ActivityRequest(string[]? Repositories = null);
 
 internal static class DashboardHost
 {
@@ -82,7 +83,7 @@ internal static class DashboardHost
 
     internal static string Address(WebApplication app) => app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
 
-    internal static WebApplication Create(LocalSettings settings, string? repository, int port, string instance, DashboardAuthorization authorization, LocalCommand? commands = null)
+    internal static WebApplication Create(LocalSettings settings, string? repository, int port, string instance, DashboardAuthorization authorization, LocalCommand? commands = null, IEditorLauncher? launcher = null)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ApplicationName = typeof(DashboardHost).Assembly.FullName });
         builder.Logging.ClearProviders();
@@ -97,6 +98,7 @@ internal static class DashboardHost
         var catalog = new SourceCatalog(settings, journal, commands ?? new LocalCommand(), repository ?? Environment.CurrentDirectory);
         var documents = new DocumentService(catalog);
         var state = new DashboardState(settings.DataDirectory);
+        var opener = new EditorOpener(documents, launcher ?? RecordingEditorLauncher.FromEnvironment());
         var reads = new ReadBaselineService(catalog, documents, new ReadBaselineStore(settings.DataDirectory));
         app.Use(async (context, next) =>
         {
@@ -151,6 +153,8 @@ internal static class DashboardHost
             await reads.GetAsync(request, ct) is { } baseline ? Results.Json(baseline) : Results.Text("null", "application/json"));
         app.MapPost("/api/reads/mark", (ReadMarkRequest request, CancellationToken ct) => reads.MarkAsync(request, ct));
         app.MapGet("/api/reads/summary", (CancellationToken ct) => reads.SummaryAsync(ct));
+        app.MapPost("/api/activity/changes", (ActivityRequest request, CancellationToken ct) => journal.Activity(request.Repositories ?? [], ct));
+        app.MapPost("/api/open", async (OpenRequest request, CancellationToken ct) => { await opener.OpenAsync(request, ct); return Results.NoContent(); });
         app.MapPost("/api/search", (SearchRequest request, CancellationToken ct) => documents.SearchAsync(request, ct));
         app.MapPost("/api/link", (LinkRequest request, CancellationToken ct) => documents.LinkAsync(request.Document, request.Target, ct));
         app.MapFallback("/{**path}", (HttpContext context) => Asset(context.Request.Path.Value ?? "/"));

@@ -10,6 +10,7 @@ bootstrapApplication(App, {
       { path: "", component: RouteAnchor },
       { path: "ongoing", component: RouteAnchor },
       { path: "history", component: RouteAnchor },
+      { path: "archive", component: RouteAnchor },
       { path: "**", redirectTo: "ongoing" },
     ]),
   ],

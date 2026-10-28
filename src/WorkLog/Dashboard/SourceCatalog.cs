@@ -13,7 +13,7 @@ internal sealed record DocumentSource(string Id, string[] Repositories, string L
 /// <summary>A change document. <paramref name="Fingerprint"/> is its length and last write time (<c>length:lastWriteTicks</c>), taken from the catalog's per-file stamp.</summary>
 internal sealed record ChangeDocument(string Path, string Label, string Fingerprint);
 internal sealed record ChangeInfo(string SourceId, string Name, string DirectoryName, string Variant, bool Archived,
-    string[] Repositories, ChangeDocument[] Documents, int? CompletedTasks, int? TotalTasks, string? Error, [property: JsonIgnore] string Directory,
+    string[] Repositories, ChangeDocument[] Documents, int? CompletedTasks, int? TotalTasks, string? Error, string? ArchivedOn, [property: JsonIgnore] string Directory,
     [property: JsonIgnore] string ContentStamp = "", [property: JsonIgnore] string TaskStamp = "");
 internal sealed record SourceNotice(string SourceId, string Text);
 internal sealed record CatalogSnapshot(DashboardRepository[] Repositories, DocumentSource[] Sources, ChangeInfo[] Changes,
@@ -266,8 +266,12 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
             var stamps = files.OrderBy(f => f.Relative, StringComparer.Ordinal).ToArray();
             var content = ContentHash.Compute(string.Join('\n', stamps.Select(f => f.Relative + "=" + f.Stamp)));
             var tasks = string.Join('\n', stamps.Where(f => f.Relative.Contains("task", StringComparison.OrdinalIgnoreCase)).Select(f => f.Relative + "=" + f.Stamp));
+            // The archive date is the yyyy-MM-dd directory prefix when it is a real calendar date; otherwise there is none.
+            var prefix = archived ? ArchivePrefix().Match(name) : null;
+            var archivedOn = prefix is { Success: true } && DateOnly.TryParseExact(prefix.Value[..10], "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _) ? prefix.Value[..10] : null;
             changes.Add(new(source.Id, logical, name, ContentHash.Compute(Path.GetRelativePath(source.Root, safe)), archived, source.Repositories,
-                documents, null, null, null, safe, content, tasks));
+                documents, null, null, null, archivedOn, safe, content, tasks));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
         {

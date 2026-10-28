@@ -49,6 +49,14 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
         return (file, change.Archived, source.Location);
     }
 
+    /// <summary>The canonical, contained file of a document request, under the same rules as reading it.</summary>
+    public async Task<string> ResolveFileAsync(DocumentRequest request, CancellationToken cancellationToken = default)
+    {
+        var resolved = Resolve(await catalog.GetAsync(cancellationToken), request);
+        if (!File.Exists(resolved.File)) throw new FileNotFoundException("Document is unavailable. Refresh to resolve an archive move.");
+        return resolved.File;
+    }
+
     private Cached Read(string path, bool fresh = false, bool cacheResult = true)
     {
         for (var attempt = 0; attempt < 3; attempt++)
