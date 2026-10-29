@@ -71,6 +71,17 @@ The client matches by set equality: for each line, the sorted IDs of `primary` p
 ### 5. Instructions and mixed versions
 `AgentInstructions.Render` gains the digest paragraph from the spec, once, for both clients. Older servers simply never send `digestRequest`. A newer instruction block connected to an older server is harmless: no request arrives; the paragraph also says to skip when `save_digest` is unavailable. No adapter changes in `Integration/Clients`.
 
+### 6. Planned live-agent evaluation
+Isolated MCP checks prove the server contract and the instruction text, but not whether real Claude Code and Codex models follow the digest instructions. That is prompt quality, and only live sessions show it. The project currently forbids reviewers from running `--live-agents`. This change relaxes that rule to allow live agents as planned work:
+- `.agents/roles/project-facts.md` (Safety): live agents use the user's authenticated accounts and send prompts to their services. Run them only when the assignment includes a planned live-agent evaluation (for example, judging how real clients follow managed instructions or tool-result prompts). The assignment names the clients, the number of sessions, and the per-session budget. Run them only in disposable repositories and data directories with the smoke tool's isolation flags. Never use the user's real repositories, data directory, installation, or client settings, and never put secrets or personal data in prompts. Record client versions, models, and redacted prompts and outputs as evidence. Without such an assignment, live agents are not run. The default isolated smoke run is always allowed.
+- `.agents/workflows/openspec-delegation.md`: a live-agent evaluation is planned work. It must appear in the change's `tasks.md`, and the assignment repeats its clients, session count, and budget. Parity applies: evaluate Claude Code and Codex alike unless a restriction is evidenced.
+
+`LiveAgentChecks` already isolates both clients (a disposable home and repository; Codex `--ignore-user-config --ephemeral -s read-only`; Claude `--no-session-persistence --strict-mcp-config`, WorkLog tools only, `--max-budget-usd 1`). The digest scenario adds `mcp__worklog__save_digest` to Claude's allowed tools and keeps every other flag.
+
+Outcomes are recorded as observations, not pass/fail gates, because model behavior varies between runs. A consistent miss feeds a follow-up to tune the instruction text.
+
+**Alternative: leave live checks to the user after release.** Rejected by the user. Prompt quality should be evaluated before release, as part of the change.
+
 ## Risks / Trade-offs
 
 - [Agents ignore or skip requests] → Daily falls back to summaries; nothing depends on digests.
@@ -78,6 +89,7 @@ The client matches by set equality: for each line, the sorted IDs of `primary` p
 - [Machine timezone differs from the History timezone] → Digests near midnight may not match and are not shown; documented.
 - [Two databases can disagree momentarily] → Exact coverage match at display time; stale digests are invisible.
 - [Prompt-injection surface: summaries flow back to the agent as data] → They are the agent's own local records; the request labels them as data and the instructions forbid acting on them.
+- [Live evaluation spends the user's quota and sends prompts to Anthropic and OpenAI] → Planned and bounded: two sessions, USD 1 each, synthetic prompts only, isolated configuration.
 - [Structured result size] → 30 entries × short summaries stays far below the existing structured-content bound; `query_work` paging is unaffected.
 
 ## Migration Plan

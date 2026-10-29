@@ -22,6 +22,7 @@ The agent that has just logged the work has the best context for that rollup, so
 - **Shared managed instructions for Claude Code and Codex.** After a successful `log_work` that carries a `digestRequest`, the agent writes the digest and calls `save_digest` once, after the user's request is handled, and never blocks it. The digest states outcomes, not process, and holds no secrets or personal data. An ignored or failed request is allowed; the agent reports a failed save as it reports logging failures.
 - **The Daily view prefers a matching digest.** For each Yesterday line and each Today line with observations recorded today, Daily shows and copies the stored digest when the digest covers exactly the observations Daily selected for that item and day. Otherwise it shows the latest summary as before. Matching on the covered set, not on dates, means the server and the dashboard never have to agree on day boundaries or timezones. A digest is not used if its observations differ from Daily's selection, for example after a later or backdated entry, a different History timezone, or a skipped request.
 - Because the request rolls with every log, the last log before the user's late-day stand-up (US clients) leaves Today's digests current. No end-of-day trigger is needed.
+- **Planned live-agent evaluation.** The project rule that forbids reviewers from running live agents is relaxed to allow them as planned, bounded work. This change uses it to evaluate how real Claude Code and Codex sessions follow the digest instructions.
 - Not in scope: server-side model calls, provider API keys, MCP sampling, digest editing in the dashboard, and digests for the Blockers section.
 
 ## Capabilities
@@ -41,6 +42,7 @@ The agent that has just logged the work has the best context for that rollup, so
   - New digest store in the data directory, separate from the journal database. Journal schema 2 and shared-data contract 1 are unchanged, so no maintenance update is needed and older releases are unaffected.
   - `POST /api/daily` returns the matching digest for each item.
 - Integration: `AgentInstructions.cs` gets shared instruction text, with no per-client adapter changes expected. `worklog init` refreshes managed instructions as it already does after an upgrade.
+- Workflow: `.agents/roles/project-facts.md` and `.agents/workflows/openspec-delegation.md` (live agents as planned work); `tools/WorkLog.Smoke/LiveAgentChecks.cs` gains a digest scenario.
 - Client: Daily line rendering and copy formatting use the digest when present.
 - Cost: one short extra agent turn per log for items with two or more observations that day, using the session the user is already running.
 - Prerequisites: `add-daily-prep` (archived). Complements `improve-observation-summaries`.

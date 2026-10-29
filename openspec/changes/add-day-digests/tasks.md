@@ -2,6 +2,10 @@
 
 Apply through the orchestrator workflow (`add-agent-workflow`). Integration and MCP changes: every check that touches `log_work`, `save_digest`, or the managed instructions states the Claude Code and Codex cases (AGENTS.md parity).
 
+## 0. Workflow policy
+
+- [ ] 0.1 Relax the live-agent rule (design Decision 6): replace the `--live-agents` prohibition in `.agents/roles/project-facts.md` (Safety) with the planned-evaluation rule, and add the planned-work note to `.agents/workflows/openspec-delegation.md` (Assignment and reservation); verify by review that the wording matches Decision 6, that the default isolated smoke run stays allowed, and that no other safety rule (real repositories, data directory, installation, client settings, non-dry-run `init`) is weakened
+
 ## 1. Digest store
 
 - [ ] 1.1 Add `DigestStore` over `digests.db` with its own schema version 1, WAL and busy timeout, a named mutex around creation and upgrade, upsert by item and day, and reads by item set (design Decision 1); verify with .NET tests for create on first use, replace on second save, two concurrent writers, a missing store read as empty, a newer store version reported as unavailable, and that `journal.db`'s `user_version` stays 2
@@ -24,5 +28,6 @@ Apply through the orchestrator workflow (`add-agent-workflow`). Integration and 
 
 ## 5. Acceptance and docs
 
-- [ ] 5.1 Add an isolated stdio MCP check to `tools/WorkLog.Smoke` (default mode, disposable data directory): two `log_work` calls produce a `digestRequest`, `save_digest` succeeds, a third log makes a repeated save stale, and an older-schema-compatible `journal.db` still reports `user_version` 2. Record results in `docs/mcp-validation.md`; record live Claude Code and Codex sessions as not performed (to be checked by the user after release)
-- [ ] 5.2 Document digests (what triggers a request, the separate store, matching rules, and the timezone caveat) in `README.md` and `docs/architecture.md`; run the full validation set and record results in `docs/dashboard-validation.md` and `docs/mcp-validation.md`
+- [ ] 5.1 Add an isolated stdio MCP check to `tools/WorkLog.Smoke` (default mode, disposable data directory): two `log_work` calls produce a `digestRequest`, `save_digest` succeeds, a third log makes a repeated save stale, and an older-schema-compatible `journal.db` still reports `user_version` 2. Record results in `docs/mcp-validation.md`
+- [ ] 5.2 Planned live-agent evaluation (Decision 6; requires 0.1): add a digest scenario to `LiveAgentChecks` in which the agent handles a small user-facing request, logs two observations for one ticket, and is expected to finish the request, write a digest, and call `save_digest` with exactly the requested IDs. Run it once for Claude Code and once for Codex against the packaged build, within the smoke tool's isolation flags, one session each with a budget of USD 1 per session. Record in `docs/mcp-validation.md` the client versions and models, the redacted prompt and digest text, and for each client whether the request was finished first, the IDs matched, the digest stated outcomes without process, and the save succeeded. A miss is evidence for instruction tuning, not by itself a failed acceptance
+- [ ] 5.3 Document digests (what triggers a request, the separate store, matching rules, and the timezone caveat) in `README.md` and `docs/architecture.md`; run the full validation set and record results in `docs/dashboard-validation.md` and `docs/mcp-validation.md`
