@@ -83,4 +83,4 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../.ag
 - Deferred follow-ups: ANALYSIS-002..007; export `ticketKey` from `board.ts` (analysis-003).
 - Hygiene: qa-003 passed over 34 files; the orchestrator viewed the four screenshots (fixture data only) and searched the files written after qa-003 (`analysis-003.md`, `findings.md`) with no hits.
 - Review markers: none in the change root.
-- Commit: pending.
+- Commit: `308eba0` on `change/add-daily-prep` (implementation and change artifacts); the `add-day-digests` proposal is the separate commit `981b62a`.
