@@ -14,6 +14,8 @@ internal sealed record ActivityDay(string Date, int Items);
 internal sealed record TimelineInsights(TimelineRow[] LongestSpans, InsightItem[] Completions, InsightItem[] SubsequentWork, ActivityDay[] Days);
 internal sealed record TimelinePage(long Snapshot, TimelineRow[] Rows, int Total, int? NextOffset, TimelineInsights Insights);
 internal sealed record ObservationPage(Entry[] Entries, int Total, int? NextOffset);
+internal sealed record UnlinkedQuery(string From, string To, string[]? Repositories = null, long? Snapshot = null);
+internal sealed record UnlinkedPage(long Snapshot, Entry[] Entries, bool Truncated);
 
 internal sealed class TimelineService(DashboardJournal journal)
 {
@@ -85,6 +87,23 @@ internal sealed class TimelineService(DashboardJournal journal)
             new(ordered.OrderByDescending(r => r.ElapsedSeconds).Take(5).ToArray(),
                 completions.OrderByDescending(x => x.At).Take(10).ToArray(), resumed.OrderByDescending(x => x.At).Take(10).ToArray(),
                 days.OrderBy(x => x.Key, StringComparer.Ordinal).Select(x => new ActivityDay(x.Key, x.Value.Count)).ToArray()));
+    }
+
+    internal const int UnlinkedLimit = 200;
+
+    /// <summary>
+    /// Observations with neither a qualified ticket nor an OpenSpec change inside [From, To), newest first, capped at <see cref="UnlinkedLimit"/>.
+    /// An observation that only carries an extracted (unqualified) ticket ID is still unlinked, matching how WorkIdentity buckets it.
+    /// </summary>
+    public UnlinkedPage Unlinked(UnlinkedQuery query, CancellationToken cancellationToken = default)
+    {
+        var from = TimestampParser.Parse(query.From, "from");
+        var to = TimestampParser.Parse(query.To, "to");
+        if (to <= from) throw new ArgumentException("to must be later than from.");
+        var data = journal.Read(to, query.Repositories ?? [], query.Snapshot, cancellationToken);
+        var matches = data.Entries.Where(e => e.Change is null && e.Tickets.Length == 0 && e.OccurredAt >= from && e.OccurredAt < to)
+            .OrderByDescending(e => e.OccurredAt).ThenByDescending(e => e.Id, StringComparer.Ordinal).Take(UnlinkedLimit + 1).ToArray();
+        return new(data.Snapshot, matches.Take(UnlinkedLimit).ToArray(), matches.Length > UnlinkedLimit);
     }
 
     public ObservationPage Observations(TimelineQuery query, string id, int offset, CancellationToken cancellationToken = default, string? day = null)

@@ -366,6 +366,7 @@ describe("updated since read", () => {
     server.reviews = { items: [item(change, "design.md", 4, "One"), item(change, "tasks.md", 2, "Two"), item(archived, "design.md", 3, "Old")], unavailable: [] };
     server.summary = { [baselineKey("s", "demo", "design.md")]: "100:4999" };
     app.ready.set(true);
+    app["activityScope"].set("[]");
     await app.refreshOverview();
     fixture.detectChanges();
     const cards = Array.from(fixture.nativeElement.querySelectorAll(".change-card")) as HTMLElement[];

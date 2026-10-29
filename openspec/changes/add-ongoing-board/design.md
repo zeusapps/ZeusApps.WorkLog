@@ -125,7 +125,7 @@ When the user moves a card:
 
 This ranks the whole column, so previously unranked cards keep their visible position. Other columns' relative order doesn't change. The save goes through the existing `remember()` path.
 
-When saving, keys that aren't on the current board are dropped before the 500-entry cap is applied. Rendering never prunes or saves, so the idle-refresh requirement holds.
+When saving, keys that aren't on the current board (other than active changes outside the selection) are dropped before the 200-entry cap is applied (ledger QA-001, ANALYSIS-002). Rendering never prunes or saves, so the idle-refresh requirement holds.
 
 This is a dashboard-wide order. `add-daily-prep` can sort Today by `order` with the same comparator, which `board.ts` exports as `byPriority`.
 

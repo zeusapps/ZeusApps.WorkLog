@@ -10,7 +10,7 @@ See proposal.md for motivation. Relevant current code:
 - The client computes local day boundaries with `boundary(date, zone)` (`dashboard/src/api.ts`).
 - After `fix-dashboard-reliability`, the catalog exposes `journalSnapshot`, and polling refreshes on its change. After `add-ticket-and-repository-links`, `links.ts` provides `ticketUrl`.
 - After `add-ongoing-board`:
-  - `dashboard/src/board.ts` exports `buildBoard` (columns, card kinds, stages, quiet indication, 7-day expiry) and `byPriority`.
+  - `dashboard/src/board.ts` exports `buildBoard` (columns, card kinds, stages, 7-day expiry), `isQuiet`, and `byPriority`.
   - `Preferences.board.order` holds the dashboard-wide priority order.
   - `App.loadOngoing` loads the 7-day ticket rows and the unlinked entries, and `App.loadActivity` loads change activity. Both run on every view except History.
 - `WorkIdentity.For` puts every entry with neither a ticket nor a change into one `<repository>/tickets/` identity with an empty title.
@@ -48,7 +48,7 @@ Yesterday statuses stay recorded facts as of the end of that day. Task checkbox 
 
 ### 3. Today from the board
 Add `dashboard/src/daily.ts` with a pure `dailyToday(board, todayStart)` that returns `{ items: BoardCard[], proposed: number }`:
-- every card in the In progress column that does not show the quiet indication,
+- every card in the In progress column for which `isQuiet` is false,
 - plus every card in any column whose `lastAt >= todayStart`,
 - each card once by its board key, sorted with `byPriority` over the saved `board.order`,
 - `proposed` is the number of cards in the Proposed column.
@@ -83,6 +83,7 @@ The `/daily` route is added to the main navigation. The selected `day` is in the
 - Today changes when the user reorders the board. → Intended: one priority order for the whole dashboard.
 - A day of unlinked work produces many Yesterday lines. → Each is a distinct recorded fact; the line format stays compact. Revisit grouping by summary together with the board if it proves noisy.
 - Poor or missing summaries make lines vague. → Shown honestly as "No summary recorded"; `improve-observation-summaries` addresses this at the source.
+- Unlinked observations come only from older journal entries, because current logging requires a change or ticket (`add-ongoing-board` ledger QA-003). → The one-line-per-observation rule is legacy support.
 
 ## Migration Plan
 

@@ -240,13 +240,13 @@
         </div>
         <div class="stat-card">
           <span>Recent work items</span><strong>{{ongoing().length}}</strong
-          ><small>Recorded in the last 14 days</small
+          ><small>Recorded in the last {{boardWindowDays}} days</small
           ><span class="stat-glyph">&#9684;</span>
         </div>
         <div class="stat-card">
-          <span>Other ongoing work</span
-          ><strong>{{ongoingTickets().length}}</strong
-          ><small>No completion recorded</small
+          <span>In progress</span
+          ><strong>{{fullBoard().in_progress.length}}</strong
+          ><small>Board cards with recorded work</small
           ><span class="stat-glyph">&#8644;</span>
         </div>
         <div class="stat-card">
@@ -314,90 +314,159 @@
         </details>
         }
       </section>
-      <div class="section-heading spaced">
-        <div>
-          <h2>Pick up where you left off</h2>
-          <p>Active changes and the plans guiding them.</p>
+      <section class="board-section" aria-labelledby="board-title">
+        <div class="section-heading spaced">
+          <div>
+            <h2 id="board-title">Ongoing board</h2>
+            <p>Columns follow recorded work and ticked tasks. Order cards within a column to set your priorities.</p>
+          </div>
+          <div class="board-filter">
+            <input
+              type="search"
+              class="board-filter-input"
+              aria-label="Filter board cards"
+              placeholder="Filter by change, ticket, or title..."
+              [ngModel]="boardFilter()"
+              (ngModelChange)="boardFilter.set($event)"
+            />
+            @if(boardFilter().trim()){<span class="chip board-filter-active" role="status">Filtering by &ldquo;{{boardFilter().trim()}}&rdquo; &middot; {{boardShown()}} of {{boardTotal()}} cards<button type="button" class="ticket-copy" aria-label="Clear board filter" (click)="boardFilter.set('')">Clear</button></span>}
+          </div>
         </div>
-        <span class="muted small">{{activeChanges().length}} changes</span>
-      </div>
-      <section class="change-grid">
-        @for(change of activeChanges();track change.sourceId+change.variant){
-        @let row=changeRow(change);
-        <article class="change-card">
-          <div class="card-top">
-            <span class="change-icon">&#9707;</span
-            ><span class="badge active-badge">Active change</span>
-          </div>
-          <button class="change-title" (click)="openChange(change)">
-            {{humanize(change.name)}}
-          </button>
-          <div class="card-repository">
-            {{change.repositories.map(repositoryLabel.bind(this)).join(' · ')}}
-            <span class="card-source">{{sourceShort(change.sourceId)}}</span>
-          </div>
-          @let comments=commentCount(change);
-          @let updated=updatedDocs(change);
-          @let quiet=changeActivity(change);
-          @if(comments||updated.length||quiet?.kind==='quiet'||quiet?.kind==='none'){
-          <div class="card-chips">
-            @if(quiet?.kind==='quiet'){<span class="chip quiet-chip">No activity recorded in the last {{quietDays}} days &middot; latest {{formatDate(latestActivity(change)!.lastAt)}}</span>}
-            @if(quiet?.kind==='none'){<span class="chip quiet-chip">No recorded activity</span>}
-            @if(comments){<span class="chip comments-chip">{{comments}} {{comments===1?'comment':'comments'}}</span>}
-            @if(updated.length){<span class="chip updated-chip" [attr.title]="'Differs from your last read: '+updated.join(', ')">Updated since read</span>}
-          </div>
-          }
-          <div class="card-documents">
-            @for(doc of change.documents.slice(0,4);track doc.path){<button
-              (click)="openChange(change,doc.path)"
-            >
-              {{doc.label==='design'?'Design':doc.label==='proposal'?'Proposal':doc.label==='tasks'?'Tasks':'Spec'}}
-              &#8599;</button
-            >}
-          </div>
-          <div class="card-footer">
-            <span
-              >@if(change.totalTasks!==null){OpenSpec
-              <strong>{{change.completedTasks}} / {{change.totalTasks}}</strong>
-              tasks}@else{Task progress unavailable}</span
-            ><span class="status-dot" [class.done]="row?.status==='done'"></span
-            ><span>{{row?statusLabel(row.status):latestActivity(change)?statusLabel(latestActivity(change)!.lastStatus):'No observations'}}</span>
-          </div>
-        </article>
-        }@empty{
+        <div class="visually-hidden" role="status" aria-live="polite" data-testid="board-announcement">{{boardAnnouncement()}}</div>
+        @if(unlinkedTruncated()){
+        <p class="board-note" data-testid="board-truncated">More unlinked work from the last {{boardWindowDays}} days is not shown here. Find the rest in History.</p>
+        }
+        @if(boardTotal()===0){
         <div class="empty-state panel wide">
           <div class="empty-symbol">&#9707;</div>
           <h2>A little space for your next idea</h2>
           <p>
-            No active OpenSpec changes were found in these repositories.<br />Recorded
+            No active OpenSpec changes or recent work were found in these repositories.<br />Recorded
             work is available in History.
           </p>
           <button class="primary-button" (click)="changeView('history')">
             Explore work history &#8594;
           </button>
         </div>
+        }@else{
+        <div class="board">
+          @for(column of boardStages;track column.stage){
+          <section class="board-column" [attr.aria-labelledby]="'board-column-'+column.stage" [attr.data-stage]="column.stage">
+            <header class="board-column-heading">
+              <h3 [id]="'board-column-'+column.stage">{{column.label}}</h3>
+              <span class="badge" [attr.data-testid]="'board-count-'+column.stage">{{board()[column.stage].length}}</span>
+            </header>
+            @for(card of board()[column.stage];track card.key+(card.change?.variant??'')){
+            <article
+              class="board-card"
+              [class.change-card]="card.kind==='change'"
+              [class.compact-card]="card.kind!=='change'"
+              [class.dragging]="dragged()?.key===card.key"
+              [class.drop-before]="dropMark()?.key===card.key&&!dropMark()!.after&&dragged()?.key!==card.key"
+              [class.drop-after]="dropMark()?.key===card.key&&dropMark()!.after&&dragged()?.key!==card.key"
+              [attr.data-card-key]="card.key"
+              [attr.data-kind]="card.kind"
+              tabindex="-1"
+              (dragover)="dragOver(card,$event)"
+              (drop)="dropOn(card,$event)"
+            >
+              <div class="card-top">
+                @if(card.kind==='change'){<span class="change-icon">&#9707;</span
+                ><span class="badge active-badge">Active change</span>}@else if(card.kind==='ticket'){<span class="badge">{{card.followUpTo?'Follow-up to '+humanize(card.followUpTo):'Ticket · no OpenSpec change'}}</span>}@else{<span class="badge">Ad hoc · no ticket or change</span>}
+                <span class="card-tools">
+                  <span class="drag-handle" draggable="true" aria-hidden="true" title="Drag to reorder within this column" (dragstart)="dragStart(card,$event)" (dragend)="dragEnd()">&#8942;&#8942;</span>
+                  <details class="card-move">
+                    <summary [attr.aria-label]="'Reorder '+humanize(card.title)">Move</summary>
+                    <div class="card-move-menu" role="group" [attr.aria-label]="'Move '+humanize(card.title)">
+                      <button type="button" data-move="up" (click)="moveCard(card,'up')">Move up</button>
+                      <button type="button" data-move="down" (click)="moveCard(card,'down')">Move down</button>
+                      <button type="button" data-move="top" (click)="moveCard(card,'top')">Move to top</button>
+                    </div>
+                  </details>
+                </span>
+              </div>
+              @if(card.kind==='change'){
+              @let change=card.change!;
+              <button class="change-title" (click)="openCard(card)">
+                {{humanize(change.name)}}
+              </button>
+              <div class="card-repository">
+                {{change.repositories.map(repositoryLabel.bind(this)).join(' · ')}}
+                <span class="card-source">{{sourceShort(change.sourceId)}}</span>
+              </div>
+              @let comments=cardComments(card);
+              @let updated=cardUpdated(card);
+              @let isQuietCard=quiet(card);
+              @if(comments||updated.length||isQuietCard||card.lastAt===null||card.tickets.length){
+              <div class="card-chips">
+                @if(isQuietCard){<span class="chip quiet-chip">No activity recorded in the last {{quietDays}} days &middot; latest {{formatDate(card.lastAt!)}}</span>}
+                @if(card.lastAt===null){<span class="chip quiet-chip">No recorded activity</span>}
+                @if(comments){<span class="chip comments-chip">{{comments}} {{comments===1?'comment':'comments'}}</span>}
+                @if(updated.length){<span class="chip updated-chip" [attr.title]="'Differs from your last read: '+updated.join(', ')">Updated since read</span>}
+                <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:card.tickets}"></ng-container>
+              </div>
+              }
+              <div class="card-documents">
+                @for(doc of card.documents.slice(0,4);track doc.path){<button
+                  (click)="openCard(card,doc.path)"
+                >
+                  {{doc.label==='design'?'Design':doc.label==='proposal'?'Proposal':doc.label==='tasks'?'Tasks':'Spec'}}
+                  &#8599;</button
+                >}
+              </div>
+              <div class="card-footer">
+                <span
+                  >@if(change.totalTasks!==null){OpenSpec
+                  <strong>{{change.completedTasks}} / {{change.totalTasks}}</strong>
+                  tasks}@else{Task progress unavailable}</span
+                ><span class="status-dot" [class.done]="card.status==='done'"></span
+                ><span>{{card.status?statusLabel(card.status):'No observations'}}</span>
+                <span class="card-date" data-testid="card-date">{{card.lastAt?'Latest '+formatDate(card.lastAt):'No activity recorded'}}</span>
+              </div>
+              }@else if(card.kind==='ticket'){
+              <button class="change-title" (click)="openItem(card.row!,undefined,true)">{{humanize(card.title)}}</button>
+              <div class="card-repository">{{repositoryLabel(card.repositories[0])}}</div>
+              <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:card.tickets}"></ng-container>
+              <div class="card-footer">
+                <span class="status-dot" [class.done]="card.status==='done'"></span
+                ><span>{{statusLabel(card.status!)}}</span>
+                <span class="card-date" data-testid="card-date">Latest {{formatDate(card.lastAt!)}}</span>
+              </div>
+              }@else{
+              @let entry=card.entry!;
+              <button
+                type="button"
+                class="change-title adhoc-title"
+                [class.expanded]="isExpanded(card)"
+                [attr.aria-expanded]="isExpanded(card)"
+                (click)="toggleCard(card)"
+              >{{card.title}}</button>
+              <div class="card-repository">{{repositoryLabel(card.repositories[0])}}</div>
+              <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:card.tickets,extracted:card.extractedTicketId}"></ng-container>
+              @if(isExpanded(card)){
+              <dl class="adhoc-details">
+                <dt>Summary</dt><dd>{{entry.summary||'No summary recorded'}}</dd>
+                <dt>Recorded</dt><dd>{{formatDate(entry.occurredAt)}} {{formatTime(entry.occurredAt)}}</dd>
+                @if(entry.agent){<dt>Agent</dt><dd>{{entry.agent}}</dd>}
+                @if(entry.branch){<dt>Branch</dt><dd>{{entry.branch}}</dd>}
+              </dl>
+              }
+              <div class="card-footer">
+                <span class="status-dot" [class.done]="card.status==='done'"></span
+                ><span>{{statusLabel(card.status!)}}</span>
+                <span class="card-date" data-testid="card-date">Latest {{formatDate(card.lastAt!)}}</span>
+              </div>
+              }
+            </article>
+            }@empty{
+            <p class="board-column-empty">{{boardFilter().trim()?'No matching cards':column.empty}}</p>
+            }
+          </section>
+          }
+        </div>
         }
       </section>
-      @if(ongoingTickets().length){
-      <section class="panel ongoing-panel">
-        <div class="section-heading">
-          <h2>Other ongoing work</h2>
-          <span class="muted small">Latest recorded status · last 14 days</span>
-        </div>
-        @for(row of ongoingTickets();track row.id){<div class="work-item"><button
-          class="work-list-item"
-          (click)="openItem(row,undefined,true)"
-        >
-          <span class="work-list-icon">&#8644;</span
-          ><span
-            ><strong>{{humanize(row.title)}}</strong
-            ><small>{{repositoryLabel(row.repository)}}</small></span
-          ><span class="badge">{{statusLabel(row.status)}}</span
-          ><span class="muted small">{{formatDate(row.lastAt)}}</span
-          ><span>&#8599;</span></button
-        ><ng-container *ngTemplateOutlet="ticketList;context:{$implicit:row.tickets}"></ng-container></div>}
-      </section>
-      } }@else if(view()==='archive'){
+      }@else if(view()==='archive'){
       <section class="panel archive-panel" aria-labelledby="archive-title">
         <div class="section-heading">
           <div>
@@ -743,7 +812,7 @@
   <p>Several sources contain this change. Select the copy you want to read.</p>
   @for(copy of copies();track copy.variant){<button
     class="work-list-item"
-    (click)="openChange(copy)"
+    (click)="openChange(copy,copyPath)"
   >
     <span>{{sourceLabel(copy.sourceId)}}</span
     ><span class="badge"

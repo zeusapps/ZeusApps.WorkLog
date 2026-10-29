@@ -115,6 +115,12 @@ export interface ObservationPage {
   total: number;
   nextOffset: number | null;
 }
+/** Observations with neither a ticket nor a change in a time window, newest first. `truncated` is set when more exist than were returned. */
+export interface UnlinkedPage {
+  snapshot: number;
+  entries: Entry[];
+  truncated: boolean;
+}
 export interface DocumentRequest {
   sourceId: string;
   change: string;
@@ -206,4 +212,6 @@ export interface Preferences {
   documents?: Record<string, string>;
   positions?: Record<string, number>;
   editor?: EditorPreset;
+  /** The dashboard-wide priority order of board cards, by card key. Absent until the user reorders. */
+  board?: { order?: string[] };
 }

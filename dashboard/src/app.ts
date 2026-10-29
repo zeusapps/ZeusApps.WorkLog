@@ -23,7 +23,24 @@ import {
 import { renderMarkdown, Heading, Review } from "./markdown";
 import { activityFor, archiveEntries, editorLabel, editorPresets, firstVisibleLine, sourceLineAfter, validEditor } from "./archive";
 import { branchUrl, repositoryUrl, ticketTitle, ticketUrl } from "./links";
-import { activityOf, quietDays } from "./quiet";
+import { quietDays } from "./quiet";
+import {
+  Board,
+  BoardCard,
+  MoveAction,
+  Stage,
+  boardWindowDays,
+  buildBoard,
+  changeKey as boardChangeKey,
+  dropWithin,
+  isQuiet,
+  filterBoard,
+  fitOrder,
+  moveWithin,
+  pruneOrder,
+  rankColumn,
+  stages,
+} from "./board";
 import { markdownObservationLimit, workItemMarkdown } from "./workitem-markdown";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
 import {
@@ -72,11 +89,14 @@ import {
   Selection,
   Timeline,
   TimelineQuery,
+  UnlinkedPage,
 } from "./models";
 
 /** Most recently used reading positions and remembered document selections kept in preferences. */
 export const positionLimit = 100;
 export const documentLimit = 200;
+/** 60 KiB, not the server's 64 KiB: the server counts `&`, `+`, `<`, `>`, `'` and non-ASCII characters as 6-byte \uXXXX escapes. */
+export const preferencesByteLimit = 61440;
 const scrollSaveDelay = 1000;
 
 @Component({
@@ -102,10 +122,30 @@ export class App implements OnDestroy, AfterViewInit {
   searchLoading = signal(false);
   timeline = signal<Timeline | null>(null);
   ongoing = signal<Row[]>([]);
+  /** Observations of the last 7 days with neither a ticket nor a change, and whether more exist than were returned. */
+  unlinked = signal<Entry[]>([]);
+  unlinkedTruncated = signal(false);
+  /** The board filter as typed. It is never remembered. */
+  boardFilter = signal("");
+  /** The saved priority order of board cards, by card key. */
+  boardOrder = signal<string[]>([]);
+  /** A spoken description of the last card move, for the board's live region. */
+  boardAnnouncement = signal("");
+  /** The card being dragged and the card edge it would land next to. */
+  dragged = signal<{ key: string; stage: Stage } | null>(null);
+  dropMark = signal<{ key: string; after: boolean } | null>(null);
+  readonly boardStages: { stage: Stage; label: string; empty: string }[] = [
+    { stage: "proposed", label: "Proposed", empty: "Nothing proposed" },
+    { stage: "in_progress", label: "In progress", empty: "Nothing in progress" },
+    { stage: "done", label: "Done", empty: "Nothing done yet" },
+  ];
+  readonly boardWindowDays = boardWindowDays;
   historyQuery: TimelineQuery | null = null;
   ongoingQuery: TimelineQuery | null = null;
   selectedChange = signal<Change | null>(null);
   copies = signal<Change[]>([]);
+  /** The document the user asked for when a change card opened the copy chooser. */
+  copyPath: string | undefined;
   document = signal<DocumentContent | null>(null);
   html = signal<SafeHtml>("");
   headings = signal<Heading[]>([]);
@@ -232,16 +272,22 @@ export class App implements OnDestroy, AfterViewInit {
     () =>
       this.catalog()?.changes.filter((c) => this.inScope(c.repositories)) ?? [],
   );
-  readonly ongoingTickets = computed(() =>
-    this.ongoing().filter(
-      (r) =>
-        r.status !== "done" &&
-        !this.activeChanges().some(
-          (c) =>
-            c.repositories.includes(r.repository) && r.changes.includes(c.name),
-        ),
+  /** Every card in priority order, before the filter. Reordering works on this. */
+  readonly fullBoard = computed<Board>(() =>
+    buildBoard(
+      {
+        changes: this.filteredChanges(),
+        activity: this.activityReady() ? this.activity() : null,
+        rows: this.ongoing(),
+        unlinked: this.unlinked(),
+        order: this.boardOrder(),
+      },
+      this.now(),
     ),
   );
+  readonly board = computed<Board>(() => filterBoard(this.fullBoard(), this.boardFilter()));
+  readonly boardTotal = computed(() => stages.reduce((total, stage) => total + this.fullBoard()[stage].length, 0));
+  readonly boardShown = computed(() => stages.reduce((total, stage) => total + this.board()[stage].length, 0));
   readonly reviewGroups = computed<ReviewGroup[]>(() =>
     groupReviews(this.inbox()?.items ?? [], this.inboxScope()),
   );
@@ -320,6 +366,9 @@ export class App implements OnDestroy, AfterViewInit {
       this.catalog.set(catalog);
       this.versionLabel.set(info.version ?? "");
       this.preferences = state;
+      this.boardOrder.set(
+        Array.isArray(state.board?.order) ? state.board.order.filter((key) => typeof key === "string") : [],
+      );
       this.editor.set(validEditor(state.editor));
       this.applyTheme(state.theme === "light" ? "light" : "dark");
       const known = new Set(catalog.repositories.map((r) => r.id));
@@ -566,22 +615,29 @@ export class App implements OnDestroy, AfterViewInit {
     }
     await this.openChange(change, item.path, "note:" + item.line);
   }
-  changeRow(change: Change) {
-    return this.ongoing().find(
-      (r) =>
-        r.repository &&
-        change.repositories.includes(r.repository) &&
-        r.changes.includes(change.name),
-    );
-  }
-  /**
-   * Whether an active change has no recorded observations, a latest one older than 14 days, or a recent one.
-   * Null while the recorded activity of the current selection is not loaded, so nothing is claimed early.
-   */
-  changeActivity(change: Change) {
+  /** Whether the recorded activity covers the current repository selection. */
+  private activityReady() {
     const scope = this.activityScope();
-    if (scope === null || (scope !== "[]" && scope !== JSON.stringify(this.selectedRepos() ?? []))) return null;
-    return activityOf(activityFor(change, this.activity())?.lastAt, this.now(), this.timezone);
+    return scope !== null && (scope === "[]" || scope === JSON.stringify(this.selectedRepos() ?? []));
+  }
+  /** Whether the card shows the quiet indication (an In-progress change idle for more than 14 days). */
+  quiet(card: BoardCard) {
+    return isQuiet(card, this.now(), this.timezone);
+  }
+  /** Opens a change card's document; a change present in several sources opens the copy chooser instead. */
+  openCard(card: BoardCard, path?: string) {
+    // Only the copies that contain the requested document are offered.
+    const copies = path ? card.copies.filter((copy) => copy.documents.some((d) => d.path === path)) : card.copies;
+    if (copies.length > 1) {
+      this.copyPath = path;
+      this.copies.set(copies);
+    } else void this.openChange(copies[0] ?? card.change!, path);
+  }
+  cardComments(card: BoardCard) {
+    return card.copies.reduce((total, copy) => total + this.commentCount(copy), 0);
+  }
+  cardUpdated(card: BoardCard) {
+    return card.copies.flatMap((copy) => this.updatedDocs(copy));
   }
   latestActivity(change: Change) {
     return activityFor(change, this.activity());
@@ -660,7 +716,7 @@ export class App implements OnDestroy, AfterViewInit {
     try {
       const now = new Date();
       const query: TimelineQuery = {
-        from: new Date(now.getTime() - 14 * 86400000).toISOString(),
+        from: new Date(now.getTime() - boardWindowDays * 86400000).toISOString(),
         to: now.toISOString(),
         timezone: this.timezone,
         groupBy: "ticket",
@@ -677,13 +733,106 @@ export class App implements OnDestroy, AfterViewInit {
         });
         rows.push(...page.rows);
       }
+      // The same snapshot keeps both reads consistent while agents keep logging.
+      const unlinked = await api<UnlinkedPage>("ongoing/unlinked", {
+        repositories: query.repositories,
+        from: query.from,
+        to: query.to,
+        snapshot: query.snapshot,
+      });
       if (epoch === this.ongoingEpoch) {
         this.ongoing.set(rows);
+        this.unlinked.set(unlinked.entries);
+        this.unlinkedTruncated.set(unlinked.truncated);
         this.ongoingQuery = query;
       }
     } catch (error) {
       if (epoch === this.ongoingEpoch) this.report(error);
     }
+  }
+  /** Moves a card within its column by a keyboard-accessible action and saves the order. */
+  moveCard(card: BoardCard, action: MoveAction) {
+    const column = this.fullBoard()[card.stage].map((c) => c.key);
+    const visible = new Set(this.board()[card.stage].map((c) => c.key));
+    const next = moveWithin(column, visible, card.key, action);
+    if (!next) {
+      this.boardAnnouncement.set(
+        humanize(card.title) + " is already " + (action === "down" ? "last" : "first") + " in " + this.stageLabel(card.stage) + ".",
+      );
+    } else this.applyColumn(card, next);
+    this.focusCard(card.key, action);
+  }
+  /** Ad-hoc cards expand in place; the expansion is not remembered. */
+  private expandedCards = signal<ReadonlySet<string>>(new Set());
+  isExpanded(card: BoardCard) {
+    return this.expandedCards().has(card.key);
+  }
+  toggleCard(card: BoardCard) {
+    const next = new Set(this.expandedCards());
+    if (!next.delete(card.key)) next.add(card.key);
+    this.expandedCards.set(next);
+  }
+  stageLabel(stage: Stage) {
+    return this.boardStages.find((s) => s.stage === stage)!.label;
+  }
+  dragStart(card: BoardCard, event: DragEvent) {
+    this.dragged.set({ key: card.key, stage: card.stage });
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", card.key);
+      const element = (event.target as Element | null)?.closest?.("[data-card-key]");
+      if (element) event.dataTransfer.setDragImage(element, 12, 12);
+    }
+  }
+  dragEnd() {
+    this.dragged.set(null);
+    this.dropMark.set(null);
+  }
+  /** Accepts a drag only over a card of the column it started in, and marks the edge the card would land next to. */
+  dragOver(card: BoardCard, event: DragEvent) {
+    const dragged = this.dragged();
+    if (!dragged || dragged.stage !== card.stage) {
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    const box = (event.currentTarget as Element).getBoundingClientRect();
+    this.dropMark.set({ key: card.key, after: event.clientY > box.top + box.height / 2 });
+  }
+  /** Drops the dragged card next to the card under the pointer; a drop from another column is ignored. */
+  dropOn(card: BoardCard, event: DragEvent): boolean {
+    const dragged = this.dragged();
+    const mark = this.dropMark();
+    this.dragEnd();
+    if (!dragged || dragged.stage !== card.stage) return false;
+    event.preventDefault();
+    const column = this.fullBoard()[card.stage];
+    const moved = column.find((c) => c.key === dragged.key);
+    const next = moved && dropWithin(column.map((c) => c.key), dragged.key, card.key, mark?.key === card.key && mark.after);
+    if (!moved || !next) return false;
+    this.applyColumn(moved, next);
+    return true;
+  }
+  private applyColumn(card: BoardCard, column: string[]) {
+    // Ranks of active changes outside the current repository selection stay; any other card that is not on the board loses its rank.
+    const live = new Set<string>();
+    for (const stage of stages) for (const c of this.fullBoard()[stage]) live.add(c.key);
+    for (const change of this.catalog()?.changes ?? []) if (!change.archived) live.add(boardChangeKey(change));
+    const order = pruneOrder(rankColumn(this.boardOrder(), column), live);
+    this.boardOrder.set(order);
+    this.preferences = { ...this.preferences, board: { ...this.preferences.board, order } };
+    this.remember();
+    const shown = this.board()[card.stage];
+    this.boardAnnouncement.set(
+      humanize(card.title) + " moved to position " + (shown.findIndex((c) => c.key === card.key) + 1) + " of " + shown.length + " in " + this.stageLabel(card.stage) + ".",
+    );
+  }
+  private focusCard(key: string, action: MoveAction) {
+    setTimeout(() => {
+      const card = Array.from(document.querySelectorAll<HTMLElement>("[data-card-key]")).find((e) => e.dataset["cardKey"] === key);
+      (card?.querySelector<HTMLElement>(`[data-move="${action}"]`) ?? card)?.focus();
+    });
   }
   async ticketChanged() {
     const value = this.ticketInput.trim();
@@ -1673,6 +1822,17 @@ export class App implements OnDestroy, AfterViewInit {
       history,
       lastRoute: this.router.url,
     };
+    // The server rejects more than 64 KiB: drop the lowest board ranks until the whole document fits, whatever the key lengths.
+    const order = this.preferences.board?.order;
+    if (order?.length) {
+      const bytes = (value: readonly string[]) =>
+        new TextEncoder().encode(JSON.stringify({ ...this.preferences, board: { ...this.preferences.board, order: value } })).length;
+      const fitted = fitOrder(order, bytes, preferencesByteLimit);
+      if (fitted.length !== order.length) {
+        this.preferences = { ...this.preferences, board: { ...this.preferences.board, order: fitted } };
+        this.boardOrder.set(fitted);
+      }
+    }
     const body = JSON.stringify(this.preferences);
     if (body === this.lastSaved) return;
     try {

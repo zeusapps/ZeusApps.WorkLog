@@ -31,7 +31,7 @@ async function authorize(page: Page) {
   const { token } = (await response.json()) as { token: string };
   await page.goto("/ongoing#connect=" + token);
   await expect(
-    page.getByRole("heading", { name: "Pick up where you left off" }),
+    page.getByRole("heading", { name: "Ongoing board" }),
   ).toBeVisible({ timeout: 45_000 });
 }
 async function openTimeline(page: Page, useDefaultDocument = false) {
@@ -42,6 +42,9 @@ async function openTimeline(page: Page, useDefaultDocument = false) {
     name: useDefaultDocument ? "Activity timeline" : /^Design/,
     exact: useDefaultDocument,
   }).click();
+  // The change exists in the checkout and its worktree, so its one card opens the copy chooser first.
+  await expect(page.getByRole("region", { name: "Choose document source" })).toBeVisible();
+  await page.locator(".copy-choice .work-list-item").filter({ hasNotText: /worktree/ }).first().click();
   await expect(
     page.getByRole("dialog", { name: "OpenSpec document reader" }),
   ).toBeVisible();
@@ -60,11 +63,11 @@ test("opens design first, searches across scope, and renders without remote reso
   });
   page.on("pageerror", (e) => errors.push(e.message));
   await authorize(page);
-  await expect(page.locator(".change-card")).toHaveCount(4);
+  await expect(page.locator(".change-card")).toHaveCount(3);
   // The footer names the running version: the plain version, or the development label whose first token is the bare version.
   await expect(page.locator(".page-footer .version-label")).toHaveText(/^\d+\.\d+\.\d+( dev .+)?$/);
   if (process.env["WORKLOG_DASHBOARD_NO_NODE"] === "true")
-    await expect(page.locator(".card-footer").first()).toContainText(
+    await expect(page.locator(".change-card .card-footer").first()).toContainText(
       "Task progress unavailable",
     );
   await page.screenshot({
@@ -332,7 +335,7 @@ test("shows factual history, continuation and observation details", async ({
   ).toBeVisible();
   await expect(page.locator(".timeline-row")).toHaveCount(50);
   await page.getByRole("button", { name: "Load more work items" }).click();
-  await expect(page.locator(".timeline-row")).toHaveCount(68);
+  await expect(page.locator(".timeline-row")).toHaveCount(74);
   await page.screenshot({
     path: testInfo.outputPath("history.png"),
     fullPage: true,
@@ -464,7 +467,7 @@ test("remains usable while a separate MCP process logs and queries", async ({
   expect(output).toContain("DASHBOARD MCP PASSED");
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("heading", { name: "Pick up where you left off" }),
+    page.getByRole("heading", { name: "Ongoing board" }),
   ).toBeVisible();
 });
 
@@ -581,7 +584,7 @@ test("a relative history range rolls forward when the dashboard stays open for t
   await page.clock.install({ time: new Date() });
   const queries: { from: string; to: string }[] = [];
   page.on("request", (r) => {
-    // The History query spans weeks; the Ongoing query spans 14 days.
+    // The History query spans weeks; the Ongoing query spans 7 days.
     if (r.url().endsWith("/api/timeline") && Date.parse(r.postDataJSON().to) - Date.parse(r.postDataJSON().from) > 20 * 86_400_000)
       queries.push(r.postDataJSON());
   });
@@ -611,7 +614,7 @@ test("reading positions stay bounded however many documents were read", async ({
   const seed = await page.request.put("/api/state", { data: { schemaVersion: 1, repositories: null, positions: seeded } });
   expect(seed.status()).toBe(204);
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Pick up where you left off" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible();
   await page.getByRole("button", { name: "All repositories", exact: true }).click();
   await page.getByRole("button", { name: "Shipping reports", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "OpenSpec document reader" })).toBeVisible();
@@ -779,7 +782,7 @@ test("highlights an agent's edit of a read design, lists the addressed comment, 
   await expect(card.locator(".updated-chip")).toHaveCount(0);
   // The baseline is stored by the server, so a reload keeps it.
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Pick up where you left off" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible();
   await card.getByRole("button", { name: /^Design/ }).click();
   await expect(page.locator(".markdown h1")).toHaveText("Review loop demo");
   await expect(page.locator(".read-banner")).toHaveCount(0);
@@ -1135,12 +1138,168 @@ test("marks quiet active changes and changes without recorded activity", async (
   await expect(card("Never logged").locator(".quiet-chip")).toHaveText("No recorded activity");
   await expect(page.locator(".change-card")).toHaveCount(2);
   // Ongoing items show ticket links.
-  await expect(page.locator(".ongoing-panel .ticket-link[href='https://dev.azure.com/contoso/Payments/_workitems/edit/4211']")).toBeVisible();
-  await expect(page.locator(".ongoing-panel .ticket-id", { hasText: "UNK-7" })).toBeVisible();
+  await expect(page.locator(".board .ticket-link[href='https://dev.azure.com/contoso/Payments/_workitems/edit/4211']")).toBeVisible();
+  await expect(page.locator(".board .ticket-id", { hasText: "UNK-7" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("quiet.png"), fullPage: true });
   // A change with recent activity gets no chip.
   await page.getByRole("button", { name: "All repositories", exact: true }).click();
   await page.getByRole("button", { name: /example\/worklog/ }).first().click();
   await expect(card("Activity timeline")).not.toHaveCount(0);
   await expect(card("Activity timeline").locator(".quiet-chip")).toHaveCount(0);
+});
+
+test.describe("Ongoing board", () => {
+  const stateWith = (page: Page, repositories: string[] | null, extra: object = {}) =>
+    page.request.put("/api/state", { data: { schemaVersion: 1, repositories, ...extra } });
+  const column = (page: Page, stage: string) => page.locator(`.board-column[data-stage="${stage}"]`);
+  const titles = async (page: Page, stage: string) =>
+    (await column(page, stage).locator(".board-card .change-title").allTextContents()).map((t) => t.trim());
+  const open = async (page: Page, extra: object = {}) => {
+    await authorize(page);
+    expect((await stateWith(page, ["example/board-demo"], extra)).status()).toBe(204);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible();
+    await settled(page);
+  };
+  // Change cards render first; ticket and ad-hoc cards follow once the Ongoing reads finish.
+  const settled = async (page: Page) => {
+    await expect(column(page, "in_progress").locator(".board-card")).toHaveCount(4);
+    await expect(column(page, "done").locator('[data-kind="adhoc"]')).toHaveCount(1);
+  };
+  const reset = async (page: Page) => expect((await stateWith(page, null)).status()).toBe(204);
+  // Without the OpenSpec CLI (the packaged run) task totals are unavailable, and stages follow recorded facts alone.
+  const tasks = (ticked: number) => (process.env["WORKLOG_DASHBOARD_NO_NODE"] === "true" ? "Task progress unavailable" : `${ticked} / 3 tasks`);
+  const cardNamed = (page: Page, stage: string, name: string) =>
+    column(page, stage).locator(".board-card").filter({ has: page.getByRole("button", { name, exact: true }) });
+
+  test("derives columns from recorded facts and expires short-lived cards", async ({ page }) => {
+    await open(page);
+    try {
+      await expect(column(page, "proposed").locator(".board-card")).toHaveCount(1);
+      await expect(cardNamed(page, "proposed", "Board proposal")).toContainText("No activity recorded");
+      await expect(cardNamed(page, "proposed", "Board proposal")).toContainText(tasks(0));
+      await expect(cardNamed(page, "in_progress", "Board started")).toContainText(tasks(0));
+      await expect(cardNamed(page, "in_progress", "Board started")).toContainText("In progress");
+      await expect(cardNamed(page, "done", "Board recorded done")).toContainText(tasks(1));
+      await expect(cardNamed(page, "done", "Board recorded done")).toContainText("Recorded done");
+      // Ticket work without a change, and a follow-up to the archived change.
+      await expect(column(page, "in_progress").locator('[data-kind="ticket"]').filter({ hasText: "Ticket · no OpenSpec change" })).toContainText("BRD-71");
+      await expect(column(page, "in_progress").locator('[data-kind="ticket"]').filter({ hasText: "Follow-up to Board shipped" })).toContainText("BRD-70");
+      // Ad-hoc cards: 6 days old stays (in Done), 8 days old is gone.
+      const adhoc = column(page, "done").locator('[data-kind="adhoc"]');
+      await expect(adhoc).toHaveCount(1);
+      await expect(adhoc.locator(".change-title")).toContainText("Adhoc six days old");
+      await expect(adhoc).toContainText("BRD-99");
+      await expect(page.getByText("Adhoc eight days old")).toHaveCount(0);
+      await adhoc.locator(".change-title").click();
+      await expect(adhoc.locator(".adhoc-details")).toContainText("fixture");
+      await expect(page.locator("[data-testid=board-truncated]")).toHaveCount(0);
+      await expect(column(page, "proposed").locator(".quiet-chip")).toHaveText("No recorded activity");
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("filters every column by ticket and change name", async ({ page }) => {
+    await open(page);
+    try {
+      const filter = page.getByRole("searchbox", { name: "Filter board cards" });
+      const total = await page.locator(".board-card").count();
+      expect(total).toBeGreaterThan(4);
+      await filter.fill("brd-70");
+      await expect(page.locator(".board-card")).toHaveCount(1);
+      await expect(page.locator(".board-filter-active")).toContainText(`1 of ${total} cards`);
+      await filter.fill("board-second");
+      await expect(page.locator(".board-card")).toHaveCount(1);
+      await filter.fill("brd-99");
+      await expect(page.locator(".board-card")).toHaveCount(1);
+      await filter.fill("");
+      await expect(page.locator(".board-filter-active")).toHaveCount(0);
+      await expect(page.locator(".board-card")).toHaveCount(total);
+      // The filter is not remembered.
+      await filter.fill("brd-70");
+      await page.reload();
+      await expect(page.getByRole("searchbox", { name: "Filter board cards" })).toHaveValue("");
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("reorders with the keyboard, and the order is restored after a reload", async ({ page }) => {
+    await open(page);
+    try {
+      await expect(column(page, "in_progress").locator(".board-card")).toHaveCount(4);
+      const before = await titles(page, "in_progress");
+      const last = before.at(-1)!;
+      const beforeLast = before.at(-2)!;
+      const doneBefore = await titles(page, "done");
+      const saved = page.waitForResponse((r) => r.url().endsWith("/api/state") && r.request().method() === "PUT" && Array.isArray(r.request().postDataJSON().board?.order));
+      const card = cardNamed(page, "in_progress", last);
+      await card.locator("summary").focus();
+      await page.keyboard.press("Enter");
+      const up = card.getByRole("button", { name: /^Move up/ });
+      await up.focus();
+      await page.keyboard.press("Enter");
+      await expect.poll(() => titles(page, "in_progress")).toEqual([...before.slice(0, -2), last, beforeLast]);
+      await expect(up).toBeFocused();
+      await expect(page.locator("[data-testid=board-announcement]")).toContainText(`moved to position ${before.length - 1} of ${before.length} in In progress.`);
+      expect((await saved).ok()).toBe(true);
+      // Move the card now at the end to the top.
+      const end = cardNamed(page, "in_progress", beforeLast);
+      await end.locator("summary").click();
+      await end.getByRole("button", { name: /^Move to top/ }).click();
+      const expected = [beforeLast, ...before.slice(0, -2), last];
+      await expect.poll(() => titles(page, "in_progress")).toEqual(expected);
+      const topKey = await end.getAttribute("data-card-key");
+      await expect.poll(async () => (await (await page.request.get("/api/state")).json()).board?.order).toHaveLength(before.length);
+      await expect.poll(async () => (await (await page.request.get("/api/state")).json()).board?.order?.[0]).toBe(topKey);
+      await page.reload();
+      await settled(page);
+      expect(await titles(page, "in_progress")).toEqual(expected);
+      expect(await titles(page, "done")).toEqual(doneBefore);
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("restores a saved priority order for a card in its column", async ({ page }) => {
+    await open(page);
+    try {
+      await expect(column(page, "in_progress").locator(".board-card")).toHaveCount(4);
+      const before = await titles(page, "in_progress");
+      const lastKey = await column(page, "in_progress").locator(".board-card").last().getAttribute("data-card-key");
+      await stateWith(page, ["example/board-demo"], { board: { order: [lastKey] } });
+      await page.reload();
+      await settled(page);
+      // Unranked cards come first; the ranked one follows them.
+      expect(await titles(page, "in_progress")).toEqual(before);
+      const first = await column(page, "in_progress").locator(".board-card").first().getAttribute("data-card-key");
+      await stateWith(page, ["example/board-demo"], { board: { order: [first] } });
+      await page.reload();
+      await settled(page);
+      expect((await titles(page, "in_progress")).at(-1)).toBe(before[0]);
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("renders in both themes without horizontal overflow", async ({ page }, testInfo) => {
+    await open(page);
+    try {
+      for (const theme of ["dark", "light"]) {
+        if ((await page.locator("html").getAttribute("data-theme")) !== theme)
+          await page.getByRole("button", { name: `Switch to ${theme} theme` }).click();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+        // WORKLOG_BOARD_SCREENSHOT_DIR keeps the screenshots for review instead of the per-run output folder.
+        const folder = process.env["WORKLOG_BOARD_SCREENSHOT_DIR"];
+        await page.screenshot({ path: folder ? join(folder, `dev-a1-board-${theme}.png`) : testInfo.outputPath(`board-${theme}.png`), fullPage: true });
+      }
+      await page.setViewportSize({ width: 700, height: 900 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await expect(column(page, "proposed")).toBeVisible();
+    } finally {
+      await reset(page);
+    }
+  });
 });

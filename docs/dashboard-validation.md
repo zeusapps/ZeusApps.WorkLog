@@ -191,3 +191,22 @@ The fixture gained a `links-demo` repository (identity `github.com/example/links
 ### Notes
 
 - The ticket predicate mirrors SQLite `trim()`, which removes spaces only; stored ticket fields are trimmed on write, so the difference concerns only hand-edited journal rows.
+
+## Ongoing board (add-ongoing-board)
+
+Recorded on 2026-10-28 on Windows 10.0.26300.0, using .NET SDK 10.0.113, Node 24.13.0, OpenSpec CLI 1.13.1, and headless Microsoft Edge. All data used isolated synthetic fixtures under ignored artifacts directories.
+
+### Validation results
+
+- `dotnet build -c Release --no-restore`: succeeded with 0 warnings.
+- `dotnet test -c Release --no-build --no-restore`: 357 passed, none skipped. New: `OngoingUnlinkedTests` (4 tests) covers the unlinked filtering (ticket-only, change-only, both, extracted-ID-only and plain observations), the half-open window, newest-first order, the repository filter, the 200-entry cap with `truncated` (200 entries are not truncated, 201 are), snapshot consistency (a later observation stays out, a snapshot beyond the journal is rejected), and the endpoint rejecting an unauthorized request and a window whose end does not follow its start.
+- `npm test --prefix dashboard`: 190 passed in 16 files. New: `board.spec.ts` (card kinds, stage rules, follow-up detection, 6-day and 8-day expiry, filter matching, unranked-first ordering, rank kept across a column change, whole-column ranking, moves past filtered cards, drop placement, pruning and the 200-entry cap) and `app.board.spec.ts` (7-day window and unlinked read, no preference save from rendering, refresh or idle time, preferences without `board` unchanged, the filter not remembered, columns with counts, card labels and dates, quiet chip only on In-progress change cards, truncation note, empty states, cross-column drops rejected, keyboard moves saved, focus retention and `aria-live` announcement).
+- `npm run test:e2e --prefix dashboard` against the Release build with the OpenSpec CLI on the PATH: 30 of 31 scenarios passed. The scenario "keeps history available when a declared store cannot be resolved" fails with OpenSpec CLI 1.13.1 exactly as recorded for QA-007 above (the declared store resolves, so the local change it expects to be hidden is listed). Playwright runs the scenarios serially, so the remaining scenarios were run with that one excluded (`--grep-invert "declared store"`): 30 passed.
+- Fix rounds 1 and 2 (one card per change across sources, the 200-entry order fitted to 60 KiB by bytes, leaving room for the server's escaped-character count, `isQuiet`): `npm test` 190 passed, `dotnet test` 357 passed, e2e with `--grep-invert "declared store"` 30 passed. QA also ran the packaged `worklog.exe` build with `WORKLOG_DASHBOARD_NO_NODE=true`: 31 of 31 passed.
+- The same suite with `WORKLOG_DASHBOARD_NO_NODE=true` against the Release `worklog.dll` (the OpenSpec CLI and Node absent from the dashboard's PATH, as in the packaged CI run): 31 of 31 passed. The first-round packaged run was not made by the developer; see the fix-round line above.
+- New scenarios use a fixture repository with an unlogged proposal, an in-progress change with no ticked tasks, a recorded-done change with unticked tasks, a ticket without a change, a follow-up ticket for an archived change, and ad-hoc observations 6 and 8 days old (the 6-day one is in Done with its extracted ticket ID, the 8-day one is not on the board). They also cover the filter (not remembered after a reload), keyboard reordering with focus retention, the announcement and restoration after a reload, a saved rank restored for a card, and both themes at 1440 px and 700 px without horizontal overflow.
+
+### Notes
+
+- Journal entries with neither a ticket nor an OpenSpec change cannot be logged by the current tools (`log_work` requires one of them), so ad-hoc cards come from older journals. The fixture writes such rows directly to its disposable journal, as an older journal would have held them.
+- The History fixture count rose from 68 to 74 rows because the board fixture adds a repository.

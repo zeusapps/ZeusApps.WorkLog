@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using ModelContextProtocol.Client;
 using WorkLog.Configuration;
 using WorkLog.Infrastructure;
@@ -54,7 +55,7 @@ internal static class DashboardFixture
         for (var i = 0; i < 125; i++) Log("in_progress", "large-history", 2, "Synthetic continuation observation " + i, "WL-190");
         for (var i = 0; i < 55; i++) Log(i % 3 == 0 ? "done" : "in_progress", "recorded-work-" + i, 3 + i % 20, "Synthetic timeline fixture " + i, "WL-" + (200 + i));
         Change(links, "quiet-change", "# Quiet change\n\nA change whose latest recorded observation is old.\n");
-        Change(links, "never-logged", "# Never logged\n\nA change without any recorded observation.\n");
+        Change(links, "never-logged", "# Never logged\n\nA change without any recorded observation.\n", ticked: 0);
         var linksJournal = new Journal(settings, new("github.com/example/links-demo"));
         void LogLink(Journal target, string status, string branch, Ticket ticket, int days, string summary, string? change = null) => target.Log(new(status, change, branch,
             Tickets: [ticket], Summary: summary, OccurredAt: now.AddDays(-days).ToString("O"), Agent: "fixture"));
@@ -67,8 +68,52 @@ internal static class DashboardFixture
         linksJournal.Log(new("in_progress", "quiet-change", Summary: "Old recorded observation.", OccurredAt: now.AddDays(-20).ToString("O"), Agent: "fixture"));
         LogLink(new Journal(settings, new("local:links-demo-local")), "in_progress", "feature/DEP-30", new("jira", "company.atlassian.net", "DEP-30"), 1, "Work in a local-only repository.");
         new Journal(settings, new("example/bell-tower")).Log(new("in_progress", "shipping-reports", Summary: "Prepared report evidence.", OccurredAt: now.AddDays(-1).ToString("O"), Agent: "fixture"));
+        BoardDemo(root, settings, now);
         AtomicFile.Write(Path.Combine(root, "fixture.json"), Json.Encode(new { root, data = settings.DataDirectory, repo = a, otherRepo = b, worktree }));
         Console.WriteLine(root);
+    }
+
+    /// <summary>
+    /// A repository for the Ongoing board: one change per column, a second in-progress change to reorder, a follow-up ticket for an archived change,
+    /// a ticket without a change, and ad-hoc observations 6 and 8 days old. Observations with neither ticket nor change cannot be logged
+    /// through the current tools, so they are written as an older journal would have held them.
+    /// </summary>
+    private static void BoardDemo(string root, LocalSettings settings, DateTimeOffset now)
+    {
+        var board = Repository(root, "board-demo");
+        settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(board)] = new(new("example/board-demo"));
+        settings.Save();
+        Change(board, "board-proposal", "# Board proposal\n\nNothing is ticked and nothing is logged.\n", ticked: 0);
+        Change(board, "board-started", "# Board started\n\nWork was logged but no task is ticked.\n", ticked: 0);
+        Change(board, "board-second", "# Board second\n\nA second in-progress change.\n", ticked: 0);
+        Change(board, "board-recorded-done", "# Board recorded done\n\nDone was logged while tasks stay unticked.\n", ticked: 1);
+        Change(board, "archive/2026-10-01-board-shipped", "# Board shipped\n\nAn archived change that later work follows up.\n");
+        var journal = new Journal(settings, new("example/board-demo"));
+        void Log(string status, string? change, int days, string summary, params Ticket[] tickets) => journal.Log(new(status, change, Tickets: tickets,
+            Summary: summary, OccurredAt: now.AddDays(-days).ToString("O"), Agent: "fixture"));
+        Log("in_progress", "board-started", 1, "Logged progress without ticking tasks.", new Ticket("jira", "example.local", "BRD-1"));
+        Log("in_progress", "board-second", 3, "Started the second change.");
+        Log("done", "board-recorded-done", 2, "Recorded the work as done.");
+        Log("in_progress", "board-shipped", 2, "Follow-up work after the archive.", new Ticket("jira", "example.local", "BRD-70"));
+        Log("in_progress", null, 1, "Ticket work with no OpenSpec change.", new Ticket("jira", "example.local", "BRD-71"));
+        using var connection = new SqliteConnection($"Data Source={Path.Combine(settings.DataDirectory, "journal.db")};Pooling=False");
+        connection.Open();
+        void Unlinked(int days, string status, string summary, string? extracted = null)
+        {
+            var at = now.AddDays(-days);
+            var entry = new Entry(Guid.NewGuid().ToString("N"), "example/board-demo", extracted is null ? null : "feature/" + extracted, null, [], extracted, status,
+                "unclassified", summary, at, at, "fixture", null);
+            using var command = connection.CreateCommand();
+            command.CommandText = "INSERT INTO entries(id,occurred,repository,change_name,status,payload) VALUES($id,$at,$repo,NULL,$status,$payload)";
+            command.Parameters.AddWithValue("$id", entry.Id);
+            command.Parameters.AddWithValue("$at", at.UtcTicks);
+            command.Parameters.AddWithValue("$repo", entry.Repository);
+            command.Parameters.AddWithValue("$status", status);
+            command.Parameters.AddWithValue("$payload", Json.Encode(entry));
+            command.ExecuteNonQuery();
+        }
+        Unlinked(6, "done", "Adhoc six days old", "BRD-99");
+        Unlinked(8, "done", "Adhoc eight days old");
     }
 
     private static string Repository(string root, string name)
@@ -81,14 +126,14 @@ internal static class DashboardFixture
         GitRepository.Run(directory, "-c", "user.name=Dashboard fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "Initialize isolated dashboard fixture");
         return directory;
     }
-    private static void Change(string repo, string name, string design)
+    private static void Change(string repo, string name, string design, int ticked = 1)
     {
         var directory = Path.Combine(repo, "openspec", "changes", name.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-10-01\n");
         File.WriteAllText(Path.Combine(directory, "design.md"), design);
         File.WriteAllText(Path.Combine(directory, "proposal.md"), "# Proposal\n\nA synthetic dashboard acceptance change.\n");
-        File.WriteAllText(Path.Combine(directory, "tasks.md"), "# Tasks\n\n## 1. Implementation\n\n- [x] 1.1 Establish the approach\n- [ ] 1.2 Implement the change\n- [ ] 1.3 Verify the outcome\n");
+        File.WriteAllText(Path.Combine(directory, "tasks.md"), "# Tasks\n\n## 1. Implementation\n\n" + string.Join("", new[] { "1.1 Establish the approach", "1.2 Implement the change", "1.3 Verify the outcome" }.Select((task, index) => (index < ticked ? "- [x] " : "- [ ] ") + task + "\n")));
         foreach (var capability in new[] { "work-dashboard", "openspec-browser" })
         {
             var specs = Path.Combine(directory, "specs", capability);

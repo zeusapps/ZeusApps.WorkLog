@@ -143,6 +143,7 @@ internal static class DashboardHost
         app.MapGet("/api/state", () => state.Read());
         app.MapPut("/api/state", (JsonObject value) => { state.Write(value); return Results.NoContent(); });
         app.MapPost("/api/timeline", (TimelineQuery query, CancellationToken ct) => timeline.Query(query, ct));
+        app.MapPost("/api/ongoing/unlinked", (UnlinkedQuery query, CancellationToken ct) => timeline.Unlinked(query, ct));
         app.MapPost("/api/observations", (ObservationRequest request, CancellationToken ct) => timeline.Observations(request.Query, request.Id, request.Offset, ct, request.Day));
         app.MapPost("/api/document", (DocumentRequest request, CancellationToken ct) => documents.ReadAsync(request, ct));
         app.MapPost("/api/comments", (CommentRequest request, CancellationToken ct) => documents.CommentAsync(request, ct));

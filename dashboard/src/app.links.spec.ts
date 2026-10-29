@@ -42,12 +42,12 @@ describe("ticket and repository links", () => {
     const { app, fixture, element } = setup();
     app.ongoing.set([row("a", [linked, unlinked])]);
     fixture.detectChanges();
-    const refs = Array.from(element.querySelectorAll(".ongoing-panel .ticket-ref"));
+    const refs = Array.from(element.querySelectorAll(".board .ticket-ref"));
     expect(refs).toHaveLength(2);
     expect(refs[0].querySelector("a")?.getAttribute("href")).toBe("https://company.atlassian.net/browse/DEP-12");
     expect(refs[1].querySelector("a")).toBeNull();
     expect(refs[1].querySelector(".ticket-id")?.textContent).toBe("UNK-7");
-    expect(element.querySelectorAll(".ongoing-panel .ticket-copy")).toHaveLength(2);
+    expect(element.querySelectorAll(".board .ticket-copy")).toHaveLength(2);
     fixture.destroy();
   });
 

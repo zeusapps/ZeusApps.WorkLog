@@ -135,7 +135,6 @@ describe("Angular workspace behavior", () => {
   it("scopes active changes without manufacturing journal activity", () => {
     const { app, fixture } = setup();
     expect(app.activeChanges()).toHaveLength(1);
-    expect(app.changeRow(change)).toBeUndefined();
     app.selectedRepos.set(["other"]);
     expect(app.activeChanges()).toHaveLength(0);
     fixture.destroy();

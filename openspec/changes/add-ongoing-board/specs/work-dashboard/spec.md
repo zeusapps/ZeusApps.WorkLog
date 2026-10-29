@@ -46,7 +46,7 @@ The dashboard SHALL provide Ongoing work and History views. Ongoing work SHALL p
 - **THEN** its document state is archived and its work state remains labeled as the latest recorded in_progress observation
 
 ### Requirement: Bounded dashboard preferences
-Dashboard preferences SHALL remain within their storage limit regardless of how many documents the user opens or how many cards the user ranks. Per-document reading positions and remembered document selections SHALL retain only a bounded number of most recently used entries and discard older ones. The board priority order SHALL retain at most 500 entries; when it is saved, entries for cards no longer on the board SHALL be discarded first, then the lowest-ranked entries. A preference save that fails SHALL be reported once as a non-blocking notice and SHALL NOT produce a repeated error for each later scroll or interaction. A failed save SHALL NOT discard the in-memory preferences of the current visit.
+Dashboard preferences SHALL remain within their storage limit regardless of how many documents the user opens or how many cards the user ranks. Per-document reading positions and remembered document selections SHALL retain only a bounded number of most recently used entries and discard older ones. The board priority order SHALL retain at most 200 entries, and preferences with every bound at its limit SHALL fit the storage limit. When the order is saved, entries for cards no longer on the board SHALL be discarded first, except entries for active changes outside the current repository selection, which SHALL be kept; ticket and ad-hoc entries outside the selection MAY be discarded. Then the lowest-ranked entries SHALL be discarded. A preference save that fails SHALL be reported once as a non-blocking notice and SHALL NOT produce a repeated error for each later scroll or interaction. A failed save SHALL NOT discard the in-memory preferences of the current visit.
 
 #### Scenario: Many documents are read
 - **WHEN** the user opens and scrolls through more documents than the retention bound
@@ -66,7 +66,9 @@ Dashboard preferences SHALL remain within their storage limit regardless of how 
 Ongoing work SHALL show the Review inbox followed by a board with the columns Proposed, In progress, and Done, each showing its card count. Columns SHALL be derived from recorded facts and SHALL NOT be set by the user. The board SHALL contain three card kinds:
 - A change card for each active OpenSpec change in the selected repositories.
 - A ticket card for each ticket-grouped work item in the selected repositories that has an observation within the last 7 days and is not associated with an active change on the board.
-- An ad-hoc card for each observation within the last 7 days that has neither a ticket nor a change.
+- An ad-hoc card for each observation within the last 7 days that has neither a ticket nor a change. Current logging requires a change or ticket, so such observations come from older journal entries.
+
+A change present in several sources SHALL appear as one card.
 
 A change card SHALL be in Done when its task progress is known and all tasks are ticked, or when its latest recorded status is done. Otherwise it SHALL be in In progress when it has any recorded observation or at least one ticked task. Otherwise it SHALL be in Proposed. When task progress and the latest recorded status disagree, the card SHALL show both without resolving the disagreement. A change card SHALL remain on the board until the change is archived, and an In-progress change card SHALL show the quiet indication when its latest observation is older than 14 days.
 
