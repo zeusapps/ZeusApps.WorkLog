@@ -95,6 +95,7 @@ internal static class DashboardHost
         var app = builder.Build();
         var journal = new DashboardJournal(settings.DataDirectory);
         var timeline = new TimelineService(journal);
+        var daily = new DailyService(journal);
         var catalog = new SourceCatalog(settings, journal, commands ?? new LocalCommand(), repository ?? Environment.CurrentDirectory);
         var documents = new DocumentService(catalog);
         var state = new DashboardState(settings.DataDirectory);
@@ -143,6 +144,7 @@ internal static class DashboardHost
         app.MapGet("/api/state", () => state.Read());
         app.MapPut("/api/state", (JsonObject value) => { state.Write(value); return Results.NoContent(); });
         app.MapPost("/api/timeline", (TimelineQuery query, CancellationToken ct) => timeline.Query(query, ct));
+        app.MapPost("/api/daily", (DailyRequest request, CancellationToken ct) => daily.Query(request, ct));
         app.MapPost("/api/ongoing/unlinked", (UnlinkedQuery query, CancellationToken ct) => timeline.Unlinked(query, ct));
         app.MapPost("/api/observations", (ObservationRequest request, CancellationToken ct) => timeline.Observations(request.Query, request.Id, request.Offset, ct, request.Day));
         app.MapPost("/api/document", (DocumentRequest request, CancellationToken ct) => documents.ReadAsync(request, ct));

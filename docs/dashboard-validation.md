@@ -210,3 +210,31 @@ Recorded on 2026-10-28 on Windows 10.0.26300.0, using .NET SDK 10.0.113, Node 24
 
 - Journal entries with neither a ticket nor an OpenSpec change cannot be logged by the current tools (`log_work` requires one of them), so ad-hoc cards come from older journals. The fixture writes such rows directly to its disposable journal, as an older journal would have held them.
 - The History fixture count rose from 68 to 74 rows because the board fixture adds a repository.
+
+## Daily view (add-daily-prep)
+
+Recorded on 2026-10-29 on Windows 10.0.26300.0, using .NET SDK 10.0.113, Node 24.13.0, OpenSpec CLI on the PATH, and headless Microsoft Edge. All data used isolated synthetic fixtures under ignored artifacts directories.
+
+### Validation results
+
+| Check | Result |
+| --- | --- |
+| `dotnet restore --locked-mode` | succeeded |
+| `dotnet build -c Release --no-restore` | 0 warnings, 0 errors |
+| `dotnet test -c Release --no-build --no-restore` | 374 of 374 passed (new: `DailyServiceTests`, 17 tests) |
+| `npm test --prefix dashboard` | 236 of 236 tests in 18 files passed (`daily.spec.ts` and `app.daily.spec.ts` include the change-card line and the loading-state cases) |
+| `npm run test:e2e --prefix dashboard`, Release build, OpenSpec CLI on the PATH | The serial run stopped at the existing scenario "keeps history available when a declared store cannot be resolved" (QA-007 from `fix-dashboard-reliability`): 15 passed, 1 failed, 20 did not run. With `--grep-invert "declared store"`: 35 of 35 passed, including the five Daily scenarios. |
+| `./scripts/package.ps1 -OutputDirectory artifacts/<folder>`, then `npm run test:e2e --prefix dashboard` with `WORKLOG_DASHBOARD_EXECUTABLE` set to the packaged `worklog.exe` and `WORKLOG_DASHBOARD_NO_NODE=true` | Three full runs against one packaged build: 36 of 36 passed in each run (1.6 to 1.7 minutes). An earlier recorded 36 of 36 was not reproducible before Today and Copy for daily waited for the loaded Ongoing rows (QA-001). |
+
+### What the checks cover
+
+- Server (`DailyServiceTests`): Monday shows Friday and stepping back skips empty days (with the neighbouring recorded days); a day off on a Friday opens on Tuesday; day boundaries in Europe/Warsaw versus UTC at the local-midnight second; repository filtering of the last recorded day and its neighbours; two repositories on one day; an empty journal; only today recorded; status as of the end of the selected day when a later done exists, with the done, in-progress, started order and ties; several observations of one ticket collapsing into one line (latest primary, the rest newest first); two unlinked entries becoming two `adhoc:<entry id>` items titled by their trimmed summaries, with a missing summary kept as null; an explicit day equal to or after today, a malformed day, an unknown timezone and a malformed instant rejected; `today` holding the latest summary per item and being identical when an earlier `day` is selected; the start of today taken from `before`; the snapshot and bound handling of the previous and next lookups; the first valid time on a date whose midnight a clock change skips; and the endpoint requiring authorization and answering 400 for an invalid day.
+- Client (`daily.spec.ts`): an In-progress card listed, a quiet In-progress change left out, a Done card listed only with an observation today, a change with all tasks ticked listed only with an observation today, no duplicates, the board priority order across columns, the Proposed count, a ticket card matched to its line by row id, a change card matched by repository and change name with the latest line winning, an ad-hoc card with no line, an In-progress card with nothing today having a null line, and the exact copied text in plain and Markdown formats (links on and off, the URL appended in plain text, unlinked lines, empty sections).
+- Angular (`app.daily.spec.ts`): the digest request body, rendering order and collapsed observations, Today lines with and without a line, the board order driving Today, stepping through days via the address, a rejected day falling back to the last recorded day, refresh with the data refresh and after the date rolls over, no preference save from rendering, refreshing or stepping (and no `board` or `daily` key), remembering the format and links choice without the selected day, and the exact copied block in both formats with the clipboard fallback.
+- Browser (fake clock on Monday 12 January 2026; the fixture's `daily-demo` repository holds work on Tuesday 6 and Friday 9 January): Monday shows Friday, stepping back skips to Tuesday, back and forward work and the day is not remembered; the plain-text block is copied exactly and the Markdown-with-links choice survives a reload; an observation logged for today by a second process appears under Today with its summary after a refresh while Yesterday keeps Friday's summary for the same ticket; reordering the two In-progress cards on the board reorders Today; and the view fits a 390 px viewport without horizontal overflow.
+
+### Notes
+
+- The fixture gained a `daily-demo` repository (identity `example/daily-demo`, change `daily-flow`) with observations on fixed past dates, and the smoke tool a `--dashboard-log` mode that records one observation into the fixture journal for the browser scenario. Observation times sit around noon UTC, so they keep their calendar day in timezones from UTC-11 to UTC+10.
+- The plain-text copy scenario expects the fixture journal as created, so it runs before the scenario that logs an observation for today (the file runs serially); repeating a scenario against the same fixture (`--repeat-each`) sees that observation.
+- Live observation on the maintainer's installation was not performed.

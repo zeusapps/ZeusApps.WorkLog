@@ -35,7 +35,7 @@ internal sealed class TimelineService(DashboardJournal journal)
         return Project(query, period, data.Snapshot, data.Entries);
     }
 
-    internal static TimelinePage Project(TimelineQuery query, ReportingPeriod period, long snapshot, Entry[] entries)
+    internal static TimelinePage Project(TimelineQuery query, ReportingPeriod period, long snapshot, Entry[] entries, int pageSize = 50)
     {
         string Day(Entry entry) => TimeZoneInfo.ConvertTime(entry.OccurredAt, period.Zone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var ticket = string.IsNullOrWhiteSpace(query.Ticket) ? null : query.Ticket.Trim();
@@ -82,7 +82,7 @@ internal sealed class TimelineService(DashboardJournal journal)
             resumed.AddRange(subsequent.Where(e => e.OccurredAt >= period.From).Select(e => new InsightItem(group.Key, title, first.Repository, e.OccurredAt, tickets)));
         }
         var ordered = rows.OrderByDescending(r => r.LastAt).ThenBy(r => r.Id, StringComparer.Ordinal).ToArray();
-        var page = ordered.Skip(query.Offset).Take(50).ToArray();
+        var page = ordered.Skip(query.Offset).Take(pageSize).ToArray();
         return new(snapshot, page, ordered.Length, query.Offset + page.Length < ordered.Length ? query.Offset + page.Length : null,
             new(ordered.OrderByDescending(r => r.ElapsedSeconds).Take(5).ToArray(),
                 completions.OrderByDescending(x => x.At).Take(10).ToArray(), resumed.OrderByDescending(x => x.At).Take(10).ToArray(),

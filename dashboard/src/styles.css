@@ -2785,3 +2785,89 @@ tr.changed-since-read {
   font: inherit;
   font-size: 11px;
 }
+
+/* Daily view */
+.daily-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.daily-links-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.daily-section {
+  margin-top: 18px;
+}
+.daily-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.daily-section-heading h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+.daily-days {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.daily-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.daily-line {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  min-width: 0;
+}
+.daily-line-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.daily-title {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.daily-status {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.daily-summary {
+  margin: 6px 0 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.daily-changes {
+  margin-top: 4px;
+}
+.daily-others {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.daily-others ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+@media (max-width: 600px) {
+  .daily-days {
+    margin-left: 0;
+  }
+}

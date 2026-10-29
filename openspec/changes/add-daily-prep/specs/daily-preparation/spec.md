@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Give the user a fast, factual digest of their last recorded working day and current work for daily stand-up preparation, built only from recorded observations and copyable as concise text.
+Give the user a fast, factual digest of their last recorded working day and of today's work so far for daily stand-up preparation, built only from recorded observations and copyable as concise text.
 
 ## ADDED Requirements
 
@@ -41,7 +41,7 @@ For the selected day, the Daily view SHALL show one line per work item with obse
 - **THEN** the digest shows two lines, each titled with its own summary
 
 ### Requirement: Today and blockers
-The Daily view SHALL derive Today from the Ongoing board of the same repository selection. Today SHALL list the board's In progress cards, except cards showing the quiet indication, plus cards from any column with an observation recorded today, each card once, in the board's priority order. Proposed change cards SHALL NOT be listed under Today; the view MAY indicate how many exist. The Blockers section SHALL be empty with a prompt for the user and SHALL NOT be derived from recorded data.
+The Daily view SHALL derive Today from the Ongoing board of the same repository selection. Today SHALL list the board's In progress cards, except cards showing the quiet indication, plus cards from any column with an observation recorded today, each card once, in the board's priority order. Proposed change cards SHALL NOT be listed under Today; the view MAY indicate how many exist. A Today card with observations recorded today SHALL show its latest recorded status and the summary of its latest observation today, or an explicit no-summary label, with its other observations from today collapsed and available on request; a Today card with no observation recorded today SHALL show its title and tickets only. A Today line SHALL contain only observations recorded today for that card's own ticket or change. An item MAY appear under both Yesterday and Today. Today and the copy action SHALL NOT be available until the board inputs for the current repository selection have loaded. The Blockers section SHALL be empty with a prompt for the user and SHALL NOT be derived from recorded data.
 
 #### Scenario: Work in progress continues
 - **WHEN** a ticket's latest observation, recorded yesterday, is in_progress
@@ -59,12 +59,32 @@ The Daily view SHALL derive Today from the Ongoing board of the same repository 
 - **WHEN** an active change's latest observation is in_progress and was recorded 20 days ago
 - **THEN** it does not appear under Today
 
+#### Scenario: Work recorded today shows its outcome
+- **WHEN** a ticket listed under Today has two observations recorded today, the latest in_progress with a summary
+- **THEN** its Today line shows in progress and that summary, with the earlier observation available on request
+
+#### Scenario: Continuing work with nothing recorded today
+- **WHEN** an In-progress card listed under Today has no observation recorded today
+- **THEN** its Today line shows its title and tickets only
+
+#### Scenario: A ticket used with two changes
+- **WHEN** a ticket was logged with change alpha last week and with change beta today, and both changes are In progress
+- **THEN** beta's Today line shows today's summary and alpha's Today line shows its title only
+
+#### Scenario: Board still loading
+- **WHEN** the Daily view opens and the board inputs have not loaded yet
+- **THEN** Today shows a loading state and Copy for daily is unavailable
+
+#### Scenario: Work spanning both days
+- **WHEN** a ticket has observations recorded on the last recorded day and today
+- **THEN** it appears under Yesterday with that day's latest summary and under Today with today's latest summary
+
 ### Requirement: Copy for daily
-The Daily view SHALL provide an action that copies the Yesterday, Today, and Blockers sections as concise text, in a Markdown or plain-text format selected by the user, with ticket links included or omitted as selected. The format and link choices SHALL be remembered. The copied Yesterday section SHALL name the selected date. Each copied line SHALL contain only recorded facts: title or ticket IDs, recorded status, and the latest summary. The Blockers section SHALL be copied as an empty placeholder.
+The Daily view SHALL provide an action that copies the Yesterday, Today, and Blockers sections as concise text, in a Markdown or plain-text format selected by the user, with ticket links included or omitted as selected. The format and link choices SHALL be remembered. The copied Yesterday section SHALL name the selected date. Each copied line SHALL contain only recorded facts: title or ticket IDs, recorded status, and the latest summary of that line's day. A Today card without an observation recorded today SHALL be copied as its title or ticket IDs only. The Blockers section SHALL be copied as an empty placeholder.
 
 #### Scenario: Copy as plain text without links
 - **WHEN** the user selects plain text without links and copies
-- **THEN** the clipboard contains the three sections with ticket IDs, statuses, and summaries, and no URLs
+- **THEN** the clipboard contains the three sections with ticket IDs, statuses, and summaries for Yesterday lines and Today lines recorded today, and no URLs
 
 #### Scenario: Copy as Markdown with links
 - **WHEN** the user selects Markdown with links and copies
@@ -79,4 +99,4 @@ The Daily view SHALL use the shared repository selection and the History timezon
 
 #### Scenario: New observation recorded
 - **WHEN** an agent records an observation for today while the Daily view is open
-- **THEN** Today reflects it on the next refresh
+- **THEN** Today reflects it, including its summary, on the next refresh

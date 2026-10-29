@@ -1,4 +1,4 @@
-import { test, expect, Page } from "@playwright/test";
+import { test, expect, Page, BrowserContext } from "@playwright/test";
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createHmac } from "node:crypto";
@@ -1298,6 +1298,161 @@ test.describe("Ongoing board", () => {
       await page.setViewportSize({ width: 700, height: 900 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await expect(column(page, "proposed")).toBeVisible();
+    } finally {
+      await reset(page);
+    }
+  });
+});
+
+test.describe("Daily view", () => {
+  // The fixture records its Daily repository on fixed past dates: work on Tue 6 Jan and Fri 9 Jan 2026. The browser clock is Monday 12 January 2026.
+  const monday = new Date("2026-01-12T12:30:00Z");
+  const stateWith = (page: Page, repositories: string[] | null, extra: object = {}) =>
+    page.request.put("/api/state", { data: { schemaVersion: 1, repositories, ...extra } });
+  const open = async (page: Page, context: BrowserContext) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+    await page.clock.install({ time: monday });
+    await authorize(page);
+    expect((await stateWith(page, ["example/daily-demo"])).status()).toBe(204);
+    await page.goto("/daily");
+    await expect(page.locator("#daily-title")).toBeVisible();
+    await expect(page.getByTestId("daily-day")).toBeVisible();
+    // Copy for daily is enabled only once Today is built from the loaded Ongoing rows, so this is the settled state.
+    await expect(page.getByTestId("copy-daily")).toBeEnabled();
+    await expect(page.getByTestId("daily-today-line").first()).toBeVisible();
+  };
+  const reset = async (page: Page) => expect((await stateWith(page, null)).status()).toBe(204);
+  const copied = async (page: Page) => {
+    await page.getByTestId("copy-daily").click();
+    await expect(page.locator(".copy-toast")).toHaveText("Daily copied.");
+    // The Windows clipboard returns CRLF line breaks.
+    return (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+  };
+  const todayTitles = async (page: Page) =>
+    (await page.getByTestId("daily-today").locator(".daily-title").allTextContents()).map((t) => t.trim());
+
+  test("Monday shows Friday, and stepping back skips the days without observations", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      await expect(page.getByTestId("daily-day")).toHaveText("Fri 9 Jan");
+      await expect(page.getByTestId("daily-day-kind")).toHaveText("Last recorded day");
+      await expect(page.getByTestId("daily-yesterday").getByTestId("daily-line")).toHaveCount(2);
+      await expect(page.getByTestId("daily-next")).toBeDisabled();
+      // Done first, with the earlier observation of the ticket collapsed.
+      const first = page.getByTestId("daily-yesterday").getByTestId("daily-line").first();
+      await expect(first).toContainText("DEMO-1");
+      await expect(first.getByTestId("daily-summary")).toHaveText("Retry policy for export jobs merged.");
+      await expect(first.locator("details summary")).toHaveText("1 other observation");
+      await page.getByTestId("daily-previous").click();
+      await expect(page).toHaveURL(/\/daily\?day=2026-01-06$/);
+      await expect(page.getByTestId("daily-day")).toHaveText("Tue 6 Jan");
+      await expect(page.getByTestId("daily-day-kind")).toHaveText("Recorded day");
+      await expect(page.getByTestId("daily-yesterday").getByTestId("daily-line")).toHaveCount(1);
+      await expect(page.getByTestId("daily-previous")).toBeDisabled();
+      // The selected day is in the URL for back and forward, and is never remembered.
+      await expect.poll(async () => (await (await page.request.get("/api/state")).json()).lastRoute).toBe("/daily");
+      await page.goBack();
+      await expect(page.getByTestId("daily-day")).toHaveText("Fri 9 Jan");
+      await page.getByTestId("daily-previous").click();
+      await page.getByTestId("daily-next").click();
+      await expect(page.getByTestId("daily-day")).toHaveText("Fri 9 Jan");
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("copies the plain-text block, and the Markdown format with links is remembered", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      expect(await copied(page)).toBe(
+        [
+          "Yesterday (Fri 9 Jan):",
+          "- DEMO-1 — done — Retry policy for export jobs merged.",
+          "- DEMO-2 — in progress — Wired the scheduler hook; load test remains.",
+          "Today:",
+          "- DEMO-2",
+          "- DEMO-3",
+          "Blockers:",
+          "-",
+        ].join("\n"),
+      );
+      await page.getByLabel("Copy format").selectOption("markdown");
+      await page.getByLabel("Include ticket links").check();
+      const text = await copied(page);
+      expect(text.split("\n")[0]).toBe("**Yesterday (Fri 9 Jan)**");
+      expect(text).toContain("- [DEMO-1](https://example.local/browse/DEMO-1) — done — Retry policy for export jobs merged.");
+      expect(text).toContain("**Blockers**");
+      await expect.poll(async () => (await (await page.request.get("/api/state")).json()).daily).toEqual({ format: "markdown", links: true });
+      await page.reload();
+      await expect(page.getByLabel("Copy format")).toHaveValue("markdown");
+      await expect(page.getByLabel("Include ticket links")).toBeChecked();
+      expect((await (await page.request.get("/api/state")).json()).board).toBeUndefined();
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("a new observation for today appears under Today with its summary, and a ticket worked on both days shows each day's summary", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      const info = await fixture();
+      const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
+      const logged = spawnSync(
+        "dotnet",
+        [smoke, "--dashboard-log", info.root, "example/daily-demo", "in_progress", "daily-flow", "DEMO-2", "2026-01-12T12:20:00.000Z", "Export retries wired to the job scheduler; load test remains."],
+        { encoding: "utf8", windowsHide: true },
+      );
+      expect(logged.status, logged.stdout + logged.stderr).toBe(0);
+      await page.getByRole("button", { name: "Refresh dashboard" }).click();
+      const line = page.getByTestId("daily-today-line").filter({ hasText: "DEMO-2" });
+      await expect(line.getByTestId("daily-today-summary")).toHaveText("Export retries wired to the job scheduler; load test remains.");
+      await expect(line).toContainText("In progress");
+      // Yesterday keeps Friday's summary for the same ticket.
+      const yesterday = page.getByTestId("daily-yesterday").getByTestId("daily-line").filter({ hasText: "DEMO-2" });
+      await expect(yesterday.getByTestId("daily-summary")).toHaveText("Wired the scheduler hook; load test remains.");
+      // A card with nothing recorded today shows its title and ticket only.
+      const quiet = page.getByTestId("daily-today-line").filter({ hasText: "DEMO-3" });
+      await expect(quiet).toHaveCount(1);
+      await expect(quiet.getByTestId("daily-today-summary")).toHaveCount(0);
+      expect(await copied(page)).toContain("Today:\n- DEMO-2 — in progress — Export retries wired to the job scheduler; load test remains.\n- DEMO-3\nBlockers:");
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("reordering two In-progress cards on the board changes their order under Today", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      const before = await todayTitles(page);
+      expect(before).toHaveLength(2);
+      await page.getByRole("button", { name: /Ongoing work/ }).click();
+      await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible();
+      const column = page.locator('.board-column[data-stage="in_progress"]');
+      await expect(column.locator(".board-card")).toHaveCount(2);
+      const last = column.locator(".board-card").last();
+      const saved = page.waitForResponse((r) => r.url().endsWith("/api/state") && r.request().method() === "PUT" && Array.isArray(r.request().postDataJSON().board?.order));
+      await last.locator("summary").click();
+      await last.getByRole("button", { name: /^Move to top/ }).click();
+      expect((await saved).ok()).toBe(true);
+      await page.getByRole("button", { name: /Daily/ }).first().click();
+      await expect(page.getByTestId("daily-today-line")).toHaveCount(2);
+      await expect.poll(() => todayTitles(page)).toEqual([...before].reverse());
+      // Visiting Daily saved nothing about the order beyond what the board saved.
+      const order = (await (await page.request.get("/api/state")).json()).board.order;
+      expect(order).toHaveLength(2);
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("renders at phone width without horizontal overflow", async ({ page, context }, testInfo) => {
+    await open(page, context);
+    try {
+      await page.setViewportSize({ width: 390, height: 800 });
+      await expect(page.getByTestId("daily-yesterday")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      const folder = process.env["WORKLOG_DAILY_SCREENSHOT_DIR"];
+      await page.screenshot({ path: folder ? join(folder, "dev-a1-daily-phone.png") : testInfo.outputPath("daily-phone.png"), fullPage: true });
     } finally {
       await reset(page);
     }

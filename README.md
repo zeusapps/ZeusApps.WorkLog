@@ -39,7 +39,7 @@ worklog dashboard --repository D:\Code\MyProject
 worklog dashboard --no-open --port 47831
 ```
 
-The dashboard opens in your browser and runs on this machine. Dark theme is the default; the top-bar theme button switches to light and remembers your choice. Ongoing work is a board of active OpenSpec changes and the last 7 days of other work (see [The Ongoing board](#the-ongoing-board)). History connects recorded observations with elapsed spans and activity-date dots. Filter all views and document search to one repository, several, or all known repositories. The first visit selects the launch repository when known; later visits restore your selection. History initially uses the last 30 days, your system timezone, and ticket grouping, and remembers changes to these controls.
+The dashboard opens in your browser and runs on this machine. Dark theme is the default; the top-bar theme button switches to light and remembers your choice. Ongoing work is a board of active OpenSpec changes and the last 7 days of other work (see [The Ongoing board](#the-ongoing-board)). The Daily view prepares your stand-up from recorded work (see [The Daily view](#the-daily-view)). History connects recorded observations with elapsed spans and activity-date dots. Filter all views and document search to one repository, several, or all known repositories. The first visit selects the launch repository when known; later visits restore your selection. History initially uses the last 30 days, your system timezone, and ticket grouping, and remembers changes to these controls.
 
 Select a change to read its design, proposal, tasks, or specs. Designs open first unless you follow a document link or have a remembered selection. Local OpenSpec and configured standalone-store documents are supported, including archives and separate worktree copies. Documents refresh while open and retain your reading position. They show current local files, including beside historical activity. Task totals come from OpenSpec when available; unavailable totals are not reported as zero.
 
@@ -61,6 +61,29 @@ Below the Review inbox, Ongoing work is a board with three columns, each with it
 Every card shows its repository and the date of its latest observation (or "No activity recorded"). The filter above the columns narrows every column to cards whose change name, ticket IDs or title contain the text, ignoring case; it is not remembered.
 
 You can set one priority order for the whole dashboard. Within a column, drag a card by its handle or open its Move menu (Move up, Move down, Move to top); focus stays on the card and the new position is announced. Cards are not dragged between columns. Unranked cards come first, newest activity first, and ranked cards follow in your order. A card keeps its rank when recorded work moves it to another column, and moving a card ranks every card of that column in the order shown. The order is saved in the dashboard preferences (`board.order`, at most 200 entries; ranks of cards no longer on the board are dropped when it is saved, except those of active changes hidden by the repository selection) and is restored in other browsers using the same data directory.
+
+### The Daily view
+
+The Daily view (`/daily`, the Daily entry in the navigation) prepares a stand-up from recorded facts only. It uses the shared repository selection and the History timezone, calls no agent, issue service or OpenSpec command, and refreshes when new observations are recorded and when the date changes.
+
+- **Yesterday** shows the last recorded day: the most recent local date before today that has an observation in the selected repositories. The date is named and labeled "Last recorded day"; Previous and Next recorded day skip dates without observations, Next stops at the day before today, and the day is kept in the address (`?day=yyyy-MM-dd`) for the browser's back and forward buttons, not in the preferences. With no earlier observation it says so. The day is one line per work item with ticket grouping: the title, tickets (linked when a link can be built), change names, repository, its status as of the end of that day (a later "done" does not change an earlier day), and the summary of its latest observation that day or "No summary recorded"; its other observations that day are collapsed under the line. An observation with neither a ticket nor a change is its own line, titled with its summary. Lines are ordered done, in progress, started, then newest first.
+- **Today** is derived from the Ongoing board of the same selection: its In-progress cards except those showing the quiet indication, plus any card with an observation recorded today, each once, in the board's priority order (reordering the board changes Today; the Daily view never saves the order). A card with observations today shows its latest status and summary today, the others collapsed; a card with nothing recorded today shows its title and tickets only. Proposed changes are not listed (their count is noted). The same item can appear under both Yesterday and Today, each with its own day's summary.
+- **Blockers** is an empty prompt. Nothing about blockers is inferred from the journal.
+
+Copy for daily copies the three sections as plain text or Markdown (a ticket-link toggle applies to both) and remembers the choice in the preferences (`daily.format`, `daily.links`; plain text without links until you choose). Each line carries only recorded facts: ticket IDs or title, status and the latest summary of that line's day; a Today card with nothing recorded today is copied as its title or ticket IDs alone, and Blockers as an empty bullet:
+
+```text
+Yesterday (Thu 22 Oct):
+- DEP-1232 — done — Retry policy for export jobs merged
+- add-work-dashboard — in progress — Review comments edit/delete
+Today:
+- DEP-1240 — in progress — Export retries wired to the job scheduler; load test remains
+- add-work-dashboard
+Blockers:
+-
+```
+
+When the clipboard is unavailable the text is offered for manual copying. The view is served by `POST /api/daily`, which only reads the journal.
 
 ### Links, ticket filter and quiet changes
 

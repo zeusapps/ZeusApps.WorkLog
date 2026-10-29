@@ -110,6 +110,27 @@ export interface Entry {
   /** Ticket ID taken from the branch name but not qualified; shown without a link. */
   extractedTicketId?: string | null;
 }
+/** One work item of a daily digest section: its latest observation of the day and the rest, collapsed. */
+export interface DailyItem {
+  /** The ticket-grouped work identity, or `adhoc:<entry id>` for one unlinked observation. */
+  id: string;
+  title: string;
+  repository: string;
+  tickets: Ticket[];
+  changes: string[];
+  /** The latest recorded status as of the end of the digest's day (as of now for today's items). */
+  status: string;
+  primary: Entry;
+  others: Entry[];
+}
+/** The last recorded day (or the selected one), its neighbours, and the current day's lines so far. `day` is null without earlier work. */
+export interface DailyDigest {
+  day: string | null;
+  previousDay: string | null;
+  nextDay: string | null;
+  items: DailyItem[];
+  today: DailyItem[];
+}
 export interface ObservationPage {
   entries: Entry[];
   total: number;
@@ -214,4 +235,6 @@ export interface Preferences {
   editor?: EditorPreset;
   /** The dashboard-wide priority order of board cards, by card key. Absent until the user reorders. */
   board?: { order?: string[] };
+  /** How Copy for daily formats the text; plain text without links until the user chooses. */
+  daily?: { format?: "text" | "markdown"; links?: boolean };
 }

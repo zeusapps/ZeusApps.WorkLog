@@ -41,6 +41,7 @@ import {
   rankColumn,
   stages,
 } from "./board";
+import { DailyFormat, dailyText, dailyToday, dayLabel, noSummary } from "./daily";
 import { markdownObservationLimit, workItemMarkdown } from "./workitem-markdown";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
 import {
@@ -69,6 +70,8 @@ import {
 import {
   Catalog,
   Change,
+  DailyDigest,
+  DailyItem,
   ChangeActivity,
   EditorPreset,
   DocumentContent,
@@ -92,6 +95,8 @@ import {
   UnlinkedPage,
 } from "./models";
 
+export type ViewName = "ongoing" | "history" | "archive" | "daily";
+
 /** Most recently used reading positions and remembered document selections kept in preferences. */
 export const positionLimit = 100;
 export const documentLimit = 200;
@@ -111,7 +116,7 @@ export class App implements OnDestroy, AfterViewInit {
   catalog = signal<Catalog | null>(null);
   preferences: Preferences = { schemaVersion: 1 };
   selectedRepos = signal<string[] | null>(null);
-  view = signal<"ongoing" | "history" | "archive">("ongoing");
+  view = signal<ViewName>("ongoing");
   ready = signal(false);
   unauthorized = signal(false);
   error = signal("");
@@ -125,6 +130,17 @@ export class App implements OnDestroy, AfterViewInit {
   /** Observations of the last 7 days with neither a ticket nor a change, and whether more exist than were returned. */
   unlinked = signal<Entry[]>([]);
   unlinkedTruncated = signal(false);
+  /** The Daily view: the digest as last loaded and the start of today it was requested for. */
+  dailyData = signal<{ digest: DailyDigest; before: string } | null>(null);
+  dailyLoading = signal(false);
+  /** The Daily view's copy format and link choice, as remembered. */
+  dailyFormat = signal<DailyFormat>("text");
+  dailyLinks = signal(false);
+  /** The selected day of the Daily view, from the URL; never remembered. */
+  dailyDay: string | null = null;
+  private dailyEpoch = 0;
+  private dataLoaded = false;
+  readonly dayLabel = dayLabel;
   /** The board filter as typed. It is never remembered. */
   boardFilter = signal("");
   /** The saved priority order of board cards, by card key. */
@@ -178,6 +194,8 @@ export class App implements OnDestroy, AfterViewInit {
   /** The repository selection (as JSON) the loaded activity covers; null until the first load. */
   private activityScope = signal<string | null>(null);
   private activityEpoch = 0;
+  /** The repository selection (as JSON) the loaded Ongoing rows and unlinked entries cover; null until the first load. */
+  private ongoingScope = signal<string | null>(null);
   /** The remembered editor preset for Open in editor. */
   editor = signal<EditorPreset>("vscode");
   readonly editorPresets = editorPresets;
@@ -285,6 +303,13 @@ export class App implements OnDestroy, AfterViewInit {
       this.now(),
     ),
   );
+  /** What the Daily view lists under Today: the unfiltered board, the current day's lines, and the saved priority order. */
+  readonly dailyTodayView = computed(() => {
+    const data = this.dailyData();
+    return data && this.activityReady() && this.ongoingReady()
+      ? dailyToday(this.fullBoard(), data.before, data.digest.today, { zone: this.timezone, order: this.boardOrder() })
+      : null;
+  });
   readonly board = computed<Board>(() => filterBoard(this.fullBoard(), this.boardFilter()));
   readonly boardTotal = computed(() => stages.reduce((total, stage) => total + this.fullBoard()[stage].length, 0));
   readonly boardShown = computed(() => stages.reduce((total, stage) => total + this.board()[stage].length, 0));
@@ -370,6 +395,8 @@ export class App implements OnDestroy, AfterViewInit {
         Array.isArray(state.board?.order) ? state.board.order.filter((key) => typeof key === "string") : [],
       );
       this.editor.set(validEditor(state.editor));
+      this.dailyFormat.set(state.daily?.format === "markdown" ? "markdown" : "text");
+      this.dailyLinks.set(state.daily?.links === true);
       this.applyTheme(state.theme === "light" ? "light" : "dark");
       const known = new Set(catalog.repositories.map((r) => r.id));
       const saved = state.repositories?.filter((r) => known.has(r));
@@ -410,6 +437,8 @@ export class App implements OnDestroy, AfterViewInit {
       ) {
         await this.router.navigateByUrl(state.lastRoute);
       } else await this.routeChanged();
+      // From here on a route change loads the Daily view itself; the first refresh below covers the opening route.
+      this.dataLoaded = true;
       await this.refreshData();
       this.overviewRevision = this.catalog()?.revision ?? null;
       await this.refreshOverview();
@@ -620,6 +649,11 @@ export class App implements OnDestroy, AfterViewInit {
     const scope = this.activityScope();
     return scope !== null && (scope === "[]" || scope === JSON.stringify(this.selectedRepos() ?? []));
   }
+  /** Whether the loaded ticket rows and unlinked entries cover the current repository selection. */
+  private ongoingReady() {
+    const scope = this.ongoingScope();
+    return scope !== null && scope === JSON.stringify(this.selectedRepos() ?? []);
+  }
   /** Whether the card shows the quiet indication (an In-progress change idle for more than 14 days). */
   quiet(card: BoardCard) {
     return isQuiet(card, this.now(), this.timezone);
@@ -670,12 +704,76 @@ export class App implements OnDestroy, AfterViewInit {
     await this.refreshData();
     if (this.searchText.trim()) void this.search();
   }
-  async changeView(view: "ongoing" | "history" | "archive") {
+  async changeView(view: ViewName) {
     await this.router.navigate(["/" + view]);
   }
   async refreshData() {
-    await Promise.all([this.loadHistory(), this.loadOngoing()]);
+    await Promise.all([this.loadHistory(), this.loadOngoing(), this.view() === "daily" ? this.loadDaily() : Promise.resolve()]);
   }
+  /** Loads the last recorded day (or the selected one) and today's lines in one request. */
+  async loadDaily() {
+    const epoch = ++this.dailyEpoch;
+    this.dailyLoading.set(true);
+    try {
+      const before = boundary(localDate(this.now(), this.timezone), this.timezone);
+      const digest = await api<DailyDigest>("daily", {
+        before,
+        timezone: this.timezone,
+        repositories: this.selectedRepos() ?? [],
+        ...(this.dailyDay ? { day: this.dailyDay } : {}),
+      });
+      if (epoch === this.dailyEpoch) this.dailyData.set({ digest, before });
+    } catch (error) {
+      if (epoch !== this.dailyEpoch) return;
+      if (error instanceof ApiError && error.status === 400 && this.dailyDay) {
+        // A day the server no longer accepts (for example after the date moved on): fall back to the last recorded day.
+        this.dailyDay = null;
+        this.notice.set("That day is not available. Showing the last recorded day.");
+        await this.router.navigate(["/daily"], { replaceUrl: true });
+        await this.loadDaily();
+        return;
+      }
+      this.report(error);
+    } finally {
+      if (epoch === this.dailyEpoch) this.dailyLoading.set(false);
+    }
+  }
+  /** Moves the Daily view to another recorded day through the URL, so back and forward work. */
+  async stepDaily(day: string | null) {
+    if (day) await this.router.navigate(["/daily"], { queryParams: { day } });
+  }
+  setDailyFormat(value: unknown) {
+    this.dailyFormat.set(value === "markdown" ? "markdown" : "text");
+    this.rememberDaily();
+  }
+  setDailyLinks(value: boolean) {
+    this.dailyLinks.set(value === true);
+    this.rememberDaily();
+  }
+  private rememberDaily() {
+    this.preferences = { ...this.preferences, daily: { format: this.dailyFormat(), links: this.dailyLinks() } };
+    this.remember();
+  }
+  /** Copies the Yesterday, Today, and Blockers sections in the chosen format. */
+  async copyDaily() {
+    const data = this.dailyData();
+    const today = this.dailyTodayView();
+    if (!data || !today) return;
+    const text = dailyText({
+      day: data.digest.day,
+      yesterday: data.digest.items,
+      today: today.items,
+      format: this.dailyFormat(),
+      links: this.dailyLinks(),
+    });
+    await this.copyText(text, "Copy this daily", "Daily copied.", true);
+  }
+  /** The heading of a digest line: a work item's title (a change name made readable), or an unlinked entry's own summary. */
+  dailyTitle(item: DailyItem) {
+    if (item.id.startsWith("adhoc:")) return item.title.trim() || noSummary;
+    return item.tickets.length ? item.title : humanize(item.title);
+  }
+  readonly noSummary = noSummary;
   private query(): TimelineQuery {
     return {
       from: boundary(this.from, this.timezone),
@@ -745,6 +843,7 @@ export class App implements OnDestroy, AfterViewInit {
         this.unlinked.set(unlinked.entries);
         this.unlinkedTruncated.set(unlinked.truncated);
         this.ongoingQuery = query;
+        this.ongoingScope.set(JSON.stringify(query.repositories));
       }
     } catch (error) {
       if (epoch === this.ongoingEpoch) this.report(error);
@@ -1010,7 +1109,15 @@ export class App implements OnDestroy, AfterViewInit {
     if (this.navigating) return;
     const url = this.router.parseUrl(this.router.url);
     const route = url.root.children["primary"]?.segments[0]?.path;
-    this.view.set(route === "history" ? "history" : route === "archive" ? "archive" : "ongoing");
+    const previous = this.view();
+    this.view.set(route === "history" ? "history" : route === "archive" ? "archive" : route === "daily" ? "daily" : "ongoing");
+    if (route === "daily") {
+      const day = url.queryParams["day"];
+      const wanted = validDate(day) ? day : null;
+      const changed = previous !== "daily" || wanted !== this.dailyDay;
+      this.dailyDay = wanted;
+      if (changed && this.dataLoaded) void this.loadDaily();
+    }
     if (route !== "history") void this.loadActivity();
     const source = url.queryParams["source"] as string | undefined,
       change = url.queryParams["change"] as string | undefined,
@@ -1820,7 +1927,7 @@ export class App implements OnDestroy, AfterViewInit {
       schemaVersion: 1,
       repositories: this.selectedRepos(),
       history,
-      lastRoute: this.router.url,
+      lastRoute: this.routeToSave(),
     };
     // The server rejects more than 64 KiB: drop the lowest board ranks until the whole document fits, whatever the key lengths.
     const order = this.preferences.board?.order;
@@ -1840,6 +1947,17 @@ export class App implements OnDestroy, AfterViewInit {
       this.lastSaved = body;
     } catch (error) {
       this.preferencesFailed(error);
+    }
+  }
+  /** The current route without the Daily view's selected day, which is not remembered. */
+  private routeToSave() {
+    try {
+      const url = new URL(this.router.url, "http://worklog.local");
+      if (url.pathname !== "/daily") return this.router.url;
+      url.searchParams.delete("day");
+      return url.pathname + url.search;
+    } catch {
+      return this.router.url;
     }
   }
   private preferencesFailed(error: unknown) {

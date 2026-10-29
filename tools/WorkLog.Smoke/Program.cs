@@ -8,6 +8,11 @@ if (args is ["--dashboard-fixture", var dashboardRoot])
     DashboardFixture.Create(dashboardRoot);
     return;
 }
+if (args is ["--dashboard-log", var logRoot, var logRepository, var logStatus, var logChange, var logTicket, var logAt, var logSummary])
+{
+    DashboardFixture.Log(logRoot, logRepository, logStatus, logChange, logTicket, logAt, logSummary);
+    return;
+}
 if (args is ["--dashboard-mcp", var dashboardExecutable, var dashboardDirectory])
 {
     await DashboardFixture.ExerciseMcpAsync(dashboardExecutable, dashboardDirectory);

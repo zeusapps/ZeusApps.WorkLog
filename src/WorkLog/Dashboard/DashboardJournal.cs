@@ -89,6 +89,42 @@ internal sealed class DashboardJournal(string dataDirectory)
         return result.ToArray();
     }
 
+    private static string RepositoryClause(SqliteCommand command, string[] repositories)
+    {
+        var distinct = repositories.Distinct(StringComparer.Ordinal).ToArray();
+        if (distinct.Length == 0) return "";
+        var names = distinct.Select((repo, i) =>
+        {
+            command.Parameters.AddWithValue("$r" + i, repo);
+            return "$r" + i;
+        });
+        return " AND repository IN (" + string.Join(',', names) + ")";
+    }
+
+    private DateTimeOffset? Occurred(string aggregate, string window, string[] repositories, long? snapshot, params (string Name, DateTimeOffset Value)[] bounds)
+    {
+        using var connection = Open();
+        if (connection is null) return null;
+        using var command = connection.CreateCommand();
+        foreach (var (name, value) in bounds) command.Parameters.AddWithValue(name, value.UtcTicks);
+        var snapshotClause = "";
+        if (snapshot is not null)
+        {
+            snapshotClause = " AND rowid <= $snapshot";
+            command.Parameters.AddWithValue("$snapshot", snapshot.Value);
+        }
+        command.CommandText = $"SELECT {aggregate}(occurred) FROM entries WHERE {window}{snapshotClause}{RepositoryClause(command, repositories)}";
+        return command.ExecuteScalar() is long ticks ? new DateTimeOffset(ticks, TimeSpan.Zero) : null;
+    }
+
+    /// <summary>The latest observation strictly before an instant, or null. Uses the (occurred, id) index.</summary>
+    public DateTimeOffset? LatestBefore(DateTimeOffset before, string[] repositories, long? snapshot = null) =>
+        Occurred("MAX", "occurred < $before", repositories, snapshot, ("$before", before));
+
+    /// <summary>The earliest observation in [from, to), or null. Uses the (occurred, id) index.</summary>
+    public DateTimeOffset? EarliestBetween(DateTimeOffset from, DateTimeOffset to, string[] repositories, long? snapshot = null) =>
+        Occurred("MIN", "occurred >= $from AND occurred < $to", repositories, snapshot, ("$from", from), ("$to", to));
+
     public (long Snapshot, Entry[] Entries) Read(DateTimeOffset to, string[] repositories, long? snapshot, CancellationToken cancellationToken = default)
     {
         using var connection = Open();

@@ -69,6 +69,7 @@ internal static class DashboardFixture
         LogLink(new Journal(settings, new("local:links-demo-local")), "in_progress", "feature/DEP-30", new("jira", "company.atlassian.net", "DEP-30"), 1, "Work in a local-only repository.");
         new Journal(settings, new("example/bell-tower")).Log(new("in_progress", "shipping-reports", Summary: "Prepared report evidence.", OccurredAt: now.AddDays(-1).ToString("O"), Agent: "fixture"));
         BoardDemo(root, settings, now);
+        DailyDemo(root, settings);
         AtomicFile.Write(Path.Combine(root, "fixture.json"), Json.Encode(new { root, data = settings.DataDirectory, repo = a, otherRepo = b, worktree }));
         Console.WriteLine(root);
     }
@@ -114,6 +115,33 @@ internal static class DashboardFixture
         }
         Unlinked(6, "done", "Adhoc six days old", "BRD-99");
         Unlinked(8, "done", "Adhoc eight days old");
+    }
+
+    /// <summary>
+    /// A repository for the Daily view at fixed past dates, so a test with a fake clock on Monday 12 January 2026 sees Friday as the last recorded day.
+    /// Times sit around noon UTC, which keeps each observation on the same calendar day in any timezone from UTC-11 to UTC+10.
+    /// </summary>
+    private static void DailyDemo(string root, LocalSettings settings)
+    {
+        var daily = Repository(root, "daily-demo");
+        settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(daily)] = new(new("example/daily-demo"));
+        settings.Save();
+        Change(daily, "daily-flow", "# Daily flow\n\nA change with work recorded on the last working day.\n", ticked: 0);
+        var journal = new Journal(settings, new("example/daily-demo"));
+        void Log(string status, string? change, string at, string summary, string ticket) => journal.Log(new(status, change,
+            Tickets: [new("jira", "example.local", ticket)], Summary: summary, OccurredAt: at, Agent: "fixture"));
+        Log("in_progress", null, "2026-01-06T12:00:00Z", "Sketched the export schedule.", "DEMO-3");
+        Log("started", null, "2026-01-09T11:00:00Z", "Began the retry policy.", "DEMO-1");
+        Log("in_progress", "daily-flow", "2026-01-09T12:00:00Z", "Wired the scheduler hook; load test remains.", "DEMO-2");
+        Log("done", null, "2026-01-09T13:00:00Z", "Retry policy for export jobs merged.", "DEMO-1");
+    }
+
+    /// <summary>Records one observation with a ticket into the fixture journal, as another agent session would while the dashboard is open.</summary>
+    public static void Log(string directory, string repository, string status, string change, string ticket, string occurredAt, string summary)
+    {
+        var settings = new LocalSettings(Path.Combine(Path.GetFullPath(directory), "data"));
+        new Journal(settings, new(repository)).Log(new(status, change is "-" ? null : change, Tickets: [new("jira", "example.local", ticket)],
+            Summary: summary, OccurredAt: occurredAt, Agent: "fixture"));
     }
 
     private static string Repository(string root, string name)
