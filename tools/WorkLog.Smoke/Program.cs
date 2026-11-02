@@ -13,6 +13,11 @@ if (args is ["--dashboard-log", var logRoot, var logRepository, var logStatus, v
     DashboardFixture.Log(logRoot, logRepository, logStatus, logChange, logTicket, logAt, logSummary);
     return;
 }
+if (args is ["--dashboard-digest", var digestRoot, var digestRepository, var digestTicket, var digestText])
+{
+    DashboardFixture.SaveDigest(digestRoot, digestRepository, digestTicket, digestText);
+    return;
+}
 if (args is ["--dashboard-mcp", var dashboardExecutable, var dashboardDirectory])
 {
     await DashboardFixture.ExerciseMcpAsync(dashboardExecutable, dashboardDirectory);
@@ -63,6 +68,16 @@ if (args is ["--claude-aliases-only", var aliasExecutable])
     return;
 }
 
+if (args is ["--digests-only", var digestExecutable])
+{
+    var digestWorkspace = new SmokeWorkspace(digestExecutable);
+    Directory.CreateDirectory(digestWorkspace.Root);
+    Directory.CreateDirectory(digestWorkspace.Repository);
+    await new DigestAcceptanceChecks(digestWorkspace).RunAsync();
+    Console.WriteLine("SMOKE PASSED. Artifacts: " + digestWorkspace.Root);
+    return;
+}
+
 if (args is ["--worktrees-only", var worktreeExecutable])
 {
     var worktreeWorkspace = new SmokeWorkspace(worktreeExecutable);
@@ -79,6 +94,7 @@ workspace.Initialize();
 var processes = new SmokeProcessRunner(workspace);
 await new ClientRegistrationChecks(workspace, processes).RunAsync();
 await new JournalAcceptanceChecks(workspace).RunAsync();
+await new DigestAcceptanceChecks(workspace).RunAsync();
 await new InitializationAcceptanceChecks(workspace, processes).RunAsync();
 await new ClaudeProjectAliasChecks(workspace, processes).RunAsync();
 await new WorktreeAcceptanceChecks(workspace, processes).RunAsync();

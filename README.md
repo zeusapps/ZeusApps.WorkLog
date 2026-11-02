@@ -83,7 +83,9 @@ Blockers:
 -
 ```
 
-When the clipboard is unavailable the text is offered for manual copying. The view is served by `POST /api/daily`, which only reads the journal.
+When the clipboard is unavailable the text is offered for manual copying. The view is served by `POST /api/daily`, which only reads the journal and the digest store.
+
+**Agent digests.** When the agent logs an item's second to thirtieth observation of the machine-local day, it is asked to write a one- or two-sentence digest of what they achieved and save it with `save_digest`. A digest line replaces the latest summary on a Yesterday or Today line, with an "agent digest" mark, and Copy for daily uses its text (without the mark). A line shows a digest only when the digest covers exactly the observations the line shows: a later observation, or a different set of observations, makes it stale and the line falls back to the latest summary. WorkLog calls no model itself; without an agent that follows the request nothing changes. Digests are stored separately from the journal (see [Architecture](docs/architecture.md)). The server groups a day by the machine's timezone, while the Daily view uses the History timezone, so near midnight in a different timezone a digest may not match and is simply not shown.
 
 ### Links, ticket filter and quiet changes
 
@@ -101,7 +103,7 @@ No Node.js, hosted service, or internet connection is required to use the packag
 
 ## MCP tools
 
-Both tools advertise output schemas and return MCP `structuredContent` with a JSON text fallback. See [MCP validation](docs/mcp-validation.md) for protocol checks and documentation references.
+The tools advertise output schemas and return MCP `structuredContent` with a JSON text fallback. See [MCP validation](docs/mcp-validation.md) for protocol checks and documentation references.
 
 `log_work` accepts an `entry` object:
 
@@ -121,6 +123,8 @@ Both tools advertise output schemas and return MCP `structuredContent` with a JS
 ```
 
 The initialized repository supplies repository identity; direct servers can instead receive `entry.repository`. Branches are snapshots supplied by the agent. At least a change or qualified ticket is required. Timestamp defaults to now; summaries, agent, and sessionId are optional. When a summary is given, write one short sentence (about 140 characters) with the concrete outcome, decision, or remaining step, readable in a stand-up report: for `in_progress` say what was achieved and what remains, for `done` what was completed. Do not narrate process, repeat the status, or include secrets or personal data. Managed instructions give both Claude Code and Codex this same guidance, and the `log_work` tool schema repeats it, so it also applies when managed instructions are disabled. Summary content is not validated beyond existing limits. Reuse an idempotency key only to retry identical input. A change gets one initial started record across both agents; subsequent work uses in_progress.
+
+`log_work` may also return a `digestRequest` (item, day, timezone, the day's observations oldest first, a one-line instruction) for each newly logged observation that is the item's second to thirtieth on the machine-local day. The agent finishes the user's request first, then calls `save_digest` with `entryIds` set to exactly the requested IDs and `text` of one or two sentences (at most 280 characters) stating outcomes rather than process. The server rejects text that is empty or too long, IDs that are unknown or span items or days, and a set that no longer equals the item's observations that day (stale; not retried). Older servers send no request, and a repository without `save_digest` skips the digest. Managed instructions give Claude Code and Codex the same digest guidance.
 
 `query_work` accepts a `period` object:
 

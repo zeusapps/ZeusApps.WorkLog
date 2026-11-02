@@ -2854,6 +2854,16 @@ tr.changed-since-read {
   color: var(--text);
   overflow-wrap: anywhere;
 }
+.daily-digest-mark {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
 .daily-changes {
   margin-top: 4px;
 }

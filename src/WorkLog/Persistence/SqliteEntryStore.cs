@@ -88,6 +88,38 @@ internal sealed class SqliteEntryStore(JournalDatabase database)
         return (entries.ToArray(), snapshot);
     }
 
+    /// <summary>Entries with an occurrence time in [from, to), oldest first. Uses the (occurred, id) index.</summary>
+    public Entry[] ReadBetween(DateTimeOffset from, DateTimeOffset to)
+    {
+        using var connection = database.Open();
+        using var command = SqliteCommands.Create(connection,
+            "SELECT payload FROM entries WHERE occurred >= $from AND occurred < $to ORDER BY occurred, id",
+            parameters: [("$from", from.UtcTicks), ("$to", to.UtcTicks)]);
+        using var reader = command.ExecuteReader();
+        var entries = new List<Entry>();
+        while (reader.Read())
+            entries.Add(Json.Decode<Entry>(reader.GetString(0)));
+        return entries.ToArray();
+    }
+
+    /// <summary>The stored entries among the given IDs; unknown IDs are absent.</summary>
+    public Entry[] ReadByIds(IReadOnlyCollection<string> ids)
+    {
+        using var connection = database.Open();
+        using var command = connection.CreateCommand();
+        var names = ids.Select((id, i) =>
+        {
+            command.Parameters.AddWithValue("$i" + i, id);
+            return "$i" + i;
+        });
+        command.CommandText = $"SELECT payload FROM entries WHERE id IN ({string.Join(',', names)}) ORDER BY occurred, id";
+        using var reader = command.ExecuteReader();
+        var entries = new List<Entry>();
+        while (reader.Read())
+            entries.Add(Json.Decode<Entry>(reader.GetString(0)));
+        return entries.ToArray();
+    }
+
     private static Entry? FindRetry(SqliteConnection connection, SqliteTransaction transaction, PreparedEntry prepared)
     {
         if (prepared.IdempotencyKey is null)

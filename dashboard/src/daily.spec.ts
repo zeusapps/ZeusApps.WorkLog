@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { BoardInput, buildBoard } from "./board";
-import { dailyText, dailyToday, dayLabel, TodayEntry } from "./daily";
+import { dailyText, dailyToday, dayLabel, digestFor, digestIndex, TodayEntry } from "./daily";
 import type { Change, ChangeActivity, DailyItem, Entry, Row, Ticket } from "./models";
 
 const now = new Date("2026-10-28T12:00:00Z");
@@ -278,6 +278,54 @@ describe("dailyText", () => {
   it("states what was not recorded without inventing work", () => {
     expect(dailyText({ day: null, yesterday: [], today: [], format: "text", links: false })).toBe(
       "Yesterday:\n- Nothing recorded\nToday:\n- Nothing recorded\nBlockers:\n-",
+    );
+  });
+});
+
+describe("agent digests", () => {
+  const two = item("r", "2026-10-22T15:00:00Z", {
+    title: "DEP-1232", tickets: [dep1232], status: "done",
+    primary: entry("r2", "2026-10-22T15:00:00Z", { summary: "Latest summary", status: "done" }),
+    others: [entry("r1", "2026-10-22T10:00:00Z", { summary: "Older summary" })],
+  });
+  const digests = [{ covers: ["r1", "r2"], text: "Shipped the retry policy.\nTwo steps." }];
+
+  it("matches a line whose primary and others are exactly the covered observations, in any order", () => {
+    expect(digestFor(digestIndex(digests), two)).toBe("Shipped the retry policy.\nTwo steps.");
+    expect(digestFor(digestIndex([{ covers: ["r2", "r1"], text: "x" }]), two)).toBe("x");
+  });
+
+  it("does not match a stale digest after a later entry, or a subset or superset", () => {
+    const later = { ...two, primary: entry("r3", "2026-10-22T16:00:00Z"), others: [two.primary, ...two.others] };
+    expect(digestFor(digestIndex(digests), later)).toBeNull();
+    expect(digestFor(digestIndex([{ covers: ["r1"], text: "x" }]), two)).toBeNull();
+    expect(digestFor(digestIndex(digests), null)).toBeNull();
+    expect(digestFor(digestIndex(undefined), two)).toBeNull();
+  });
+
+  it("matches an assembled change-card line by the entries it was built from", () => {
+    const board = buildBoard(input({ changes: [change("alpha")], activity: [activity("alpha", hoursAgo(1))] }), now);
+    const ticketItem = item("dep-7", hoursAgo(1), {
+      tickets: [dep12], primary: entry("t1", hoursAgo(1), { change: "alpha", tickets: [dep12] }),
+      others: [entry("t0", hoursAgo(4), { change: "alpha", tickets: [dep12] })],
+    });
+    const changeOnly = item("change-alpha", hoursAgo(2), { tickets: [], primary: entry("c1", hoursAgo(2), { change: "alpha" }) });
+    const line = today(board, [changeOnly, ticketItem]).items[0].line;
+    const index = digestIndex([{ covers: ["c1", "t0", "t1"], text: "Alpha moved forward." }]);
+    expect(digestFor(index, line)).toBe("Alpha moved forward.");
+    expect(digestFor(digestIndex([{ covers: ["t0", "t1"], text: "partial" }]), line)).toBeNull();
+  });
+
+  it("copies the digest text on one line without a mark in both formats, and the summary where none matches", () => {
+    const loose = item("w", "2026-10-22T12:00:00Z", { title: "add-work-dashboard", tickets: [], primary: entry("w1", "2026-10-22T12:00:00Z", { summary: "Review comments" }) });
+    const base = { day: "2026-10-22", yesterday: [two, loose], today: [] as TodayEntry[], digests };
+    expect(dailyText({ ...base, format: "text", links: false })).toBe(
+      ["Yesterday (Thu 22 Oct):", "- DEP-1232 — done — Shipped the retry policy. Two steps.", "- add-work-dashboard — in progress — Review comments",
+        "Today:", "- Nothing recorded", "Blockers:", "-"].join("\n"),
+    );
+    expect(dailyText({ ...base, format: "markdown", links: false })).toBe(
+      ["**Yesterday (Thu 22 Oct)**", "", "- DEP-1232 — done — Shipped the retry policy. Two steps.", "- add-work-dashboard — in progress — Review comments", "",
+        "**Today**", "", "- Nothing recorded", "", "**Blockers**", "", "-"].join("\n"),
     );
   });
 });

@@ -238,3 +238,31 @@ Recorded on 2026-10-29 on Windows 10.0.26300.0, using .NET SDK 10.0.113, Node 24
 - The fixture gained a `daily-demo` repository (identity `example/daily-demo`, change `daily-flow`) with observations on fixed past dates, and the smoke tool a `--dashboard-log` mode that records one observation into the fixture journal for the browser scenario. Observation times sit around noon UTC, so they keep their calendar day in timezones from UTC-11 to UTC+10.
 - The plain-text copy scenario expects the fixture journal as created, so it runs before the scenario that logs an observation for today (the file runs serially); repeating a scenario against the same fixture (`--repeat-each`) sees that observation.
 - Live observation on the maintainer's installation was not performed.
+
+## Agent digests on the Daily view (add-day-digests)
+
+Recorded on 2026-10-29 on Windows 10.0.26300.0, using Node 24.13.0 and headless Microsoft Edge. All data used isolated synthetic fixtures under ignored artifacts directories.
+
+### Validation results
+
+| Check | Result |
+| --- | --- |
+| `npm test --prefix dashboard` | 245 of 245 tests in 18 files passed (new: 4 in `daily.spec.ts`, 5 in `app.daily.spec.ts`, including a Daily reload when only the digest revision moved) |
+| `./scripts/package.ps1 -OutputDirectory artifacts/releases/<folder>`, then `npm run test:e2e --prefix dashboard` with `WORKLOG_DASHBOARD_EXECUTABLE` set to the packaged `worklog.exe` and `WORKLOG_DASHBOARD_NO_NODE=true` | 39 of 39 passed in 1.7 minutes, including the three new digest scenarios |
+
+### Final validation (task 5.3)
+
+In one run on 2026-11-02, on the current tree with a fresh package: the locked restore passed (the three `packages.lock.json` files were refreshed for the SDK patch), the Release build was clean, `dotnet test` 406 of 406, `npm test --prefix dashboard` 245 of 245, packaged browser acceptance (`WORKLOG_DASHBOARD_NO_NODE=true`) 39 of 39, the default isolated smoke run passed against the fresh executable, and `./scripts/package-update-fixtures.ps1` passed when started from PowerShell. The full table is in [MCP validation](mcp-validation.md#full-validation-set-task-53).
+
+### What the checks cover
+
+- Client (`daily.spec.ts`): a line matches only when its primary plus others are exactly a digest's covered IDs, in any order; a stale digest after a later entry, a subset and a superset do not match; an assembled change-card line (built from a ticket item and a change-only item) matches by the entries it was built from; the exact copied text in plain and Markdown formats uses the digest text on one line without a mark and keeps the summary where no digest matches.
+- Angular (`app.daily.spec.ts`): a matching Yesterday line shows the digest with the "agent digest" mark while its status and collapsed observation are unchanged; a matching Today line shows it; a stale digest falls back to the latest summary with no mark; Copy for daily uses the digest text without the mark in both formats.
+- Browser (fake clock on Monday 12 January 2026; the fixture's `digest-demo` repository): the digest and mark show on the Yesterday line for DGT-1 and the Today line for DGT-2, and the plain and Markdown copies use the digest text without the mark; after a second process logs a further observation for DGT-2, a refresh shows the new summary without the mark and "2 other observations today", Friday's digest still matches, and the copied text carries the new summary; a digest saved by a second process while Daily is open (journal unchanged) shows the mark and is copied within a poll, without Refresh.
+
+### Notes
+
+- The fixture gained a `digest-demo` repository (identity `example/digest-demo`). Its digests are written through the real save path (`DigestService.Save`) into the isolated `digests.db` of the fixture data directory. Observation times sit around noon UTC like the Daily fixture.
+- The fixture's `DigestService` uses UTC, so fixture creation does not depend on the machine's timezone. The smoke tool's `--dashboard-digest` mode saves a digest through the real save path for the scenario that saves one while Daily is open.
+- The staleness scenario logs into the fixture journal, so it runs after the display scenario in the serial file; repeating the scenarios against the same fixture (`--repeat-each`) sees that observation.
+- Live observation on the maintainer's installation was not performed.

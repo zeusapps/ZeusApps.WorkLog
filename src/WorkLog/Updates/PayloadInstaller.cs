@@ -216,7 +216,13 @@ public sealed class PayloadInstaller
         if (client.ServerInfo.Version != version)
             throw new InvalidOperationException("Health probe server version differs.");
         var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-        if (tools.Count != 2 || tools.Any(tool => tool.ProtocolTool.OutputSchema is null)
+        ValidateAdvertisedTools(tools.Select(tool => tool.ProtocolTool).ToList());
+    }
+
+    internal static void ValidateAdvertisedTools(IReadOnlyCollection<ModelContextProtocol.Protocol.Tool> tools)
+    {
+        // Later payloads may add tools (save_digest); the journal tools must remain.
+        if (tools.Count < 2 || tools.Any(tool => tool.OutputSchema is null)
             || !tools.Any(tool => tool.Name == "log_work") || !tools.Any(tool => tool.Name == "query_work"))
             throw new InvalidOperationException("Candidate health probe did not advertise the expected journal tools.");
     }

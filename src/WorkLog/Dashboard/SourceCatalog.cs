@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using WorkLog.Configuration;
 using WorkLog.Infrastructure;
+using WorkLog.Persistence;
 
 namespace WorkLog.Dashboard;
 
@@ -17,10 +18,10 @@ internal sealed record ChangeInfo(string SourceId, string Name, string Directory
     [property: JsonIgnore] string ContentStamp = "", [property: JsonIgnore] string TaskStamp = "");
 internal sealed record SourceNotice(string SourceId, string Text);
 internal sealed record CatalogSnapshot(DashboardRepository[] Repositories, DocumentSource[] Sources, ChangeInfo[] Changes,
-    string? LaunchRepository, string Revision, string[] Notices, long JournalSnapshot = 0,
+    string? LaunchRepository, string Revision, string[] Notices, long JournalSnapshot = 0, long DigestRevision = 0,
     [property: JsonIgnore] SourceNotice[]? SourceNotices = null);
 
-internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJournal journal, LocalCommand command, string? launchDirectory, TimeProvider? time = null)
+internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJournal journal, LocalCommand command, string? launchDirectory, TimeProvider? time = null, DigestStore? digests = null)
 {
     // Expensive-tier results (git and OpenSpec CLI invocations) stay valid this long, unless an input stamp changes first.
     internal static readonly TimeSpan ExpensiveLifetime = TimeSpan.FromSeconds(60);
@@ -211,7 +212,7 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
         }
         var revision = ContentHash.Compute(Json.Encode(changes.Select(c => new { c.SourceId, c.DirectoryName, c.Archived, Documents = c.Documents.Select(d => new { d.Path, d.Label }), c.CompletedTasks, c.TotalTasks, c.ContentStamp })));
         return new(repositories.Values.OrderBy(r => r.Label, StringComparer.Ordinal).ToArray(), sources.Values.ToArray(), changes.ToArray(), launchRepository,
-            revision, notices.ToArray(), journalSnapshot, sourceNotices.ToArray());
+            revision, notices.ToArray(), journalSnapshot, digests?.Revision() ?? 0, sourceNotices.ToArray());
     }
 
     private async Task<(string? Root, string? StoreId, string? Error)> ResolveAsync(string checkout, string settingsStamp, bool force, CancellationToken token)

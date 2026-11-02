@@ -200,6 +200,48 @@ Current documentation was checked on 2026-10-25. Context7 retrieved the official
 
 Final local validation passed the Release build with zero warnings/errors, all 196 regression tests without skips (`tests/WorkLog.Tests/TestResults/<account>_<host>_2026-10-25_18_15_28.trx`), targeted formatting verification and strict OpenSpec validation. Full packaged smoke passed under `artifacts/smoke/6df1811ac385445cba1e0d7b5841b4a3/`, repeating the eight-stage worktree matrix with the same results alongside existing client/instruction, journal/migration, ticket/context and alias checks. Bootstrap protocol/EOF/offline-status acceptance passed under `artifacts/update-smoke/510a11a3d90d4450a714566e46f69295/`. The 68,897,144-byte review ZIP is `artifacts/releases/worktree-startup-20261025/worklog-0.1.1-win-x64.zip`, SHA-256 `33fa58c32c1636d58bdf53c81bdc7141ba31a77b51beb6f2125c6077438480dc`; it includes the updated installation guide. This remains a local unreleased review package. No runtime implementation, installed application, real client configuration or journal schema was changed by this verification.
 
+## Day digests (`add-day-digests`, server side)
+
+`log_work` may now return an optional `digestRequest`, and a third tool, `save_digest`, stores the agent-written day digest. The tool contract is client-neutral, so every check below covers Claude Code and Codex alike; the managed instruction paragraph is shared text in `AgentInstructions.Render` and is checked for both clients' owned blocks in the unit tests.
+
+| Check | Result |
+| --- | --- |
+| `DigestStoreTests`: create on first use with `user_version` 1, replace on second save, two concurrent writers, missing store read as empty without creating it, newer store version unavailable for the process | passed |
+| `journal.db` `user_version` after digest use | 2 (asserted in `DigestStoreTests` and in the packaged smoke); the shared-data contract is unchanged |
+| `DigestTests` (`log_work`): request on the second observation with entries oldest first; none for a first observation, a retry replay, another item, another day, or 31 observations; Europe/Warsaw midnight boundary; a broken digest store (a directory named `digests.db`) and a newer store version leave the logging result and `query_work` intact | passed |
+| `DigestTests` (`save_digest`): saved digest, line breaks normalized, stale set after a later observation, newer set replaces, mixed items, mixed days, unknown ID, empty and over-long text, duplicate IDs, repeated identical save leaves one digest, unavailable store explained | passed |
+| `DigestContractTests` over a stdio server: three tools; `save_digest` annotations (not read-only, not destructive, idempotent, closed world) and input schema `{entryIds: string[], text: string}`; `log_work` and `query_work` inputs unchanged and `log_work` output gains only the optional `digestRequest`; schema-valid results; stale and unknown-field rejections | passed |
+| `InstructionOptionsTests`: Claude Code (`CLAUDE.local.md`) and Codex (`.codex/config.toml`) owned blocks written by `init` both contain the same digest paragraph and differ only in the agent name; `--no-instructions` removes it from both | passed |
+| `worklog init --dry-run --clients both` on a disposable repository with a disposable `--data-dir` | reports managed instructions enabled (planned) for `claude` and `codex` and writes nothing; dry-run output does not print the instruction text, so the text itself is covered by the unit test above |
+| `DailyDigestResponseTests`: `POST /api/daily` returns `digests` for items of the selected day and of today, leaves an unrelated item out, and returns an empty list for a missing or unreadable store | passed |
+| `dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- <packaged worklog.exe>` (default isolated run, no live agents) with a locked-restore Release build and `./scripts/package.ps1` output | `SMOKE PASSED`; the new `digests` stage in a disposable data directory logged two observations (digest request with both entries), saved a digest, logged a third (request over three), rejected a repeated save of the first two as stale, and found `journal.db` `user_version` 2 and `digests.db` `user_version` 1. Evidence: `digests/evidence.json` under the smoke run directory |
+| `./scripts/package-update-fixtures.ps1` (launcher and mixed-version acceptance) | passed after the health probe accepted additional tools (see below) |
+| `HealthProbeToolListingTests` (task 2.4): the relaxed update health probe accepts the two journal tools alone, accepts an additional tool with an output schema, rejects a listing missing `log_work` or `query_work`, and rejects a tool without an output schema | 5 of 5 passed |
+| `dotnet test -c Release --no-build --no-restore` | 406 passed, 0 failed (final run of task 5.3, below) |
+
+`PayloadInstaller`'s post-install health probe used to require exactly two tools. From this release it requires `log_work` and `query_work` plus an output schema on every tool and accepts additional tools, so later tool additions update normally (`HealthProbeToolListingTests`, above). Releases v0.2.0 and v0.3.0 keep the exact-two rule in their own `worklog update` and decline a candidate that lists `save_digest`. Design Decision 7 resolves this as a one-time manual installation for users on v0.3.0 or earlier, documented in `docs/releases.md` and `docs/installation.md`; the smoke checks that asserted exactly two tools now assert the current listing while still requiring both journal tools. No workaround for the old probe was attempted.
+
+### Live-agent evaluation (dropped)
+
+The planned live-agent evaluation of digests was dropped by user decision after the smoke tool's isolated client profiles proved unauthenticated (Codex CLI: 401 Unauthorized; Claude Code: "Not logged in"; no model turn ran and no cost was incurred). Real-client behavior with digests (whether the clients follow the managed instructions and the `digestRequest`, and the quality of the text) is therefore unverified; see design Decision 6. The server side is covered by the isolated tests and smoke above. No live-agent scenario or mode exists for digests; the pre-existing `--live-agents` scenario is unchanged.
+
+### Full validation set (task 5.3)
+
+Recorded in one run on 2026-11-02 on Windows 10.0.26300.0 (.NET SDK 10.0.114, selected by `global.json` with `latestPatch`) from the working tree on top of `5a73ab9`, with a fresh package under `artifacts/releases/`. The three `packages.lock.json` files (`src/WorkLog`, `src/WorkLog.Launcher`, `tools/WorkLog.LauncherProbe`) were refreshed for the SDK patch (`Microsoft.NET.ILLink.Tasks` 10.0.13 to 10.0.14, nothing else changed) so that the locked restore passes. The Git Bash failure of the launcher fixtures noted in earlier rounds on 2026-10-29 was not rerun here.
+
+| Command | Result |
+| --- | --- |
+| `dotnet restore --locked-mode` | passed |
+| `dotnet build -c Release --no-restore` | passed, 0 warnings, 0 errors |
+| `dotnet test -c Release --no-build --no-restore` | 406 passed, 0 failed |
+| `npm ci --prefix dashboard --no-audit --no-fund`, `npm test --prefix dashboard` | 487 packages installed; 245 of 245 tests in 18 files passed |
+| `./scripts/package.ps1 -OutputDirectory artifacts/releases/<new folder>` | passed (version 0.3.0) |
+| `npm run test:e2e --prefix dashboard` with `WORKLOG_DASHBOARD_EXECUTABLE` = the packaged `worklog.exe`, `WORKLOG_DASHBOARD_NO_NODE=true` | 39 of 39 passed |
+| `dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- <packaged worklog.exe>` (default isolated run, no live agents) | `SMOKE PASSED` |
+| `pwsh ./scripts/package-update-fixtures.ps1`, started from PowerShell | `LAUNCHER PASSED`, `MIXED-VERSION PASSED` |
+
+Packaging and the fixtures rewrote no lock file beyond the refresh above.
+
 ## Sources
 
 - [Official C# SDK: tools, structured content, errors and annotations](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/tools/tools.md)

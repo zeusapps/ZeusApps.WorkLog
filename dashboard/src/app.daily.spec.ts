@@ -73,6 +73,7 @@ function setup(options: { daily?: DailyDigest; query?: Record<string, string>; f
     changes: [change("add-work-dashboard", 2, 9), change("quiet-one", 0, 9), change("idea", 0, 9), change("export-retries", 0, 9)],
     launchRepository: null, revision: "1", notices: [], journalSnapshot: 3,
   } as Catalog;
+  const served = { catalog };
   app.catalog.set(catalog);
   app.ready.set(true);
   app["activityScope"].set("[]");
@@ -84,6 +85,7 @@ function setup(options: { daily?: DailyDigest; query?: Record<string, string>; f
     const path = String(input);
     calls.push({ path, method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body as string) : undefined });
     if (path === "/api/state") return new Response(null, { status: 204 });
+    if (path === "/api/catalog") return Response.json(served.catalog);
     if (path === "/api/daily") {
       if (options.fail) return Response.json({ error: "day must be earlier than the current local date." }, { status: options.fail });
       return Response.json(options.daily ?? digest());
@@ -92,7 +94,7 @@ function setup(options: { daily?: DailyDigest; query?: Record<string, string>; f
     if (path === "/api/ongoing/unlinked") return Response.json({ snapshot: 7, entries: [], truncated: false });
     throw new Error("Unexpected request: " + path);
   });
-  return { app, fixture, calls, router, events, element: fixture.nativeElement as HTMLElement };
+  return { app, fixture, calls, router, events, served, element: fixture.nativeElement as HTMLElement };
 }
 afterEach(() => {
   vi.useRealTimers();
@@ -295,6 +297,24 @@ describe("Daily view navigation", () => {
     fixture.destroy();
   });
 
+  it("reloads Daily when only the digest revision moved, and not for an unchanged poll", async () => {
+    const { app, calls, fixture, served } = setup();
+    app.view.set("daily");
+    app["evaluate"]();
+    app["journalSnapshot"] = 3;
+    app["digestRevision"] = 10;
+    served.catalog = { ...served.catalog, digestRevision: 10 };
+    await app["poll"]();
+    expect(calls.filter((c) => c.path === "/api/daily")).toHaveLength(0);
+    served.catalog = { ...served.catalog, digestRevision: 11 };
+    await app["poll"]();
+    expect(calls.filter((c) => c.path === "/api/daily")).toHaveLength(1);
+    expect(calls.some((c) => c.path === "/api/timeline")).toBe(false);
+    await app["poll"]();
+    expect(calls.filter((c) => c.path === "/api/daily")).toHaveLength(1);
+    fixture.destroy();
+  });
+
   it("asks for the new day's digest after the date rolls over", async () => {
     const { app, calls, fixture } = setup();
     app.view.set("daily");
@@ -432,6 +452,80 @@ describe("Copy for daily", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     await harness.app.copyDaily();
     expect(writeText).not.toHaveBeenCalled();
+    harness.fixture.destroy();
+  });
+});
+
+describe("Daily agent digests", () => {
+  const withDigests = (digests: { covers: string[]; text: string }[], base: DailyDigest = digest()) => ({ ...base, digests });
+  const shown = async (daily: DailyDigest) => {
+    const harness = setup({ daily });
+    harness.app.view.set("daily");
+    await harness.app.loadDaily();
+    harness.app.boardOrder.set(["ticket:exp-identity", "change:" + repo + "/add-work-dashboard"]);
+    harness.fixture.detectChanges();
+    return harness;
+  };
+
+  it("shows a matching digest with the mark on a Yesterday line, with status and collapsed observations unchanged", async () => {
+    const { fixture, element } = await shown(withDigests([{ covers: ["r0", "r1"], text: "Merged the retry policy." }]));
+    const first = element.querySelector('[data-testid="daily-yesterday"] .daily-line')!;
+    const summary = first.querySelector('[data-testid="daily-summary"]')!;
+    expect(summary.textContent).toContain("Merged the retry policy.");
+    expect(summary.textContent).not.toContain("Retry policy for export jobs merged");
+    expect(summary.querySelector('[data-testid="daily-digest-mark"]')!.textContent).toBe("agent digest");
+    expect(first.querySelector(".daily-status")!.textContent).toBe("Recorded done");
+    expect(first.querySelector("details summary")!.textContent).toContain("1 other observation");
+    expect(first.querySelector("details li")!.textContent).toContain("Started the retry work");
+    expect(element.querySelectorAll('[data-testid="daily-digest-mark"]')).toHaveLength(1);
+    fixture.destroy();
+  });
+
+  it("shows a matching digest on a Today line", async () => {
+    const { fixture, element } = await shown(withDigests([{ covers: ["x0", "x1"], text: "Scheduler hook is in." }]));
+    const line = element.querySelector('[data-testid="daily-today-line"][data-card-key^="ticket:"]')!;
+    expect(line.querySelector('[data-testid="daily-today-summary"]')!.textContent).toContain("Scheduler hook is in.");
+    expect(line.querySelector('[data-testid="daily-digest-mark"]')).not.toBeNull();
+    expect(line.querySelector("details summary")!.textContent).toContain("1 other observation today");
+    fixture.destroy();
+  });
+
+  it("falls back to the latest summary when a later observation made the digest stale", async () => {
+    const { fixture, element } = await shown(withDigests([{ covers: ["x0", "x1"], text: "Scheduler hook is in." }], {
+      ...digest(),
+      today: [item("exp-identity", "DEP-1240", [dep1240], "in_progress", entry("x2", hoursAgo(1), "Load test passed"), {
+        others: [entry("x1", hoursAgo(2), "Export retries wired to the job scheduler; load test remains"), entry("x0", hoursAgo(5), "Wrote the scheduler hook")],
+      })],
+    }));
+    const line = element.querySelector('[data-testid="daily-today-line"][data-card-key^="ticket:"]')!;
+    expect(line.querySelector('[data-testid="daily-today-summary"]')!.textContent).toBe("Load test passed");
+    expect(line.querySelector('[data-testid="daily-digest-mark"]')).toBeNull();
+    fixture.destroy();
+  });
+
+  it("copies the digest text without the mark in both formats", async () => {
+    const harness = await shown(withDigests([{ covers: ["r0", "r1"], text: "Merged the retry policy." }, { covers: ["x0", "x1"], text: "Scheduler hook is in." }]));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    await harness.app.copyDaily();
+    expect(writeText).toHaveBeenLastCalledWith([
+      "Yesterday (Thu 22 Oct):",
+      "- DEP-1232 — done — Merged the retry policy.",
+      "- add-work-dashboard — in progress — Review comments edit/delete",
+      "- Tried a spike — in progress",
+      "Today:",
+      "- DEP-1240 — in progress — Scheduler hook is in.",
+      "- add-work-dashboard",
+      "Blockers:",
+      "-",
+    ].join("\n"));
+    harness.app.dailyFormat.set("markdown");
+    harness.app.dailyLinks.set(true);
+    await harness.app.copyDaily();
+    const markdown = writeText.mock.lastCall![0] as string;
+    expect(markdown).toContain("- [DEP-1232](https://acme.atlassian.net/browse/DEP-1232) — done — Merged the retry policy.");
+    expect(markdown).toContain("— in progress — Scheduler hook is in.");
+    expect(markdown).not.toContain("agent digest");
     harness.fixture.destroy();
   });
 });

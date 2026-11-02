@@ -38,8 +38,11 @@ public sealed class DevInstallTests
     {
         using var fixture = new Fixture();
         var before = fixture.Snapshot();
-        Assert.Contains("Source file", Assert.Throws<InvalidOperationException>(() =>
-            fixture.Installer.Preflight(fixture.Package("0.1.9001", builtAt: "2001-01-01T00:00:00Z"))).Message);
+        // The newest source entry may be a file or a directory; the message names which, so assert the shared part.
+        var staleMessage = Assert.Throws<InvalidOperationException>(() =>
+            fixture.Installer.Preflight(fixture.Package("0.1.9001", builtAt: "2001-01-01T00:00:00Z"))).Message;
+        Assert.StartsWith("Source ", staleMessage);
+        Assert.Contains("changed after the package was built", staleMessage);
         Assert.Contains("built from commit", Assert.Throws<InvalidOperationException>(() =>
             fixture.Installer.Preflight(fixture.Package("0.1.9002", commit: "1234567890abcdef1234567890abcdef12345678"))).Message);
         Assert.Contains("not a marked", Assert.Throws<InvalidOperationException>(() =>

@@ -55,7 +55,9 @@ internal sealed class PackagedServer : IAsyncDisposable
             var tools = (await server.RequestAsync("tools/list", new
             {
             })).GetProperty("result").GetProperty("tools");
-            if (tools.GetArrayLength() != 2)
+            // Payloads before day digests expose two tools; current ones add save_digest.
+            var names = tools.EnumerateArray().Select(tool => tool.GetProperty("name").GetString()).ToArray();
+            if (names.Length is not (2 or 3) || !names.Contains("log_work") || !names.Contains("query_work"))
                 throw new InvalidOperationException("Expected both journal tools.");
             return server;
         }

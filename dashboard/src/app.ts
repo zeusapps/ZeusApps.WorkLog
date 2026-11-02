@@ -41,7 +41,7 @@ import {
   rankColumn,
   stages,
 } from "./board";
-import { DailyFormat, dailyText, dailyToday, dayLabel, noSummary } from "./daily";
+import { DailyFormat, dailyText, dailyToday, dayLabel, digestFor, digestIndex, noSummary } from "./daily";
 import { markdownObservationLimit, workItemMarkdown } from "./workitem-markdown";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
 import {
@@ -227,6 +227,7 @@ export class App implements OnDestroy, AfterViewInit {
   private rememberedTimezone?: string;
   private evaluatedDate = "";
   private journalSnapshot: number | undefined;
+  private digestRevision: number | undefined;
   private searchRevision: string | null = null;
   private lastSaved = "";
   protected now = () => new Date();
@@ -310,6 +311,8 @@ export class App implements OnDestroy, AfterViewInit {
       ? dailyToday(this.fullBoard(), data.before, data.digest.today, { zone: this.timezone, order: this.boardOrder() })
       : null;
   });
+  /** The agent digests of the loaded Daily view, indexed by the observations they cover. */
+  readonly dailyDigests = computed(() => digestIndex(this.dailyData()?.digest.digests));
   readonly board = computed<Board>(() => filterBoard(this.fullBoard(), this.boardFilter()));
   readonly boardTotal = computed(() => stages.reduce((total, stage) => total + this.fullBoard()[stage].length, 0));
   readonly boardShown = computed(() => stages.reduce((total, stage) => total + this.board()[stage].length, 0));
@@ -429,6 +432,7 @@ export class App implements OnDestroy, AfterViewInit {
       this.range = normalizeRange(state.history?.range);
       this.evaluate();
       this.journalSnapshot = catalog.journalSnapshot;
+      this.digestRevision = catalog.digestRevision;
       this.ready.set(true);
       if (
         window.location.pathname === "/" &&
@@ -765,6 +769,7 @@ export class App implements OnDestroy, AfterViewInit {
       today: today.items,
       format: this.dailyFormat(),
       links: this.dailyLinks(),
+      digests: data.digest.digests,
     });
     await this.copyText(text, "Copy this daily", "Daily copied.", true);
   }
@@ -774,6 +779,10 @@ export class App implements OnDestroy, AfterViewInit {
     return item.tickets.length ? item.title : humanize(item.title);
   }
   readonly noSummary = noSummary;
+  /** The agent digest shown in place of a Daily line's latest summary, or null. */
+  dailyDigest(line: DailyItem | null) {
+    return digestFor(this.dailyDigests(), line);
+  }
   private query(): TimelineQuery {
     return {
       from: boundary(this.from, this.timezone),
@@ -2020,11 +2029,19 @@ export class App implements OnDestroy, AfterViewInit {
       if (this.searchText.trim() && snapshot.revision !== this.searchRevision)
         void this.search();
       const rolled = this.dayRolledOver();
+      let dataRefreshed = false;
       if (rolled || snapshot.journalSnapshot !== this.journalSnapshot) {
+        dataRefreshed = true;
         this.journalSnapshot = snapshot.journalSnapshot;
         if (rolled) this.evaluate();
         void this.loadActivity();
         await this.refreshData();
+      }
+      // A saved digest changes only digests.db, so the journal snapshot stays put; only the Daily lines show digests.
+      if (snapshot.digestRevision !== this.digestRevision) {
+        const moved = this.digestRevision !== undefined;
+        this.digestRevision = snapshot.digestRevision;
+        if (moved && !dataRefreshed && this.view() === "daily") await this.loadDaily();
       }
     } catch (error) {
       this.report(error);

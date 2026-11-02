@@ -29,6 +29,7 @@ Before launching a specialist, supply:
 - Reserve report filenames and finding IDs in `reports/findings.md` before concurrent reviewers start. Number reports per role and change, continuing across sessions and clients. Reserve `QA-001` and `ANALYSIS-001` finding IDs independently of report numbers. Never reuse an ID or an allocation after an interruption.
 - Use one developer writer per shared scope or checkout and one ledger owner per change. Parallel developers need disjoint ownership or an isolated checkout that contains the assigned revision and the relevant user and untracked work. Do not assume a default-branch worktree holds the current implementation.
 - Every implementation receives both QA and code analysis, even a small documentation or configuration fix. Scale depth to the affected behavior. Start reviews on a stable developer handoff. QA and analysis may run concurrently on distinct reserved outputs.
+- A live-agent evaluation is planned work: it must appear in the change's `tasks.md`, and its assignment repeats the clients, session count, and per-session budget. Parity applies: evaluate Claude Code and Codex alike unless a restriction is evidenced.
 - Subagents cannot take over orchestration. Route their additional delegation needs through yourself.
 
 ## Review target identity

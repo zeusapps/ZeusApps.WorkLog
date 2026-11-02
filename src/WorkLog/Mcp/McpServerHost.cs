@@ -5,6 +5,7 @@ using ModelContextProtocol.Protocol;
 using WorkLog.Cli;
 using WorkLog.Configuration;
 using WorkLog.Journaling;
+using WorkLog.Persistence;
 using WorkLog.Repositories;
 using WorkLog.Updates;
 
@@ -18,7 +19,9 @@ internal static class McpServerHost
         var builder = Host.CreateApplicationBuilder();
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
-        builder.Services.AddSingleton(new Journal(settings, repository));
+        var journal = new Journal(settings, repository);
+        builder.Services.AddSingleton(journal);
+        builder.Services.AddSingleton(new DigestService(journal, new DigestStore(settings.DataDirectory)));
         using var http = ReleaseClient.CreateHttpClient();
         var updates = new UpdateDiscovery(settings, new ReleaseClient(http));
         builder.Services.AddSingleton(updates);

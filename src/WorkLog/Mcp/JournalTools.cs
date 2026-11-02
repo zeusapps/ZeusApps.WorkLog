@@ -9,7 +9,7 @@ using WorkLog.Updates;
 namespace WorkLog.Mcp;
 
 [McpServerToolType]
-public sealed class JournalTools(Journal journal, UpdateDiscovery? updates = null)
+public sealed class JournalTools(Journal journal, UpdateDiscovery? updates = null, DigestService? digests = null)
 {
     [McpServerTool(Name = "log_work", UseStructuredContent = true, ReadOnly = false,
         Destructive = false, Idempotent = false, OpenWorld = false)]
@@ -17,7 +17,19 @@ public sealed class JournalTools(Journal journal, UpdateDiscovery? updates = nul
     public LogResult LogWork([Description("Actual activity to record. Supply a repository identity when no repository was configured. Reuse an idempotency key only for identical retries.")] LogRequest entry) => Invoke(() =>
     {
         ArgumentNullException.ThrowIfNull(entry);
-        return journal.Log(entry) with { UpdateHint = updates?.GetHint() };
+        var result = journal.Log(entry) with { UpdateHint = updates?.GetHint() };
+        return result.Created && digests is not null ? result with { DigestRequest = digests.Request(result.Entry) } : result;
+    });
+
+    [McpServerTool(Name = "save_digest", UseStructuredContent = true, ReadOnly = false,
+        Destructive = false, Idempotent = true, OpenWorld = false)]
+    [Description("Store a one-to-two sentence digest of one work item's observations for one local day, after a log_work result included digestRequest. Pass exactly the IDs listed in the request. A stale or invalid set is rejected without writing; do not retry a stale digest.")]
+    public SavedDigest SaveDigest(
+        [Description("Exactly the observation IDs listed in the digestRequest (2 to 30).")] string[] entryIds,
+        [Description("One or two sentences, at most 280 characters, stating what the observations achieved that day. Outcomes, not process; no secrets or personal data.")] string text) => Invoke(() =>
+    {
+        if (digests is null) throw new InvalidOperationException("Digests are not available in this server.");
+        return digests.Save(entryIds, text);
     });
 
     [McpServerTool(Name = "query_work", UseStructuredContent = true, ReadOnly = true,

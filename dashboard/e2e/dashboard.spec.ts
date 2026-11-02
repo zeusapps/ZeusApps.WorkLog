@@ -1309,11 +1309,11 @@ test.describe("Daily view", () => {
   const monday = new Date("2026-01-12T12:30:00Z");
   const stateWith = (page: Page, repositories: string[] | null, extra: object = {}) =>
     page.request.put("/api/state", { data: { schemaVersion: 1, repositories, ...extra } });
-  const open = async (page: Page, context: BrowserContext) => {
+  const open = async (page: Page, context: BrowserContext, repository = "example/daily-demo") => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
     await page.clock.install({ time: monday });
     await authorize(page);
-    expect((await stateWith(page, ["example/daily-demo"])).status()).toBe(204);
+    expect((await stateWith(page, [repository])).status()).toBe(204);
     await page.goto("/daily");
     await expect(page.locator("#daily-title")).toBeVisible();
     await expect(page.getByTestId("daily-day")).toBeVisible();
@@ -1415,6 +1415,91 @@ test.describe("Daily view", () => {
       await expect(quiet).toHaveCount(1);
       await expect(quiet.getByTestId("daily-today-summary")).toHaveCount(0);
       expect(await copied(page)).toContain("Today:\n- DEMO-2 — in progress — Export retries wired to the job scheduler; load test remains.\n- DEMO-3\nBlockers:");
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("a stored digest shows on its Yesterday and Today lines with the mark and is copied in place of the summary", async ({ page, context }) => {
+    await open(page, context, "example/digest-demo");
+    try {
+      const yesterday = page.getByTestId("daily-yesterday").getByTestId("daily-line").filter({ hasText: "DGT-1" });
+      await expect(yesterday.getByTestId("daily-summary")).toContainText("Built and merged the audit export.");
+      await expect(yesterday.getByTestId("daily-digest-mark")).toHaveText("agent digest");
+      await expect(yesterday).toContainText("Recorded done");
+      await expect(yesterday.locator("details summary")).toHaveText("1 other observation");
+      const today = page.getByTestId("daily-today-line").filter({ hasText: "DGT-2" });
+      await expect(today.getByTestId("daily-today-summary")).toContainText("Retention sweep runs in batches.");
+      await expect(today.getByTestId("daily-digest-mark")).toHaveText("agent digest");
+      await expect(today).toContainText("In progress");
+      expect(await copied(page)).toBe(
+        [
+          "Yesterday (Fri 9 Jan):",
+          "- DGT-1 — done — Built and merged the audit export.",
+          "Today:",
+          "- DGT-2 — in progress — Retention sweep runs in batches.",
+          "Blockers:",
+          "-",
+        ].join("\n"),
+      );
+      await page.getByLabel("Copy format").selectOption("markdown");
+      const markdown = await copied(page);
+      expect(markdown).toContain("- DGT-1 — done — Built and merged the audit export.");
+      expect(markdown).toContain("- DGT-2 — in progress — Retention sweep runs in batches.");
+      expect(markdown).not.toContain("agent digest");
+    } finally {
+      await page.getByLabel("Copy format").selectOption("text");
+      await reset(page);
+    }
+  });
+
+  test("a further observation makes the digest stale, and the line falls back to the new summary after a refresh", async ({ page, context }) => {
+    await open(page, context, "example/digest-demo");
+    try {
+      const today = page.getByTestId("daily-today-line").filter({ hasText: "DGT-2" });
+      await expect(today.getByTestId("daily-digest-mark")).toHaveCount(1);
+      const info = await fixture();
+      const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
+      const logged = spawnSync(
+        "dotnet",
+        [smoke, "--dashboard-log", info.root, "example/digest-demo", "in_progress", "-", "DGT-2", "2026-01-12T12:20:00.000Z", "Added the retention dry-run flag."],
+        { encoding: "utf8", windowsHide: true },
+      );
+      expect(logged.status, logged.stdout + logged.stderr).toBe(0);
+      await page.getByRole("button", { name: "Refresh dashboard" }).click();
+      await expect(today.getByTestId("daily-today-summary")).toHaveText("Added the retention dry-run flag.");
+      await expect(today.getByTestId("daily-digest-mark")).toHaveCount(0);
+      await expect(today.locator("details summary")).toHaveText("2 other observations today");
+      // Friday's digest still matches its own, unchanged observations.
+      await expect(page.getByTestId("daily-yesterday").getByTestId("daily-digest-mark")).toHaveCount(1);
+      const text = await copied(page);
+      expect(text).toContain("- DGT-2 — in progress — Added the retention dry-run flag.");
+      expect(text).not.toContain("Retention sweep runs in batches.");
+      expect(text).toContain("- DGT-1 — done — Built and merged the audit export.");
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("a digest saved while Daily is open appears and is copied within a poll, without Refresh", async ({ page, context }) => {
+    await open(page, context, "example/digest-demo");
+    try {
+      const info = await fixture();
+      const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
+      const run = (args: string[]) => {
+        const done = spawnSync("dotnet", [smoke, ...args], { encoding: "utf8", windowsHide: true });
+        expect(done.status, done.stdout + done.stderr).toBe(0);
+      };
+      run(["--dashboard-log", info.root, "example/digest-demo", "started", "-", "DGT-3", "2026-01-12T12:05:00.000Z", "Started the export audit trail."]);
+      run(["--dashboard-log", info.root, "example/digest-demo", "in_progress", "-", "DGT-3", "2026-01-12T12:10:00.000Z", "Trail records every export."]);
+      await page.getByRole("button", { name: "Refresh dashboard" }).click();
+      const line = page.getByTestId("daily-today-line").filter({ hasText: "DGT-3" });
+      await expect(line.getByTestId("daily-today-summary")).toHaveText("Trail records every export.");
+      await expect(line.getByTestId("daily-digest-mark")).toHaveCount(0);
+      run(["--dashboard-digest", info.root, "example/digest-demo", "DGT-3", "Export audit trail records every export."]);
+      await expect(line.getByTestId("daily-today-summary")).toContainText("Export audit trail records every export.", { timeout: 10_000 });
+      await expect(line.getByTestId("daily-digest-mark")).toHaveText("agent digest");
+      expect(await copied(page)).toContain("- DGT-3 — in progress — Export audit trail records every export.");
     } finally {
       await reset(page);
     }

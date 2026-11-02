@@ -12,4 +12,8 @@ public sealed record LogResult(
     [Description("Optional application update notice, separate from the saved observation. Announce once per version per assistant session.")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public UpdateHint? UpdateHint { get; init; }
+
+    [Description("Present when this item now has two or more observations on its local day. After finishing the user's request, write a short digest and call save_digest with exactly the listed observation IDs. Absent for retries, single observations, and when digests are unavailable.")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DigestRequest? DigestRequest { get; init; }
 }

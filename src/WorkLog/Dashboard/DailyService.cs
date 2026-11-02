@@ -1,5 +1,6 @@
 using System.Globalization;
 using WorkLog.Journaling;
+using WorkLog.Persistence;
 using WorkLog.Reporting;
 
 namespace WorkLog.Dashboard;
@@ -8,9 +9,11 @@ namespace WorkLog.Dashboard;
 /// <param name="Day">An explicit earlier local date (yyyy-MM-dd); omitted for the last recorded day.</param>
 internal sealed record DailyRequest(string Before, string Timezone, string[]? Repositories = null, string? Day = null);
 internal sealed record DailyItem(string Id, string Title, string Repository, Ticket[] Tickets, string[] Changes, string Status, Entry Primary, Entry[] Others);
-internal sealed record DailyDigest(string? Day, string? PreviousDay, string? NextDay, DailyItem[] Items, DailyItem[] Today);
+/// <param name="Covers">The sorted IDs of the observations a stored agent digest covers.</param>
+internal sealed record DayDigest(string[] Covers, string Text);
+internal sealed record DailyDigest(string? Day, string? PreviousDay, string? NextDay, DailyItem[] Items, DailyItem[] Today, DayDigest[] Digests);
 
-internal sealed class DailyService(DashboardJournal journal)
+internal sealed class DailyService(DashboardJournal journal, DigestStore? digests = null)
 {
     private const string DateFormat = "yyyy-MM-dd";
 
@@ -38,7 +41,7 @@ internal sealed class DailyService(DashboardJournal journal)
 
         var day = requested ?? (journal.LatestBefore(before, repositories, data.Snapshot) is { } latest ? LocalDate(latest, zone) : (DateOnly?)null);
         if (day is null)
-            return new(null, null, null, [], today);
+            return new(null, null, null, [], today, Digests(today));
         var start = Midnight(day.Value, zone);
         var end = Midnight(day.Value.AddDays(1), zone);
         var items = Items(data.Entries.Where(e => e.OccurredAt < end).ToArray(), start, end, zone, data.Snapshot);
@@ -47,7 +50,22 @@ internal sealed class DailyService(DashboardJournal journal)
         return new(day.Value.ToString(DateFormat, CultureInfo.InvariantCulture),
             previous is { } p ? LocalDate(p, zone).ToString(DateFormat, CultureInfo.InvariantCulture) : null,
             next is { } n ? LocalDate(n, zone).ToString(DateFormat, CultureInfo.InvariantCulture) : null,
-            items, today);
+            items, today, Digests(items, today));
+    }
+
+    /// <summary>Stored digests of the items in the response. Digests are optional: a missing or unreadable store is empty.</summary>
+    private DayDigest[] Digests(params DailyItem[][] sections)
+    {
+        if (digests is null) return [];
+        try
+        {
+            var ids = sections.SelectMany(s => s).Where(i => !i.Id.StartsWith("adhoc:", StringComparison.Ordinal)).Select(i => i.Id).ToHashSet(StringComparer.Ordinal);
+            return digests.Read(ids).Select(d => new DayDigest(d.Covers, d.Text)).ToArray();
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private static DateOnly LocalDate(DateTimeOffset instant, TimeZoneInfo zone) => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, zone).DateTime);

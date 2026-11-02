@@ -124,6 +124,12 @@ The root `worklog.exe` is a stable self-contained launcher. `current.json` selec
 
 New packages require Windows x64 with the .NET 10 supported OS baseline and Windows job-list process attributes (Windows 10 or newer). They include their runtimes; no separately installed .NET is needed. The launcher preserves arguments, working directory, environment, standard streams and exit status. Stdio diagnostics remain on stderr. Its child job ties server lifetime to the client-owned launcher; normal stdin closure shuts the server down, and forced launcher termination does not leave its payload detached.
 
+## Installing the release with day digests (from v0.3.0 and earlier)
+
+This release adds a third MCP tool, `save_digest`. The update health probe of v0.2.0 and v0.3.0 accepts a candidate only when it lists exactly two tools, so those releases decline `worklog update` to this payload and change nothing. From this release the probe requires `log_work` and `query_work` (each with an output schema) and accepts additional tools, so later updates are ordinary.
+
+Install this release once manually: download and checksum-verify the ZIP, stop clients and WorkLog processes using the old installation, extract it into a clean installation directory as in the migration steps below (keeping the private data directory), run `worklog --version`, and rerun `worklog init` for each repository to receive the digest instructions. The journal schema and shared-data contract are unchanged, and `digests.db` is created beside `journal.db` on first use. Rolling back leaves it unused.
+
 ## One-time migration from the legacy layout
 
 Pre-launcher v0.1.1 and earlier replace application files in place. They cannot establish this layout while keeping their old installation running. The owner accepts a one-time maintenance window; a separate legacy status-reader race fix is not shipped as a prerequisite.

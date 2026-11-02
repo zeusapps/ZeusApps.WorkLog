@@ -30,9 +30,9 @@ internal sealed class JournalAcceptanceChecks(SmokeWorkspace workspace)
         });
         await using var client = await McpClient.CreateAsync(transport, cancellationToken: timeout.Token);
         var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-        if (tools.Count != 2 || tools.Any(tool => tool.ProtocolTool.OutputSchema is null))
+        if (tools.Count != 3 || tools.Any(tool => tool.ProtocolTool.OutputSchema is null))
         {
-            throw new InvalidOperationException("Expected two MCP tools with output schemas.");
+            throw new InvalidOperationException("Expected three MCP tools with output schemas.");
         }
 
         (string Status, string Change, string OccurredAt)[] activities =

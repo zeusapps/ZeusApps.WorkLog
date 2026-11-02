@@ -1,6 +1,6 @@
 import { Board, BoardCard, byPriority, isQuiet } from "./board";
 import { ticketUrl } from "./links";
-import type { DailyItem, Entry, Ticket } from "./models";
+import type { DailyItem, DayDigest, Entry, Ticket } from "./models";
 
 export type DailyFormat = "text" | "markdown";
 export const noSummary = "No summary recorded";
@@ -86,6 +86,19 @@ export function dailyToday(
   return { items: cards.map((card) => ({ card, line: lineFor(card, today) })), proposed: board.proposed.length };
 }
 
+const coverKey = (ids: readonly string[]) => [...ids].sort().join("|");
+
+/** The digests indexed by their covered observations, for exact-set lookup. */
+export function digestIndex(digests: readonly DayDigest[] | undefined): ReadonlyMap<string, string> {
+  return new Map((digests ?? []).map((d) => [coverKey(d.covers), d.text]));
+}
+
+/** The text of the digest covering exactly the observations the line represents (its primary plus its others); null when none does. */
+export function digestFor(index: ReadonlyMap<string, string>, line: DailyItem | null): string | null {
+  if (!line || index.size === 0) return null;
+  return index.get(coverKey([line.primary.id, ...line.others.map((e) => e.id)])) ?? null;
+}
+
 /** "Thu 22 Oct" for a yyyy-MM-dd date. */
 export function dayLabel(date: string): string {
   const parts = Object.fromEntries(
@@ -113,21 +126,21 @@ function oneLine(value: string | null | undefined): string | null {
   return text ? text : null;
 }
 
-function yesterdayLine(item: DailyItem): CopyLine {
+function yesterdayLine(item: DailyItem, digest: string | null): CopyLine {
   const adhoc = item.id.startsWith("adhoc:");
   // An unlinked observation is titled by its own summary, which is not repeated.
   return {
     tickets: item.tickets,
     title: adhoc ? (oneLine(item.primary.summary) ?? noSummary) : item.title,
     status: item.status,
-    summary: adhoc ? null : oneLine(item.primary.summary),
+    summary: adhoc ? null : (oneLine(digest) ?? oneLine(item.primary.summary)),
   };
 }
 
-function todayLine(entry: TodayEntry): CopyLine {
+function todayLine(entry: TodayEntry, digest: string | null): CopyLine {
   const { card, line } = entry;
   if (!line) return { tickets: card.tickets, title: card.title, status: null, summary: null };
-  return { tickets: line.tickets, title: card.title, status: line.status, summary: oneLine(line.primary.summary) };
+  return { tickets: line.tickets, title: card.title, status: line.status, summary: oneLine(digest) ?? oneLine(line.primary.summary) };
 }
 
 function ticketIds(tickets: readonly Ticket[]): Ticket[] {
@@ -163,6 +176,8 @@ export interface DailyCopyInput {
   today: readonly TodayEntry[];
   format: DailyFormat;
   links: boolean;
+  /** The stored agent digests; a line they cover exactly is copied with the digest text in place of its latest summary. */
+  digests?: readonly DayDigest[];
 }
 
 /** The Yesterday, Today, and Blockers sections as copyable text: only recorded facts, and an empty Blockers placeholder. */
@@ -173,8 +188,9 @@ export function dailyText(input: DailyCopyInput): string {
     format === "markdown"
       ? [heading(name), "", ...bullets, ""]
       : [heading(name), ...bullets];
-  const yesterday = input.yesterday.map((item) => bullet(yesterdayLine(item), format, links));
-  const today = input.today.map((entry) => bullet(todayLine(entry), format, links));
+  const index = digestIndex(input.digests);
+  const yesterday = input.yesterday.map((item) => bullet(yesterdayLine(item, digestFor(index, item)), format, links));
+  const today = input.today.map((entry) => bullet(todayLine(entry, digestFor(index, entry.line)), format, links));
   const lines = [
     ...section("Yesterday" + (input.day ? " (" + dayLabel(input.day) + ")" : ""), yesterday.length ? yesterday : ["- Nothing recorded"]),
     ...section("Today", today.length ? today : ["- Nothing recorded"]),

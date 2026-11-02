@@ -41,6 +41,7 @@ export interface Catalog {
   revision: string;
   notices: string[];
   journalSnapshot: number;
+  digestRevision?: number;
 }
 export interface TimelineQuery {
   from: string;
@@ -123,6 +124,11 @@ export interface DailyItem {
   primary: Entry;
   others: Entry[];
 }
+/** A stored agent digest: the sorted IDs of the observations it covers and its text. */
+export interface DayDigest {
+  covers: string[];
+  text: string;
+}
 /** The last recorded day (or the selected one), its neighbours, and the current day's lines so far. `day` is null without earlier work. */
 export interface DailyDigest {
   day: string | null;
@@ -130,6 +136,8 @@ export interface DailyDigest {
   nextDay: string | null;
   items: DailyItem[];
   today: DailyItem[];
+  /** Stored agent digests of the listed items; absent from an older server. */
+  digests?: DayDigest[];
 }
 export interface ObservationPage {
   entries: Entry[];

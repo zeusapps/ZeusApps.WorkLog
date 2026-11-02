@@ -81,7 +81,7 @@ public sealed class McpTests
             Arguments = [assembly, "serve", "--repository", box.Repo, "--data-dir", box.Data]
         }), cancellationToken: timeout.Token);
         var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-        Assert.Equal(new[] { "log_work", "query_work" }, tools.Select(t => t.Name).Order());
+        Assert.Equal(new[] { "log_work", "query_work", "save_digest" }, tools.Select(t => t.Name).Order());
         Assert.Equal("worklog", client.ServerInfo.Name);
         Assert.Equal(ApplicationInfo.Version, client.ServerInfo.Version);
         foreach (var tool in tools)

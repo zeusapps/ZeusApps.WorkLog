@@ -3,6 +3,7 @@ using ModelContextProtocol.Client;
 using WorkLog.Configuration;
 using WorkLog.Infrastructure;
 using WorkLog.Journaling;
+using WorkLog.Persistence;
 using WorkLog.Repositories;
 
 namespace WorkLog.Smoke;
@@ -70,6 +71,7 @@ internal static class DashboardFixture
         new Journal(settings, new("example/bell-tower")).Log(new("in_progress", "shipping-reports", Summary: "Prepared report evidence.", OccurredAt: now.AddDays(-1).ToString("O"), Agent: "fixture"));
         BoardDemo(root, settings, now);
         DailyDemo(root, settings);
+        DigestDemo(root, settings);
         AtomicFile.Write(Path.Combine(root, "fixture.json"), Json.Encode(new { root, data = settings.DataDirectory, repo = a, otherRepo = b, worktree }));
         Console.WriteLine(root);
     }
@@ -136,12 +138,43 @@ internal static class DashboardFixture
         Log("done", null, "2026-01-09T13:00:00Z", "Retry policy for export jobs merged.", "DEMO-1");
     }
 
+    /// <summary>
+    /// A repository for agent digests on the Daily view, at the same fixed dates as <see cref="DailyDemo"/>: DGT-1 has two observations on Friday 9 January
+    /// and DGT-2 has two on Monday 12 January, each pair covered by a stored digest written through the real save path into the isolated <c>digests.db</c>.
+    /// </summary>
+    private static void DigestDemo(string root, LocalSettings settings)
+    {
+        var digest = Repository(root, "digest-demo");
+        settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(digest)] = new(new("example/digest-demo"));
+        settings.Save();
+        var journal = new Journal(settings, new("example/digest-demo"));
+        string Log(string status, string at, string summary, string ticket) => journal.Log(new(status, null, Tickets: [new("jira", "example.local", ticket)],
+            Summary: summary, OccurredAt: at, Agent: "fixture")).Entry.Id;
+        var service = new DigestService(journal, new DigestStore(settings.DataDirectory), TimeZoneInfo.Utc);
+        service.Save([Log("started", "2026-01-09T11:00:00Z", "Drafted the audit export.", "DGT-1"), Log("done", "2026-01-09T13:00:00Z", "Audit export reviewed and merged.", "DGT-1")],
+            "Built and merged the audit export.");
+        service.Save([Log("started", "2026-01-12T10:00:00Z", "Began the retention sweep.", "DGT-2"), Log("in_progress", "2026-01-12T11:00:00Z", "Sweep deletes expired rows in batches.", "DGT-2")],
+            "Retention sweep runs in batches.");
+    }
+
     /// <summary>Records one observation with a ticket into the fixture journal, as another agent session would while the dashboard is open.</summary>
     public static void Log(string directory, string repository, string status, string change, string ticket, string occurredAt, string summary)
     {
         var settings = new LocalSettings(Path.Combine(Path.GetFullPath(directory), "data"));
         new Journal(settings, new(repository)).Log(new(status, change is "-" ? null : change, Tickets: [new("jira", "example.local", ticket)],
             Summary: summary, OccurredAt: occurredAt, Agent: "fixture"));
+    }
+
+    /// <summary>Saves a digest through the real save path for the ticket's observations on the day of its latest one, as an agent would while the dashboard is open.</summary>
+    public static void SaveDigest(string directory, string repository, string ticket, string text)
+    {
+        var settings = new LocalSettings(Path.Combine(Path.GetFullPath(directory), "data"));
+        var journal = new Journal(settings, new(repository));
+        var service = new DigestService(journal, new DigestStore(settings.DataDirectory), TimeZoneInfo.Utc);
+        var latest = journal.Query(new("2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z", "UTC", repository, Ticket: ticket, PageSize: 100, View: "flat"))
+            .Entries.OrderBy(e => e.OccurredAt).ThenBy(e => e.Id, StringComparer.Ordinal).Last();
+        var request = service.Request(latest) ?? throw new InvalidOperationException("No digest request for " + ticket + ".");
+        service.Save(request.Entries.Select(e => e.Id).ToArray(), text);
     }
 
     private static string Repository(string root, string name)

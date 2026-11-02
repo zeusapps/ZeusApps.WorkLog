@@ -514,7 +514,10 @@
                 <span class="muted small">{{repositoryLabel(item.repository)}}</span>
               </div>
               @if(item.changes.length){<div class="daily-changes muted small">{{item.changes.map(humanize).join(' · ')}}</div>}
-              @if(!item.id.startsWith('adhoc:')){<p class="daily-summary" data-testid="daily-summary">{{item.primary.summary||noSummary}}</p>}
+              @if(!item.id.startsWith('adhoc:')){
+              @if(dailyDigest(item);as digest){<p class="daily-summary" data-testid="daily-summary">{{digest}} <span class="daily-digest-mark" data-testid="daily-digest-mark">agent digest</span></p>}
+              @else{<p class="daily-summary" data-testid="daily-summary">{{item.primary.summary||noSummary}}</p>}
+              }
               @if(item.others.length){
               <details class="daily-others">
                 <summary>{{item.others.length}} other {{item.others.length===1?'observation':'observations'}}</summary>
@@ -543,7 +546,8 @@
                 <span class="muted small">{{entry.card.repositories.map(repositoryLabel.bind(this)).join(' · ')}}</span>
               </div>
               @if(entry.line;as line){
-              <p class="daily-summary" data-testid="daily-today-summary">{{line.primary.summary||noSummary}}</p>
+              @if(dailyDigest(line);as digest){<p class="daily-summary" data-testid="daily-today-summary">{{digest}} <span class="daily-digest-mark" data-testid="daily-digest-mark">agent digest</span></p>}
+              @else{<p class="daily-summary" data-testid="daily-today-summary">{{line.primary.summary||noSummary}}</p>}
               @if(line.others.length){
               <details class="daily-others">
                 <summary>{{line.others.length}} other {{line.others.length===1?'observation':'observations'}} today</summary>

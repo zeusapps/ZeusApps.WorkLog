@@ -27,7 +27,7 @@ public sealed class InstructionOptionsTests
         // Substituting the previous sentence back must restore the prior block lines exactly.
         var normalized = claude.Replace("\r\n", "\n");
         var restored = normalized.Replace(SummaryGuidance + "\n", "Include a small factual summary when useful. ");
-        var lines = restored.Split('\n');
+        var lines = restored.Split('\n').Where(line => !line.Contains("digestRequest", StringComparison.Ordinal)).ToArray();
         Assert.Contains("Include a small factual summary when useful. Ticket details can come from separate official issue MCPs.", lines);
         Assert.Equal(15, lines.Length);
         Assert.Contains("Log done when this session establishes the feature is complete for reporting; archive timing is independent.", lines);
@@ -222,6 +222,44 @@ public sealed class InstructionOptionsTests
         Assert.False(Directory.Exists(Path.Combine(box.Repo, ".worklog")));
         Assert.False(Directory.Exists(box.Data));
         Assert.False(File.Exists(Path.Combine(box.Home, ".claude.json")));
+    }
+
+    private static string DigestParagraph(string block) =>
+        Assert.Single(block.Replace("\r\n", "\n").Split('\n'), line => line.Contains("digestRequest", StringComparison.Ordinal));
+
+    private static string Owned(string text)
+    {
+        var begin = text.IndexOf("worklog:begin", StringComparison.Ordinal);
+        var end = text.IndexOf("worklog:end", StringComparison.Ordinal);
+        Assert.True(begin >= 0 && end > begin);
+        return text[begin..end].Replace("\r\n", "\n");
+    }
+
+    [Fact]
+    public void DigestParagraphIsSharedByClaudeCodeAndCodexOwnedBlocksAndOmittedWhenDisabled()
+    {
+        // Covers both Claude Code (CLAUDE.local.md) and Codex (.codex/config.toml developer_instructions) as written by init.
+        using var box = new TestWorkspace();
+        box.Git("init");
+        Init(box).Run(box.Repo);
+        var claude = Owned(File.ReadAllText(Path.Combine(box.Repo, "CLAUDE.local.md")));
+        var codex = Owned((string)Toml.ToModel(File.ReadAllText(Path.Combine(box.Repo, ".codex", "config.toml")))["developer_instructions"]);
+        var paragraph = DigestParagraph(AgentInstructions.Render("repo", "claude"));
+        Assert.Equal(paragraph, DigestParagraph(AgentInstructions.Render("repo", "codex")));
+        Assert.Contains(paragraph, claude);
+        Assert.Contains(paragraph, codex);
+        Assert.Equal(DigestParagraph(claude), DigestParagraph(codex));
+        Assert.Contains("worklog.save_digest", paragraph);
+        Assert.Contains("finish the user's request first", paragraph);
+        Assert.Contains("Do not retry a digest rejected as stale", paragraph);
+        Assert.Contains("unavailable, skip the digest without reporting an error", paragraph);
+        // The blocks differ only in the agent name, so digest policy cannot diverge per client.
+        Assert.Equal(claude.Replace("Agent: claude.", "Agent: <agent>."), codex.Replace("Agent: codex.", "Agent: <agent>."));
+
+        Init(box).Run(box.Repo, instructions: false);
+        var claudePath = Path.Combine(box.Repo, "CLAUDE.local.md");
+        Assert.True(!File.Exists(claudePath) || !File.ReadAllText(claudePath).Contains("save_digest"));
+        Assert.DoesNotContain("save_digest", File.ReadAllText(Path.Combine(box.Repo, ".codex", "config.toml")));
     }
 
     private static RepositoryInitializer Init(TestWorkspace box) => new(new LocalSettings(box.Data), box.Home, false);

@@ -14,6 +14,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WorkLog.Configuration;
 using WorkLog.Infrastructure;
+using WorkLog.Persistence;
 
 namespace WorkLog.Dashboard;
 
@@ -95,8 +96,9 @@ internal static class DashboardHost
         var app = builder.Build();
         var journal = new DashboardJournal(settings.DataDirectory);
         var timeline = new TimelineService(journal);
-        var daily = new DailyService(journal);
-        var catalog = new SourceCatalog(settings, journal, commands ?? new LocalCommand(), repository ?? Environment.CurrentDirectory);
+        var digests = new DigestStore(settings.DataDirectory);
+        var daily = new DailyService(journal, digests);
+        var catalog = new SourceCatalog(settings, journal, commands ?? new LocalCommand(), repository ?? Environment.CurrentDirectory, digests: digests);
         var documents = new DocumentService(catalog);
         var state = new DashboardState(settings.DataDirectory);
         var opener = new EditorOpener(documents, launcher ?? RecordingEditorLauncher.FromEnvironment());

@@ -20,4 +20,8 @@ public sealed class Journal
     public LogResult Log(LogRequest request) => entries.Append(entryFactory.Prepare(request));
 
     public Report Query(QueryRequest request) => reports.Query(request);
+
+    internal Entry[] ReadBetween(DateTimeOffset from, DateTimeOffset to) => entries.ReadBetween(from, to);
+
+    internal Entry[] ReadByIds(IReadOnlyCollection<string> ids) => entries.ReadByIds(ids);
 }

@@ -240,9 +240,9 @@ internal sealed class WorktreeAcceptanceChecks(SmokeWorkspace workspace, SmokePr
         initialized();
         Require(client.ServerInfo.Version == versions[Path.GetFileName(workspace.Executable)], "MCP server version differs from the packaged version.");
         var tools = await client.ListToolsAsync(cancellationToken: timeout.Token);
-        Require(tools.Count == 2 && tools.All(tool => tool.ProtocolTool.OutputSchema is not null)
-            && tools.Any(tool => tool.Name == "log_work") && tools.Any(tool => tool.Name == "query_work"),
-            "Expected log_work and query_work with output schemas.");
+        Require(tools.Count == 3 && tools.All(tool => tool.ProtocolTool.OutputSchema is not null)
+            && tools.Any(tool => tool.Name == "log_work") && tools.Any(tool => tool.Name == "query_work") && tools.Any(tool => tool.Name == "save_digest"),
+            "Expected log_work, query_work and save_digest with output schemas.");
         probe.Protocol = "initialize/tools-list passed (direct SDK)";
         toolsListed();
         var logged = await client.CallToolAsync("log_work", new Dictionary<string, object?>

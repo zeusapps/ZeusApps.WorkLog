@@ -5,13 +5,13 @@
 See proposal.md for motivation and specs for requirements. Relevant current code:
 - `JournalTools` (`src/WorkLog/Mcp/JournalTools.cs`) exposes `log_work` and `query_work`, and enriches results with `updateHint`. `McpServerHost` registers the tool type with `McpJson.Options`.
 - `Journal.Log` appends through `SqliteEntryStore` to `journal.db` (`JournalDatabase`, schema 2 via `JournalSchema`). WAL mode, a named mutex around schema upgrade, `busy_timeout` 15 s.
-- The installer and launcher accept a payload only when its `JournalSchema` and `SharedDataContract` match (`InstallationLayout`), and the `work-journal` spec forbids a compatible payload from changing the journal schema. Several MCP server processes from different installed versions can share one journal.
+- The installer and launcher accept a payload only when its `JournalSchema` and `SharedDataContract` match (`InstallationLayout`), and the `work-journal` spec forbids a compatible payload from changing the journal schema. Several MCP server processes from different installed versions can share one journal. During `worklog update`, the running release's `PayloadInstaller` probes the candidate's `initialize` and `tools/list`.
 - Work identity under ticket grouping: `WorkIdentity.For(entry, "ticket")`, hashed by `TimelineService.IdFor`. The Daily view (`DailyService`, `dashboard/src/daily.ts`) builds Yesterday items per identity and Today lines per board card, including change-card lines assembled from several identities' entries (ANALYSIS-001, ANALYSIS-041 of `add-daily-prep`).
 - Managed instruction text is shared in `AgentInstructions.Render`, used by both client adapters.
 
 ## Goals / Non-Goals
 
-**Goals:** an additive MCP contract that works identically in Claude Code and Codex; no change to journal schema, shared-data contract, or update path; a digest is only ever shown where it covers exactly what the line shows.
+**Goals:** an additive MCP contract that works identically in Claude Code and Codex; no change to journal schema or shared-data contract; a one-time manual installation only for users on releases whose update probe requires exactly two tools (Decision 7); a digest is only ever shown where it covers exactly what the line shows.
 
 **Non-Goals:**
 - Any server-side model call, API key, or MCP sampling.
@@ -71,16 +71,17 @@ The client matches by set equality: for each line, the sorted IDs of `primary` p
 ### 5. Instructions and mixed versions
 `AgentInstructions.Render` gains the digest paragraph from the spec, once, for both clients. Older servers simply never send `digestRequest`. A newer instruction block connected to an older server is harmless: no request arrives; the paragraph also says to skip when `save_digest` is unavailable. No adapter changes in `Integration/Clients`.
 
-### 6. Planned live-agent evaluation
+### 6. Live-agent rule (no live evaluation in this change)
 Isolated MCP checks prove the server contract and the instruction text, but not whether real Claude Code and Codex models follow the digest instructions. That is prompt quality, and only live sessions show it. The project currently forbids reviewers from running `--live-agents`. This change relaxes that rule to allow live agents as planned work:
 - `.agents/roles/project-facts.md` (Safety): live agents use the user's authenticated accounts and send prompts to their services. Run them only when the assignment includes a planned live-agent evaluation (for example, judging how real clients follow managed instructions or tool-result prompts). The assignment names the clients, the number of sessions, and the per-session budget. Run them only in disposable repositories and data directories with the smoke tool's isolation flags. Never use the user's real repositories, data directory, installation, or client settings, and never put secrets or personal data in prompts. Record client versions, models, and redacted prompts and outputs as evidence. Without such an assignment, live agents are not run. The default isolated smoke run is always allowed.
 - `.agents/workflows/openspec-delegation.md`: a live-agent evaluation is planned work. It must appear in the change's `tasks.md`, and the assignment repeats its clients, session count, and budget. Parity applies: evaluate Claude Code and Codex alike unless a restriction is evidenced.
 
-`LiveAgentChecks` already isolates both clients (a disposable home and repository; Codex `--ignore-user-config --ephemeral -s read-only`; Claude `--no-session-persistence --strict-mcp-config`, WorkLog tools only, `--max-budget-usd 1`). The digest scenario adds `mcp__worklog__save_digest` to Claude's allowed tools and keeps every other flag.
+**User decision 2026-10-29: the live evaluation is dropped from this change.** The attempt showed that the smoke tool's isolated client profiles carry no sign-in (Codex returned 401 Unauthorized; Claude Code reported "Not logged in"; no cost), and authenticating them would need API keys passed through the environment. The relaxed rule above stays as general policy for future planned evaluations. This change ships with isolated MCP checks and the unit-tested instruction text only; how real clients follow the digest instructions is unverified. The digest live scenario written for the attempt is removed.
 
-Outcomes are recorded as observations, not pass/fail gates, because model behavior varies between runs. A consistent miss feeds a follow-up to tune the instruction text.
+### 7. Update health probe and a third tool
+`PayloadInstaller.VerifyHealthAsync` in v0.2.0 and v0.3.0 rejects any candidate whose tool listing is not exactly two tools, so those releases cannot `worklog update` to a payload that lists `save_digest`; they decline activation and change nothing. From this release the probe requires `log_work` and `query_work`, an output schema on every tool, and accepts additional tools, so later tool additions update normally. Users on v0.3.0 or earlier install this release once manually; the release notes and `docs/installation.md` say so. Smoke checks that asserted exactly two tools assert the current listing while still requiring both journal tools.
 
-**Alternative: leave live checks to the user after release.** Rejected by the user. Prompt quality should be evaluated before release, as part of the change.
+**Alternatives (user decision 2026-10-29):** shipping the probe fix one release earlier (helps only users who update in between); registering `save_digest` on demand through `tools/list_changed` (unverified Codex support, more moving parts); saving digests through an optional `log_work` field (changes the `log_work` contract). Rejected in favor of the one-time manual installation.
 
 ## Risks / Trade-offs
 
@@ -89,9 +90,9 @@ Outcomes are recorded as observations, not pass/fail gates, because model behavi
 - [Machine timezone differs from the History timezone] → Digests near midnight may not match and are not shown; documented.
 - [Two databases can disagree momentarily] → Exact coverage match at display time; stale digests are invisible.
 - [Prompt-injection surface: summaries flow back to the agent as data] → They are the agent's own local records; the request labels them as data and the instructions forbid acting on them.
-- [Live evaluation spends the user's quota and sends prompts to Anthropic and OpenAI] → Planned and bounded: two sessions, USD 1 each, synthetic prompts only, isolated configuration.
+- [Real clients may not follow the digest instructions well] → Not evaluated live in this change (Decision 6). Daily falls back to summaries, so a poor or missing digest costs only the rollup.
 - [Structured result size] → 30 entries × short summaries stays far below the existing structured-content bound; `query_work` paging is unaffected.
 
 ## Migration Plan
 
-Additive. A new payload creates `digests.db` on first use; older payloads never touch it. Rolling back leaves an unused file. Users rerun `worklog init` after upgrading to receive the digest instructions, as with any instruction change.
+Additive for data. Users on v0.3.0 or earlier install this release manually once (Decision 7); later updates are ordinary. A new payload creates `digests.db` on first use; older payloads never touch it. Rolling back leaves an unused file. Users rerun `worklog init` after upgrading to receive the digest instructions, as with any instruction change.
