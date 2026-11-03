@@ -44,6 +44,7 @@ The agent that has just logged the work has the best context for that rollup, so
   - `POST /api/daily` returns the matching digest for each item.
 - Integration: `AgentInstructions.cs` gets shared instruction text, with no per-client adapter changes expected. `worklog init` refreshes managed instructions as it already does after an upgrade.
 - Build: the three `packages.lock.json` files are refreshed for the `Microsoft.NET.ILLink.Tasks` patch that the current SDK patch resolves, because the CI locked restore fails without it. This drift predates the change and was folded in by user decision.
+- Dashboard: the Ongoing board's change-card footer gap is fixed, so every board card's footer spans the full card width. The bug predates this change and was folded in by user decision.
 - Workflow: `.agents/roles/project-facts.md` and `.agents/workflows/openspec-delegation.md` (live agents as planned work).
 - Client: Daily line rendering and copy formatting use the digest when present.
 - Cost: one short extra agent turn per log for items with two or more observations that day, using the session the user is already running.
