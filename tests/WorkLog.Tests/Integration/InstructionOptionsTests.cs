@@ -12,7 +12,7 @@ namespace WorkLog.Tests.Integration;
 
 public sealed class InstructionOptionsTests
 {
-    private const string SummaryGuidance = "Include a summary with every observation: one short sentence (about 140 characters) stating the concrete outcome, decision, or remaining step; for in_progress what was achieved and what remains, for done what was completed. Do not narrate process, repeat the status, or include secrets or personal data.";
+    private const string SummaryGuidance = LoggingGuidance.Summary;
 
     [Fact]
     public void RenderedInstructionsShareSummaryGuidanceAndOtherwiseKeepPriorText()
@@ -22,6 +22,11 @@ public sealed class InstructionOptionsTests
         Assert.Contains(SummaryGuidance, claude);
         Assert.Contains(SummaryGuidance, codex);
         Assert.DoesNotContain("small factual summary", claude);
+        Assert.Contains(LoggingGuidance.ContentRule, claude);
+        Assert.Contains(LoggingGuidance.ContentRule, codex);
+        Assert.Contains(LoggingGuidance.Digest, claude);
+        Assert.Contains(LoggingGuidance.DigestSaving, codex);
+        Assert.DoesNotContain("Do not narrate process", claude);
         // Apart from the agent name, the blocks are identical, so the guidance cannot diverge per client.
         Assert.Equal(claude.Replace("Agent: claude.", "Agent: <agent>."), codex.Replace("Agent: codex.", "Agent: <agent>."));
         // Substituting the previous sentence back must restore the prior block lines exactly.
@@ -252,6 +257,10 @@ public sealed class InstructionOptionsTests
         Assert.Contains("worklog.save_digest", paragraph);
         Assert.Contains("finish the user's request first", paragraph);
         Assert.Contains("Do not retry a digest rejected as stale", paragraph);
+        Assert.Contains(LoggingGuidance.Digest, paragraph);
+        Assert.Contains(LoggingGuidance.DigestSaving, paragraph);
+        Assert.Contains("your own knowledge of the session", paragraph);
+        Assert.Contains($"at most {LoggingGuidance.DigestLimit} characters", paragraph);
         Assert.Contains("unavailable, skip the digest without reporting an error", paragraph);
         // The blocks differ only in the agent name, so digest policy cannot diverge per client.
         Assert.Equal(claude.Replace("Agent: claude.", "Agent: <agent>."), codex.Replace("Agent: codex.", "Agent: <agent>."));

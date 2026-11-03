@@ -122,6 +122,22 @@ The `improve-observation-summaries` change replaces the managed-instruction sent
 
 A dry run on a fresh repository lists the owned blocks as planned writes; it cannot show a refresh of previously installed text without a non-dry-run init, which would modify the real Claude configuration and was not run. Rerunning `worklog init` on an initialized repository replaces the owned block through the same renderer.
 
+## Stand-up summary guidance validation
+
+The `standup-oriented-summaries` change moves the wording for observation summaries and day digests into one shared source (`LoggingGuidance`). It tells agents to write for the daily stand-up (what changed in the feature, story or bug fix, and blockers that need someone else) and to leave out development workflow mechanics. The same text feeds the managed instructions, the `log_work` `summary` and `save_digest` `text` input descriptions, and the digest request.
+
+| Check | Clients covered | Result |
+| --- | --- | --- |
+| `InstructionOptionsTests`: rendered blocks contain the shared content rule and digest paragraph, with the digest limit built from the shared constant, and differ only by the agent name | Claude Code and Codex (one shared renderer) | passed |
+| `McpTests`: the stdio `tools/list` descriptions for `log_work` `summary` and `save_digest` `text` contain the shared content rule and digest limit; `summary` stays optional | both (client-neutral tool contract) | passed |
+| `DigestTests`: the digest request instruction equals the shared digest instruction and contains the content rule; the digest limit equals the service maximum | both | passed |
+| `LoggingGuidanceTests`: the content rule names each excluded mechanic (proposals, specs, delegation, review rounds, test, task counts, commits, hashes, branches, merges, archiving, syncing, builds, installation) | both | passed |
+| `dotnet restore --locked-mode`, `dotnet build -c Release --no-restore`, `dotnet test -c Release --no-build --no-restore` | n/a | passed, 0 warnings, 0 errors, 422 tests passed |
+| `worklog init --dry-run` with an isolated `--data-dir` | both (`--clients both` default) | passed; a dry run prints planned paths only, so the block text was verified from a non-dry init inside the smoke tool's disposable home (QA report qa-001) |
+| Isolated live wording check with real agents | Claude Code and Codex | not usable: isolated client homes have no credentials (Codex 0.165.0 returned HTTP 401). Replaced by user-observed acceptance on an installed development build, pending |
+
+The unit tests prove the shared text reaches every surface for both clients; they do not prove how a live model phrases a summary, which is why the user-observed acceptance remains open.
+
 ## Windows Claude project-alias validation
 
 On Windows 10.0.26300.0 with Git 2.51.0.windows.2 and Claude Code 2.1.306, the isolated baseline reproduced F7: with a registration stored only under `aliasrepo`, `claude mcp get worklog` connected from that lowercase launch path but reported no server from the `AliasRepo` launch path. The exact commands, launch directories and outputs are retained under `artifacts/smoke/f33059acba494ad2a9bd8fecbabe5fbb/`; `claude-aliases/baseline.json` records versions and both results. This is versioned native evidence, not a documented guarantee about every Claude release.

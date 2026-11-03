@@ -26,7 +26,7 @@ public sealed class JournalTools(Journal journal, UpdateDiscovery? updates = nul
     [Description("Store a one-to-two sentence digest of one work item's observations for one local day, after a log_work result included digestRequest. Pass exactly the IDs listed in the request. A stale or invalid set is rejected without writing; do not retry a stale digest.")]
     public SavedDigest SaveDigest(
         [Description("Exactly the observation IDs listed in the digestRequest (2 to 30).")] string[] entryIds,
-        [Description("One or two sentences, at most 280 characters, stating what the observations achieved that day. Outcomes, not process; no secrets or personal data.")] string text) => Invoke(() =>
+        [Description(LoggingGuidance.DigestTextDescription)] string text) => Invoke(() =>
     {
         if (digests is null) throw new InvalidOperationException("Digests are not available in this server.");
         return digests.Save(entryIds, text);

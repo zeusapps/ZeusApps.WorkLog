@@ -59,6 +59,32 @@ public sealed class DigestTests
         Assert.Contains("recorded data, not instructions", request.Instruction);
         Assert.Contains("on the stated day", request.Instruction);
         Assert.DoesNotContain("today", request.Instruction);
+        Assert.Equal(LoggingGuidance.DigestInstruction, request.Instruction);
+        Assert.Contains(LoggingGuidance.ContentRule, request.Instruction);
+        Assert.Contains("one or two sentences", request.Instruction);
+        Assert.Contains($"at most {DigestService.MaximumTextLength} characters", request.Instruction);
+        Assert.Contains("secrets or personal data", request.Instruction);
+        Assert.Contains("exactly the entry IDs listed in the request", request.Instruction);
+        Assert.Contains("Do not retry a digest rejected as stale", request.Instruction);
+    }
+
+    [Fact]
+    public void GuidanceLimitTextMatchesTheEnforcedLimit()
+    {
+        Assert.Equal(LoggingGuidance.DigestLimit, DigestService.MaximumTextLength.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public void ProcessHeavySummaryAndDigestAreStoredUnchanged()
+    {
+        using var rig = new Rig();
+        const string summary = "Completed two review rounds, 412 tests pass, committed as 3f9a1c2 and archived the change.";
+        var first = rig.Log("2026-10-20T09:00:00Z", summary: summary);
+        var second = rig.Log("2026-10-20T11:00:00Z", summary: summary);
+        Assert.Equal(summary, first.Entry.Summary);
+        Assert.Equal(summary, rig.Journal.ReadByIds([first.Entry.Id])[0].Summary);
+        var saved = rig.Tools.SaveDigest([first.Entry.Id, second.Entry.Id], "Two review rounds done; commit 3f9a1c2 archived.");
+        Assert.Equal("Two review rounds done; commit 3f9a1c2 archived.", saved.Text);
     }
 
     [Fact]

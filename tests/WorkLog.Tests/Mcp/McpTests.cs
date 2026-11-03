@@ -6,6 +6,7 @@ using ModelContextProtocol.Protocol;
 using WorkLog.Cli;
 using WorkLog.Configuration;
 using WorkLog.Infrastructure;
+using WorkLog.Journaling;
 using WorkLog.Updates;
 using WorkLog.Tests.Testing;
 using Xunit;
@@ -104,7 +105,12 @@ public sealed class McpTests
         var inputSchema = loggingTool.ProtocolTool.InputSchema;
         var entryInput = ResolveSchema(inputSchema.GetProperty("properties").GetProperty("entry"), inputSchema);
         AssertDescription(entryInput, "summary", "about 140 characters");
-        AssertDescription(entryInput, "summary", "remaining step");
+        AssertDescription(entryInput, "summary", LoggingGuidance.ContentRule);
+        AssertDescription(entryInput, "summary", LoggingGuidance.SummaryStatus);
+        var digestTool = Assert.Single(tools, tool => tool.Name == "save_digest");
+        var digestInput = digestTool.ProtocolTool.InputSchema;
+        AssertDescription(digestInput, "text", LoggingGuidance.ContentRule);
+        AssertDescription(digestInput, "text", $"at most {LoggingGuidance.DigestLimit} characters");
         Assert.DoesNotContain("summary", entryInput.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
 
         var reportSchema = Assert.Single(tools, tool => tool.Name == "query_work").ProtocolTool.OutputSchema!.Value;
