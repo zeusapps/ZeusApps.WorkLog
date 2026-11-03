@@ -37,6 +37,9 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../../
 | ANALYSIS-005 | [analysis-001](analysis-001.md) | 1.1, 2.1, 2.3 | suggestion | no | dismissed | orchestrator | n/a: size accepted by user |
 | ANALYSIS-006 | [analysis-001](analysis-001.md) | 5.1a, 5.2 | suggestion | no | dismissed | orchestrator | n/a: 5.1a code removed |
 | ANALYSIS-031 | [analysis-003](analysis-003.md) | release v0.4.1 docs | suggestion | no | deferred | unassigned | n/a |
+| ANALYSIS-041 | [analysis-004](analysis-004.md), [analysis-005](analysis-005.md), [qa-005](qa-005.md) | release v0.4.1 blocker (e2e reliability) | warning | yes: same flake can fail the tag workflow | verified | DEV-FIX-2 | [qa-005](qa-005.md), [analysis-005](analysis-005.md#re-verification) |
+| ANALYSIS-042 | [analysis-004](analysis-004.md) | e2e test | suggestion | no | deferred | unassigned | n/a |
+| ANALYSIS-043 | [analysis-004](analysis-004.md) | dashboard History loading | suggestion | no | deferred | unassigned | n/a |
 
 ## Finding details and history
 
@@ -89,3 +92,10 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../../
 - Completion: all 12 tasks satisfied, both current role reports on the current target, every finding triaged, no blocking finding or unapproved deferral. Implementation complete; committed as 1648b1c on `change/standup-oriented-summaries`. No archive or push.
 
 - 2026-11-03: archived to `openspec/changes/archive/2026-11-03-standup-oriented-summaries` at the user's request, after syncing the delta specs into `openspec/specs/local-agent-integration` and `openspec/specs/day-digests` (strict validation 10/10). No `<!-- REVIEW` markers were present.
+
+### Release v0.4.1 blocker: intermittent History ticket-filter browser test
+
+- 2026-11-03: Validate on main 7b12245 failed in packaged dashboard browser acceptance (`dashboard/e2e/dashboard.spec.ts` "links tickets, repositories and branches from recorded facts without navigating"): after filtering by `DEP-12`, a second filter `4211` did not apply within 15 s. Same failure on 6d23796; passed on b01902c. Unrelated to this change (no dashboard edits). Release not tagged.
+- User decision 2026-11-03: fix it first, then release. Assignment DEV-FIX-1 on branch `fix/history-ticket-filter-race`, then light QA and analysis.
+- 2026-11-03: DEV-FIX-1 returned a test-only fix (wait for `toHaveCount(1)` before attribute checks; original failed 3/40 locally, fixed 20/20). QA-R4 [qa-004](qa-004.md): no findings, 20/20 repeated, 39/39 suite excluding one locally failing unrelated test (`keeps history available when a declared store cannot be resolved`, passes in CI; local cause unconfirmed). AN-R4 [analysis-004](analysis-004.md), saved by orchestrator after a refused write: ANALYSIS-041 (warning, same race at the Markdown-copy scenario) assigned to DEV-FIX-2 as a gated clear fix (cycle 1); ANALYSIS-042 (redundant guard) and ANALYSIS-043 (optional product polish, needs its own proposal) deferred.
+- 2026-11-03: DEV-FIX-2 added the wait before the Markdown-copy click. QA-R5 [qa-005](qa-005.md): 40/40 repeats of both scenarios, 39/39 suite (same local-only test excluded). AN-R5 [analysis-005](analysis-005.md), saved by orchestrator after a refused write: verified by source review. ANALYSIS-041 verified. Fix committed on `fix/history-ticket-filter-race` and merged to main.

@@ -1026,9 +1026,13 @@ test("links tickets, repositories and branches from recorded facts without navig
   // Azure DevOps organization/project, a recorded URL, an unrecognized scope, and a local-only repository.
   await ticketFilter(page).fill("4211");
   await ticketFilter(page).press("Enter");
+  // The previous filter's rows stay until the new query returns; a strict attribute check on them throws at once instead of retrying.
+  await expect(page.locator(".timeline-row .ticket-link")).toHaveCount(1);
   await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://dev.azure.com/contoso/Payments/_workitems/edit/4211");
   await ticketFilter(page).fill("REC-5");
   await ticketFilter(page).press("Enter");
+  // The previous filter's rows stay until the new query returns; a strict attribute check on them throws at once instead of retrying.
+  await expect(page.locator(".timeline-row .ticket-link")).toHaveCount(1);
   await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://tracker.example.invalid/browse/REC-5");
   await ticketFilter(page).fill("UNK-7");
   await ticketFilter(page).press("Enter");
@@ -1108,6 +1112,8 @@ test("copies a work item as Markdown, loading every observation page", async ({ 
   await openHistory(page);
   await ticketFilter(page).fill("jira:company.atlassian.net:DEP-12");
   await ticketFilter(page).press("Enter");
+  // The unfiltered rows stay until the new query returns; a click on them would be a strict-mode violation.
+  await expect(page.locator(".timeline-row")).toHaveCount(1);
   await page.locator(".timeline-row .row-label").click();
   await expect(page.locator(".observation")).toHaveCount(2);
   await page.getByRole("button", { name: "Copy as Markdown" }).click();
