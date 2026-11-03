@@ -126,9 +126,9 @@ New packages require Windows x64 with the .NET 10 supported OS baseline and Wind
 
 ## Installing the release with day digests (from v0.3.0 and earlier)
 
-This release adds a third MCP tool, `save_digest`. The update health probe of v0.2.0 and v0.3.0 accepts a candidate only when it lists exactly two tools, so those releases decline `worklog update` to this payload and change nothing. From this release the probe requires `log_work` and `query_work` (each with an output schema) and accepts additional tools, so later updates are ordinary.
+Release v0.4.0 adds a third MCP tool, `save_digest`. The update health probe of v0.2.0 and v0.3.0 accepts a candidate only when it lists exactly two tools, so those releases decline `worklog update` to this payload and change nothing. So does every payload built before commit `a51a14a`, including the documented manual `0.3.9001` payload and dev builds from `3c7dfd1` up to `a51a14a`; dev builds installed with `install-dev.ps1 Switch` from the current repository are not affected. From v0.4.0 the probe requires `log_work` and `query_work` (each with an output schema) and accepts additional tools, so later updates are ordinary.
 
-Install this release once manually: download and checksum-verify the ZIP, stop clients and WorkLog processes using the old installation, extract it into a clean installation directory as in the migration steps below (keeping the private data directory), run `worklog --version`, and rerun `worklog init` for each repository to receive the digest instructions. The journal schema and shared-data contract are unchanged, and `digests.db` is created beside `journal.db` on first use. Rolling back leaves it unused.
+Install v0.4.0 once manually: download and checksum-verify the ZIP, stop clients and WorkLog processes using the old installation, extract it into a clean installation directory as in the migration steps below (keeping the private data directory), run `worklog --version`, and rerun `worklog init` for each repository to receive the digest instructions. The journal schema and shared-data contract are unchanged, and `digests.db` is created beside `journal.db` on first use. Rolling back leaves it unused.
 
 ## One-time migration from the legacy layout
 

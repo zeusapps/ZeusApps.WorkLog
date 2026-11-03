@@ -34,6 +34,15 @@ async function authorize(page: Page) {
     page.getByRole("heading", { name: "Ongoing board" }),
   ).toBeVisible({ timeout: 45_000 });
 }
+// Writes the preferences document out of band. A loaded page holds an older copy and saves it back 350 ms after its last change,
+// which would overwrite this write, so the page is left first (dropping that pending timer) and the write is read back.
+async function putState(page: Page, data: object) {
+  await page.goto("about:blank");
+  const response = await page.request.put("/api/state", { data });
+  expect(response.status()).toBe(204);
+  const stored = await (await page.request.get("/api/state")).json();
+  expect(stored).toMatchObject(JSON.parse(JSON.stringify(data)));
+}
 async function openTimeline(page: Page, useDefaultDocument = false) {
   const card = page.locator(".change-card").filter({
     has: page.getByRole("button", { name: "Activity timeline", exact: true }),
@@ -611,9 +620,8 @@ test("reading positions stay bounded however many documents were read", async ({
   await authorize(page);
   const seeded: Record<string, number> = {};
   for (let i = 0; i < 150; i++) seeded[`seed-${String(i).padStart(3, "0")}:old:design.md:`] = i;
-  const seed = await page.request.put("/api/state", { data: { schemaVersion: 1, repositories: null, positions: seeded } });
-  expect(seed.status()).toBe(204);
-  await page.reload();
+  await putState(page, { schemaVersion: 1, repositories: null, positions: seeded });
+  await page.goto("/ongoing");
   await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible();
   await page.getByRole("button", { name: "All repositories", exact: true }).click();
   await page.getByRole("button", { name: "Shipping reports", exact: true }).click();
@@ -1150,14 +1158,14 @@ test("marks quiet active changes and changes without recorded activity", async (
 
 test.describe("Ongoing board", () => {
   const stateWith = (page: Page, repositories: string[] | null, extra: object = {}) =>
-    page.request.put("/api/state", { data: { schemaVersion: 1, repositories, ...extra } });
+    putState(page, { schemaVersion: 1, repositories, ...extra });
   const column = (page: Page, stage: string) => page.locator(`.board-column[data-stage="${stage}"]`);
   const titles = async (page: Page, stage: string) =>
     (await column(page, stage).locator(".board-card .change-title").allTextContents()).map((t) => t.trim());
   const open = async (page: Page, extra: object = {}) => {
     await authorize(page);
-    expect((await stateWith(page, ["example/board-demo"], extra)).status()).toBe(204);
-    await page.reload();
+    await stateWith(page, ["example/board-demo"], extra);
+    await page.goto("/ongoing");
     await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible();
     await settled(page);
   };
@@ -1166,7 +1174,7 @@ test.describe("Ongoing board", () => {
     await expect(column(page, "in_progress").locator(".board-card")).toHaveCount(4);
     await expect(column(page, "done").locator('[data-kind="adhoc"]')).toHaveCount(1);
   };
-  const reset = async (page: Page) => expect((await stateWith(page, null)).status()).toBe(204);
+  const reset = async (page: Page) => stateWith(page, null);
   // Without the OpenSpec CLI (the packaged run) task totals are unavailable, and stages follow recorded facts alone.
   const tasks = (ticked: number) => (process.env["WORKLOG_DASHBOARD_NO_NODE"] === "true" ? "Task progress unavailable" : `${ticked} / 3 tasks`);
   const cardNamed = (page: Page, stage: string, name: string) =>
@@ -1195,6 +1203,32 @@ test.describe("Ongoing board", () => {
       await expect(adhoc.locator(".adhoc-details")).toContainText("fixture");
       await expect(page.locator("[data-testid=board-truncated]")).toHaveCount(0);
       await expect(column(page, "proposed").locator(".quiet-chip")).toHaveText("No recorded activity");
+    } finally {
+      await reset(page);
+    }
+  });
+
+  test("card footers span the full card width for every card kind", async ({ page }) => {
+    await open(page);
+    try {
+      const edges = async (selector: string) =>
+        page.locator(`.board-card${selector}`).first().evaluate((card) => {
+          const footer = card.querySelector(".card-footer")!.getBoundingClientRect();
+          const box = card.getBoundingClientRect();
+          const style = getComputedStyle(card);
+          return {
+            left: footer.left - (box.left + parseFloat(style.borderLeftWidth)),
+            right: box.right - parseFloat(style.borderRightWidth) - footer.right,
+            padding: style.paddingLeft + " " + style.paddingRight,
+          };
+        });
+      const change = await edges('[data-kind="change"]');
+      const ticket = await edges('[data-kind="ticket"]');
+      for (const e of [change, ticket]) {
+        expect(Math.abs(e.left)).toBeLessThanOrEqual(1);
+        expect(Math.abs(e.right)).toBeLessThanOrEqual(1);
+      }
+      expect(change.padding).toBe(ticket.padding);
     } finally {
       await reset(page);
     }
@@ -1269,13 +1303,13 @@ test.describe("Ongoing board", () => {
       const before = await titles(page, "in_progress");
       const lastKey = await column(page, "in_progress").locator(".board-card").last().getAttribute("data-card-key");
       await stateWith(page, ["example/board-demo"], { board: { order: [lastKey] } });
-      await page.reload();
+      await page.goto("/ongoing");
       await settled(page);
       // Unranked cards come first; the ranked one follows them.
       expect(await titles(page, "in_progress")).toEqual(before);
       const first = await column(page, "in_progress").locator(".board-card").first().getAttribute("data-card-key");
       await stateWith(page, ["example/board-demo"], { board: { order: [first] } });
-      await page.reload();
+      await page.goto("/ongoing");
       await settled(page);
       expect((await titles(page, "in_progress")).at(-1)).toBe(before[0]);
     } finally {
@@ -1308,12 +1342,12 @@ test.describe("Daily view", () => {
   // The fixture records its Daily repository on fixed past dates: work on Tue 6 Jan and Fri 9 Jan 2026. The browser clock is Monday 12 January 2026.
   const monday = new Date("2026-01-12T12:30:00Z");
   const stateWith = (page: Page, repositories: string[] | null, extra: object = {}) =>
-    page.request.put("/api/state", { data: { schemaVersion: 1, repositories, ...extra } });
+    putState(page, { schemaVersion: 1, repositories, ...extra });
   const open = async (page: Page, context: BrowserContext, repository = "example/daily-demo") => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
     await page.clock.install({ time: monday });
     await authorize(page);
-    expect((await stateWith(page, [repository])).status()).toBe(204);
+    await stateWith(page, [repository]);
     await page.goto("/daily");
     await expect(page.locator("#daily-title")).toBeVisible();
     await expect(page.getByTestId("daily-day")).toBeVisible();
@@ -1321,7 +1355,7 @@ test.describe("Daily view", () => {
     await expect(page.getByTestId("copy-daily")).toBeEnabled();
     await expect(page.getByTestId("daily-today-line").first()).toBeVisible();
   };
-  const reset = async (page: Page) => expect((await stateWith(page, null)).status()).toBe(204);
+  const reset = async (page: Page) => stateWith(page, null);
   const copied = async (page: Page) => {
     await page.getByTestId("copy-daily").click();
     await expect(page.locator(".copy-toast")).toHaveText("Daily copied.");
