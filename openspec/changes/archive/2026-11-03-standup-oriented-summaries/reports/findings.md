@@ -4,7 +4,7 @@ Orchestrator-owned ledger. Reviewers write their assigned reports; developers wr
 
 ## Current orchestrator
 
-Advisory marker; resume and hand-off rules are in the [workflow](../../../../.agents/workflows/openspec-delegation.md#mixed-client-operation).
+Advisory marker; resume and hand-off rules are in the [workflow](../../../../../.agents/workflows/openspec-delegation.md#mixed-client-operation).
 
 - Client / version: Claude Code 2.1.317
 - Session identity: claude-code main session, apply of standup-oriented-summaries
@@ -77,3 +77,5 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../.ag
 - All findings triaged: QA-001 and ANALYSIS-003 to 006 dismissed by user decisions; ANALYSIS-001 and 002 verified.
 - 2026-11-03: the user could check real use only after release and asked for a probe with fresh agents instead. [probe-001](probe-001.md) passed on claude-opus-5-5 and claude-sonnet-5-5. User decision: accept the Claude probe as task 5.2; Codex models not covered (recorded parity limitation of the acceptance evidence, not of the implementation, which is shared text for both clients).
 - Completion: all 12 tasks satisfied, both current role reports on the current target, every finding triaged, no blocking finding or unapproved deferral. Implementation complete; committed as 1648b1c on `change/standup-oriented-summaries`. No archive or push.
+
+- 2026-11-03: archived to `openspec/changes/archive/2026-11-03-standup-oriented-summaries` at the user's request, after syncing the delta specs into `openspec/specs/local-agent-integration` and `openspec/specs/day-digests` (strict validation 10/10). No `<!-- REVIEW` markers were present.
