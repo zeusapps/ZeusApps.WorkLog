@@ -21,6 +21,9 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../../
 | DEV-2 | developer | Claude Code, role default | none: role default | remove 5.1a smoke flag; ANALYSIS-001, ANALYSIS-002; task 4.2 | n/a | n/a | returned (build 0/0, 422/422 tests) |
 | QA-R2 | qa | Claude Code 2.1.317 / claude-sonnet-5-5 | none: role default | recheck DEV-2 + regression; identity head=6d23796 baseline=6d23796 files=11 diff=28b2dff190cb untracked=2/789d00f904e0 (paths incl. docs/mcp-validation.md) | reports/qa-002.md | QA-021 to QA-030 (none used) | returned (422/422; no findings) |
 | AN-R2 | code-analyzer | Claude Code 2.1.317 / claude-sonnet-5-5 | override: light recheck of test-only and docs-only correction | recheck ANALYSIS-001, ANALYSIS-002; same identity | reports/analysis-002.md (saved by orchestrator, refused write) | ANALYSIS-021 to ANALYSIS-030 (none used) | returned |
+| DEV-REL-1 | developer | Claude Code / claude-sonnet-5-5 | none: role default | release v0.4.1 preparation (version 0.4.1, release notes, installation note); baseline d148ebe | n/a | n/a | returned (422/422, dashboard 246/246, package + bootstrap + fixtures passed) |
+| QA-R3 | qa | Claude Code 2.1.317 / claude-sonnet-5-5 | none: role default | light review of DEV-REL-1; identity head=d148ebe baseline=d148ebe files=5 diff=5e3274d4e862 untracked=0/e3b0c44298fc | reports/qa-003.md | QA-031 to QA-040 (none used) | returned (no findings) |
+| AN-R3 | code-analyzer | Claude Code 2.1.317 / claude-sonnet-5-5 | override: docs/config-only light review | light review of DEV-REL-1; same identity | reports/analysis-003.md (saved by orchestrator, refused write) | ANALYSIS-031 to ANALYSIS-040 (031 used) | returned |
 
 ## Summary
 
@@ -33,6 +36,7 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../../
 | ANALYSIS-004 | [analysis-001](analysis-001.md) | 5.1a | suggestion | no | dismissed | orchestrator | n/a: 5.1a code removed |
 | ANALYSIS-005 | [analysis-001](analysis-001.md) | 1.1, 2.1, 2.3 | suggestion | no | dismissed | orchestrator | n/a: size accepted by user |
 | ANALYSIS-006 | [analysis-001](analysis-001.md) | 5.1a, 5.2 | suggestion | no | dismissed | orchestrator | n/a: 5.1a code removed |
+| ANALYSIS-031 | [analysis-003](analysis-003.md) | release v0.4.1 docs | suggestion | no | deferred | unassigned | n/a |
 
 ## Finding details and history
 
@@ -66,6 +70,12 @@ Advisory marker; resume and hand-off rules are in the [workflow](../../../../../
 - Sources and evidence: [analysis-001](analysis-001.md)
 - Triage: dismissed. 2026-11-03 the user accepted the size; design.md Risks corrected with the measured figures.
 - User decision: 2026-11-03 "Accept the size".
+
+### ANALYSIS-031: v0.4.1 note names v0.4.0 as the manual-install target
+
+- Sources and evidence: [analysis-003](analysis-003.md)
+- Triage: suggestion, non-blocking; the statements agree in effect and installation.md already says "v0.4.0 or later".
+- Deferral: deferred per the severity gate; reconsider at the next release-notes edit.
 
 ### Orchestrator note: design.md dependency sentence
 
