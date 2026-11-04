@@ -53,7 +53,7 @@
       (click)="toggleRepository(repo.id)"
       [title]="repo.id"
     >
-      <span class="repo-dot"></span
+      <span class="repo-dot" [attr.data-repository-color]="repositoryColor(repo.id)" aria-hidden="true"></span
       ><span class="ellipsis">{{repo.label}}</span></button
     >}
     <div class="sidebar-bottom">
@@ -372,6 +372,7 @@
               [class.drop-after]="dropMark()?.key===card.key&&dropMark()!.after&&dragged()?.key!==card.key"
               [attr.data-card-key]="card.key"
               [attr.data-kind]="card.kind"
+              [attr.data-repository-color]="distinctRepositories(card.repositories).length===1?repositoryColor(distinctRepositories(card.repositories)[0]):null"
               tabindex="-1"
               (dragover)="dragOver(card,$event)"
               (drop)="dropOn(card,$event)"
@@ -397,7 +398,7 @@
                 {{humanize(change.name)}}
               </button>
               <div class="card-repository">
-                {{change.repositories.map(repositoryLabel.bind(this)).join(' · ')}}
+                @for(repository of distinctRepositories(change.repositories);track repository){<span class="card-repository-item"><span class="repo-dot" [attr.data-repository-color]="repositoryColor(repository)" aria-hidden="true"></span>{{repositoryLabel(repository)}}</span>}
                 <span class="card-source">{{sourceShort(change.sourceId)}}</span>
               </div>
               @let comments=cardComments(card);
@@ -431,7 +432,7 @@
               </div>
               }@else if(card.kind==='ticket'){
               <button class="change-title" (click)="openItem(card.row!,undefined,true)">{{humanize(card.title)}}</button>
-              <div class="card-repository">{{repositoryLabel(card.repositories[0])}}</div>
+              <div class="card-repository">@for(repository of distinctRepositories(card.repositories);track repository){<span class="card-repository-item"><span class="repo-dot" [attr.data-repository-color]="repositoryColor(repository)" aria-hidden="true"></span>{{repositoryLabel(repository)}}</span>}</div>
               <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:card.tickets}"></ng-container>
               <div class="card-footer">
                 <span class="status-dot" [class.done]="card.status==='done'"></span
@@ -447,7 +448,7 @@
                 [attr.aria-expanded]="isExpanded(card)"
                 (click)="toggleCard(card)"
               >{{card.title}}</button>
-              <div class="card-repository">{{repositoryLabel(card.repositories[0])}}</div>
+              <div class="card-repository">@for(repository of distinctRepositories(card.repositories);track repository){<span class="card-repository-item"><span class="repo-dot" [attr.data-repository-color]="repositoryColor(repository)" aria-hidden="true"></span>{{repositoryLabel(repository)}}</span>}</div>
               <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:card.tickets,extracted:card.extractedTicketId}"></ng-container>
               @if(isExpanded(card)){
               <dl class="adhoc-details">

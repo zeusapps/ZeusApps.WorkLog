@@ -214,6 +214,59 @@ describe("board rendering", () => {
     fixture.destroy();
   });
 
+  it("uses stable shared palette cues for sidebar and distinct repository labels across card kinds", () => {
+    const shared = change("shared", 0, 9, { repositories: [repo, "github.com/acme/other", repo] });
+    const { app, fixture, element } = setup([shared, change("single", 0, 9), change("unlinked", 0, 9, { repositories: [] })]);
+    app.catalog.update((catalog) => ({
+      ...catalog!,
+      repositories: [
+        { id: "github.com/acme/other", label: "other" },
+        { id: repo, label: "api" },
+        { id: "github.com/acme/added", label: "added later" },
+      ],
+    }));
+    app.activity.set([activity("shared", 1), activity("single", 1)]);
+    app.ongoing.set([row("DEP-12"), row("REC-5", { repository: "github.com/acme/other", tickets: [{ provider: "jira", scope: "company", id: "REC-5" }] })]);
+    app.unlinked.set([entry("adhoc", 1)]);
+    fixture.detectChanges();
+
+    const sidebarColors = new Map(Array.from(element.querySelectorAll<HTMLButtonElement>(".repo-link"))
+      .filter((link) => !link.querySelector(".all-dot"))
+      .map((link) => [link.textContent!.trim(), link.querySelector(".repo-dot")!.getAttribute("data-repository-color")]));
+    expect(sidebarColors.get("api")).toBe(app.repositoryColor(repo));
+    expect(sidebarColors.get("other")).toBe(app.repositoryColor("github.com/acme/other"));
+    expect(sidebarColors.get("added later")).toBe(app.repositoryColor("github.com/acme/added"));
+    expect(element.querySelector(".all-dot")!.getAttribute("data-repository-color")).toBeNull();
+
+    const sharedCard = Array.from(element.querySelectorAll<HTMLElement>('[data-kind="change"]'))
+      .find((card) => card.querySelector(".change-title")?.textContent?.trim() === "Shared")!;
+    expect(sharedCard.hasAttribute("data-repository-color")).toBe(false);
+    expect(sharedCard.querySelectorAll(".card-repository-item")).toHaveLength(2);
+    expect(Array.from(sharedCard.querySelectorAll(".card-repository-item .repo-dot")).map((dot) => dot.getAttribute("data-repository-color")))
+      .toEqual([app.repositoryColor(repo), app.repositoryColor("github.com/acme/other")]);
+    expect(Array.from(sharedCard.querySelectorAll(".repo-dot")).every((dot) => dot.getAttribute("aria-hidden") === "true")).toBe(true);
+
+    const singleChange = Array.from(element.querySelectorAll<HTMLElement>('[data-kind="change"]'))
+      .find((card) => card.querySelector(".change-title")?.textContent?.trim() === "Single")!;
+    expect(singleChange.getAttribute("data-repository-color")).toBe(app.repositoryColor(repo));
+    const unlinkedChange = Array.from(element.querySelectorAll<HTMLElement>('[data-kind="change"]'))
+      .find((card) => card.querySelector(".change-title")?.textContent?.trim() === "Unlinked")!;
+    expect(unlinkedChange.hasAttribute("data-repository-color")).toBe(false);
+    const ticket = element.querySelector('[data-kind="ticket"]')!;
+    const adhoc = element.querySelector('[data-kind="adhoc"]')!;
+    expect(ticket.getAttribute("data-repository-color")).toBe(app.repositoryColor(repo));
+    expect(adhoc.getAttribute("data-repository-color")).toBe(app.repositoryColor(repo));
+    expect(ticket.querySelector(".card-repository-item .repo-dot")!.getAttribute("aria-hidden")).toBe("true");
+    expect(adhoc.querySelector(".card-repository-item .repo-dot")!.getAttribute("aria-hidden")).toBe("true");
+    expect(sharedCard.querySelector(".card-footer")!.getAttribute("data-repository-color")).toBeNull();
+
+    app.selectedRepos.set([repo]);
+    app.catalog.update((catalog) => ({ ...catalog!, repositories: [...catalog!.repositories].reverse() }));
+    fixture.detectChanges();
+    expect(element.querySelector('.repo-link[title="github.com/acme/api"] .repo-dot')!.getAttribute("data-repository-color")).toBe(app.repositoryColor(repo));
+    fixture.destroy();
+  });
+
   it("expands an ad-hoc card in place and opens the drill-down for a ticket card", () => {
     const { app, fixture, element } = setup([]);
     app.ongoing.set([row("DEP-12")]);

@@ -44,6 +44,7 @@ import {
 import { DailyFormat, dailyText, dailyToday, dayLabel, digestFor, digestIndex, noSummary } from "./daily";
 import { markdownObservationLimit, workItemMarkdown } from "./workitem-markdown";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
+import { repositoryColorKey } from "./repository-colors";
 import {
   baselineKey,
   changeKey,
@@ -473,6 +474,14 @@ export class App implements OnDestroy, AfterViewInit {
   }
   repositoryLabel(id: string) {
     return this.catalog()?.repositories.find((r) => r.id === id)?.label ?? id;
+  }
+
+  repositoryColor(id: string | null | undefined) {
+    return repositoryColorKey(id);
+  }
+
+  distinctRepositories(ids: string[]) {
+    return [...new Set(ids.filter((id) => repositoryColorKey(id) !== null))];
   }
   sourceLabel(id: string) {
     return (

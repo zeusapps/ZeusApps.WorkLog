@@ -1,9 +1,15 @@
-import { test, expect, Page, BrowserContext } from "@playwright/test";
+import { test, expect, Page, BrowserContext, Route } from "@playwright/test";
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createHmac } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-const base = "http://127.0.0.1:47942";
+const testPort = Number(process.env["WORKLOG_DASHBOARD_TEST_PORT"] ?? "47942");
+if (!Number.isInteger(testPort) || testPort < 1 || testPort > 65535 || testPort === 47831)
+  throw new Error("WORKLOG_DASHBOARD_TEST_PORT must be a valid test port other than 47831.");
+const base = `http://127.0.0.1:${testPort}`;
+const evidencePrefix = process.env["WORKLOG_REPOSITORY_COLOR_EVIDENCE_PREFIX"] ?? "dev-002";
+if (!/^[a-z0-9][a-z0-9-]{0,31}$/i.test(evidencePrefix))
+  throw new Error("WORKLOG_REPOSITORY_COLOR_EVIDENCE_PREFIX must be a short filename prefix.");
 const fixture = async () =>
   JSON.parse(await readFile(resolve("test-results/fixture.json"), "utf8")) as {
     root: string;
@@ -58,6 +64,98 @@ async function openTimeline(page: Page, useDefaultDocument = false) {
     page.getByRole("dialog", { name: "OpenSpec document reader" }),
   ).toBeVisible();
   await expect(page.locator(".markdown h1")).toHaveText("Activity timeline");
+}
+async function renderPaletteAndMeasure(page: Page, theme: "dark" | "light") {
+  return page.evaluate((activeTheme) => {
+    const keys = ["teal", "blue", "sand", "green", "rose", "violet", "aqua", "amber"];
+    const board = document.querySelector<HTMLElement>(".board")!;
+    document.querySelector(".repository-palette-evidence")?.remove();
+    document.documentElement.dataset.theme = activeTheme;
+    const source = board.querySelector<HTMLElement>(".board-card")!;
+    const evidence = document.createElement("section");
+    evidence.className = "repository-palette-evidence";
+    evidence.setAttribute("aria-hidden", "true");
+    evidence.innerHTML = "<h3>Repository palette rendering evidence</h3>";
+    const grid = document.createElement("div");
+    grid.className = "repository-palette-grid";
+    for (const key of keys) {
+      const card = source.cloneNode(true) as HTMLElement;
+      card.setAttribute("data-repository-color", key);
+      card.dataset.paletteCase = key;
+      card.querySelectorAll<HTMLElement>(".repo-dot").forEach((dot) => dot.setAttribute("data-repository-color", key));
+      const title = card.querySelector<HTMLElement>(".change-title");
+      if (title) title.textContent = "Repository · " + key;
+      grid.append(card);
+    }
+    const shared = source.cloneNode(true) as HTMLElement;
+    shared.removeAttribute("data-repository-color");
+    shared.dataset.paletteCase = "shared";
+    const sharedRepositories = shared.querySelector<HTMLElement>(".card-repository")!;
+    sharedRepositories.replaceChildren();
+    for (const [index, label] of ["repository one", "repository two"].entries()) {
+      const item = document.createElement("span");
+      item.className = "card-repository-item";
+      const dot = document.createElement("span");
+      dot.className = "repo-dot";
+      dot.dataset.repositoryColor = keys[index];
+      dot.setAttribute("aria-hidden", "true");
+      item.append(dot, document.createTextNode(label));
+      sharedRepositories.append(item);
+    }
+    const sharedTitle = shared.querySelector<HTMLElement>(".change-title");
+    if (sharedTitle) sharedTitle.textContent = "Shared repositories · neutral footer";
+    grid.append(shared);
+    const missing = source.cloneNode(true) as HTMLElement;
+    missing.removeAttribute("data-repository-color");
+    missing.dataset.paletteCase = "missing";
+    missing.querySelector<HTMLElement>(".card-repository")!.textContent = "Repository identity unavailable";
+    const missingTitle = missing.querySelector<HTMLElement>(".change-title");
+    if (missingTitle) missingTitle.textContent = "Missing repository identity · neutral footer";
+    grid.append(missing);
+    evidence.append(grid);
+    board.after(evidence);
+    const style = document.createElement("style");
+    style.textContent = ".repository-palette-evidence{margin:24px 0;padding:16px;border:1px dashed var(--border);border-radius:8px}.repository-palette-evidence h3{margin:0 0 12px;font-size:13px}.repository-palette-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.repository-palette-grid>.board-card{min-width:0}@media(max-width:760px){.repository-palette-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}";
+    style.dataset.paletteEvidence = "true";
+    evidence.append(style);
+    const rgb = (value: string) => value.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+    const luminance = (value: string) => {
+      const channels = rgb(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+    };
+    const measureFooter = (footer: HTMLElement) => {
+      const background = getComputedStyle(footer).backgroundColor;
+      const ratios = Array.from(footer.querySelectorAll<HTMLElement>("*"))
+        .filter((text) => (text.textContent ?? "").trim().length > 0)
+        .map((text) => {
+          const foreground = getComputedStyle(text).color;
+          const light = Math.max(luminance(foreground), luminance(background));
+          const dark = Math.min(luminance(foreground), luminance(background));
+          return (light + 0.05) / (dark + 0.05);
+        });
+      return { background, minimum: Math.min(...ratios) };
+    };
+    const paletteMinimum = Math.min(...keys.map((key) => measureFooter(grid.querySelector<HTMLElement>(`[data-palette-case="${key}"] .card-footer`)!).minimum));
+    const sharedFooter = measureFooter(grid.querySelector<HTMLElement>('[data-palette-case="shared"] .card-footer')!);
+    const missingFooter = measureFooter(grid.querySelector<HTMLElement>('[data-palette-case="missing"] .card-footer')!);
+    const neutralReference = document.createElement("div");
+    neutralReference.className = "card-footer";
+    document.body.append(neutralReference);
+    const expectedNeutralBackground = getComputedStyle(neutralReference).backgroundColor;
+    neutralReference.remove();
+    return {
+      keys,
+      minimum: paletteMinimum,
+      sharedMinimum: sharedFooter.minimum,
+      missingMinimum: missingFooter.minimum,
+      sharedBackground: sharedFooter.background,
+      missingBackground: missingFooter.background,
+      expectedNeutralBackground,
+    };
+  }, theme);
 }
 test.describe.configure({ mode: "serial" });
 
@@ -1237,6 +1335,128 @@ test.describe("Ongoing board", () => {
       expect(change.padding).toBe(ticket.padding);
     } finally {
       await reset(page);
+    }
+  });
+
+  test("repository colors stay stable and every themed footer keeps readable contrast", async ({ page }, testInfo) => {
+    await open(page);
+    const activityRoutePattern = "**/api/activity/changes*";
+    const movementActivityRoute = async (route: Route) => {
+      const response = await route.fetch();
+      const activities = (await response.json()) as Array<{
+        repository: string;
+        change: string;
+        firstAt: string;
+        lastAt: string;
+        lastStatus: string;
+      }>;
+      const observedAt = new Date().toISOString();
+      const updatedActivities = activities.filter(
+        (activity) => !(activity.repository === "example/board-demo" && activity.change === "board-proposal"),
+      );
+      updatedActivities.push({
+        repository: "example/board-demo",
+        change: "board-proposal",
+        firstAt: observedAt,
+        lastAt: observedAt,
+        lastStatus: "in_progress",
+      });
+      await route.fulfill({ response, json: updatedActivities });
+    };
+    let movementRouteInstalled = false;
+    try {
+      const repoLink = page.locator('.repo-link[title="example/board-demo"]');
+      const initialSidebarColor = await repoLink.locator(".repo-dot").getAttribute("data-repository-color");
+      const initialCardColor = await cardNamed(page, "in_progress", "Board started").getAttribute("data-repository-color");
+      expect(initialCardColor).toBe(initialSidebarColor);
+      const proposedColor = await cardNamed(page, "proposed", "Board proposal").getAttribute("data-repository-color");
+      expect(proposedColor).toBe(initialSidebarColor);
+
+      await page.getByRole("button", { name: "All repositories", exact: true }).click();
+      await expect(repoLink.locator(".repo-dot")).toHaveAttribute("data-repository-color", initialSidebarColor!);
+      await repoLink.click();
+      await settled(page);
+      await expect(cardNamed(page, "in_progress", "Board started")).toHaveAttribute("data-repository-color", initialCardColor!);
+
+      const filter = page.getByRole("searchbox", { name: "Filter board cards" });
+      await filter.fill("board-started");
+      await expect(page.locator(".board-card")).toHaveCount(1);
+      await filter.fill("");
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible();
+      await settled(page);
+      await expect(repoLink.locator(".repo-dot")).toHaveAttribute("data-repository-color", initialSidebarColor!);
+      await expect(cardNamed(page, "in_progress", "Board started")).toHaveAttribute("data-repository-color", initialCardColor!);
+
+      // Supply one synthetic activity response so stage derivation moves the card without changing fixture files or journal data.
+      await page.route(activityRoutePattern, movementActivityRoute);
+      movementRouteInstalled = true;
+      await page.reload();
+      await expect(cardNamed(page, "in_progress", "Board proposal")).toHaveAttribute("data-repository-color", proposedColor!);
+      await expect(repoLink.locator(".repo-dot")).toHaveAttribute("data-repository-color", proposedColor!);
+
+      const evidenceDirectory = resolve("..", "openspec/changes/add-repository-card-colors/screenshots");
+      await mkdir(evidenceDirectory, { recursive: true });
+      const darkContrast = await renderPaletteAndMeasure(page, "dark");
+      expect(darkContrast.keys).toEqual(["teal", "blue", "sand", "green", "rose", "violet", "aqua", "amber"]);
+      expect(darkContrast.minimum).toBeGreaterThanOrEqual(4.5);
+      expect(darkContrast.sharedMinimum).toBeGreaterThanOrEqual(4.5);
+      expect(darkContrast.missingMinimum).toBeGreaterThanOrEqual(4.5);
+      expect(darkContrast.sharedBackground).toBe(darkContrast.expectedNeutralBackground);
+      expect(darkContrast.missingBackground).toBe(darkContrast.expectedNeutralBackground);
+      await page.screenshot({ path: resolve(evidenceDirectory, `${evidencePrefix}-dark.png`), fullPage: true });
+
+      const lightContrast = await renderPaletteAndMeasure(page, "light");
+      expect(lightContrast.keys).toEqual(darkContrast.keys);
+      expect(lightContrast.minimum).toBeGreaterThanOrEqual(4.5);
+      expect(lightContrast.sharedMinimum).toBeGreaterThanOrEqual(4.5);
+      expect(lightContrast.missingMinimum).toBeGreaterThanOrEqual(4.5);
+      expect(lightContrast.sharedBackground).toBe(lightContrast.expectedNeutralBackground);
+      expect(lightContrast.missingBackground).toBe(lightContrast.expectedNeutralBackground);
+      await page.screenshot({ path: resolve(evidenceDirectory, `${evidencePrefix}-light.png`), fullPage: true });
+
+      await page.locator(".repository-palette-evidence").evaluate((evidence) => evidence.remove());
+      await page.setViewportSize({ width: 390, height: 844 });
+      const narrow = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll<HTMLElement>(".board-card"));
+        const fits = (element: Element, parent: Element) => {
+          const box = element.getBoundingClientRect();
+          const bounds = parent.getBoundingClientRect();
+          return box.left >= bounds.left - 1 && box.right <= bounds.right + 1;
+        };
+        const boardHeading = document.querySelector(".board-section > .section-heading.spaced")!;
+        const boardFilter = document.querySelector(".board-section .board-filter")!;
+        const boardFilterInput = boardFilter.querySelector(".board-filter-input")!;
+        const inboxHeading = document.querySelector(".review-inbox > .section-heading")!;
+        const inboxControls = inboxHeading.querySelector(".inbox-controls")!;
+        return {
+          overflow: document.documentElement.scrollWidth > window.innerWidth,
+          boardHeadingFits: fits(boardHeading, document.querySelector(".board-section")!),
+          boardFilterFits: fits(boardFilter, boardHeading),
+          boardFilterInputFits: fits(boardFilterInput, boardFilter),
+          inboxControlsFit: fits(inboxControls, inboxHeading),
+          clippedFooters: cards.filter((card) => {
+            const footer = card.querySelector(".card-footer")!.getBoundingClientRect();
+            const cardBox = card.getBoundingClientRect();
+            return footer.left < cardBox.left || footer.right > cardBox.right || Array.from(card.querySelectorAll(".card-footer > span"))
+              .some((span) => span.getBoundingClientRect().right > footer.right + 1);
+          }).length,
+        };
+      });
+      expect(narrow.overflow).toBe(false);
+      expect(narrow.boardHeadingFits).toBe(true);
+      expect(narrow.boardFilterFits).toBe(true);
+      expect(narrow.boardFilterInputFits).toBe(true);
+      expect(narrow.inboxControlsFit).toBe(true);
+      expect(narrow.clippedFooters).toBe(0);
+      await page.screenshot({ path: resolve(evidenceDirectory, `${evidencePrefix}-narrow.png`), fullPage: true });
+    } finally {
+      try {
+        if (movementRouteInstalled)
+          await page.unroute(activityRoutePattern, movementActivityRoute);
+      } finally {
+        await reset(page);
+      }
     }
   });
 

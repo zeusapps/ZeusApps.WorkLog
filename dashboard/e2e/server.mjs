@@ -7,6 +7,9 @@ import { watch } from "node:fs";
 import { existsSync } from "node:fs";
 import { delimiter } from "node:path";
 const workspace = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const testPort = Number(process.env.WORKLOG_DASHBOARD_TEST_PORT ?? "47942");
+if (!Number.isInteger(testPort) || testPort < 1 || testPort > 65535 || testPort === 47831)
+  throw new Error("WORKLOG_DASHBOARD_TEST_PORT must be a valid test port other than 47831.");
 const root = join(workspace, "artifacts", "dashboard-e2e", randomUUID());
 const smoke = join(
   workspace,
@@ -33,7 +36,7 @@ const args = [
   "dashboard",
   "--no-open",
   "--port",
-  "47942",
+  String(testPort),
   "--data-dir",
   info.data,
   "--repository",

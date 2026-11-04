@@ -232,11 +232,45 @@ a {
   background: #7c91b7;
   border-radius: 50%;
 }
-.repo-link:nth-of-type(3n) .repo-dot {
-  background: #baa47b;
+.repo-dot[data-repository-color="teal"] { background: #72c7b4; }
+.repo-dot[data-repository-color="blue"] { background: #8fb5ed; }
+.repo-dot[data-repository-color="sand"] { background: #d1b779; }
+.repo-dot[data-repository-color="green"] { background: #9cc77e; }
+.repo-dot[data-repository-color="rose"] { background: #dc9ab0; }
+.repo-dot[data-repository-color="violet"] { background: #b7a1e5; }
+.repo-dot[data-repository-color="aqua"] { background: #78c7d1; }
+.repo-dot[data-repository-color="amber"] { background: #e2a96d; }
+.board-card[data-repository-color] .card-footer {
+  color: var(--repository-footer-text);
+  background: var(--repository-footer-background);
 }
-.repo-link:nth-of-type(3n + 1) .repo-dot {
-  background: #75a999;
+:root .board-card[data-repository-color="teal"] { --repository-footer-background: #203b3a; --repository-footer-text: #edf8f4; }
+:root .board-card[data-repository-color="blue"] { --repository-footer-background: #26374a; --repository-footer-text: #f0f5fc; }
+:root .board-card[data-repository-color="sand"] { --repository-footer-background: #3c3528; --repository-footer-text: #fbf6e9; }
+:root .board-card[data-repository-color="green"] { --repository-footer-background: #2d3b2d; --repository-footer-text: #f1f8ed; }
+:root .board-card[data-repository-color="rose"] { --repository-footer-background: #3d2d35; --repository-footer-text: #fbf0f4; }
+:root .board-card[data-repository-color="violet"] { --repository-footer-background: #352f43; --repository-footer-text: #f5f1fc; }
+:root .board-card[data-repository-color="aqua"] { --repository-footer-background: #203940; --repository-footer-text: #edf8fa; }
+:root .board-card[data-repository-color="amber"] { --repository-footer-background: #403328; --repository-footer-text: #fcf4eb; }
+:root[data-theme="light"] .board-card[data-repository-color="teal"] { --repository-footer-background: #e4f3ee; --repository-footer-text: #263541; }
+:root[data-theme="light"] .board-card[data-repository-color="blue"] { --repository-footer-background: #e8eff9; --repository-footer-text: #263541; }
+:root[data-theme="light"] .board-card[data-repository-color="sand"] { --repository-footer-background: #f4efdf; --repository-footer-text: #263541; }
+:root[data-theme="light"] .board-card[data-repository-color="green"] { --repository-footer-background: #edf4e6; --repository-footer-text: #263541; }
+:root[data-theme="light"] .board-card[data-repository-color="rose"] { --repository-footer-background: #f7eaf0; --repository-footer-text: #263541; }
+:root[data-theme="light"] .board-card[data-repository-color="violet"] { --repository-footer-background: #f0ebf8; --repository-footer-text: #263541; }
+:root[data-theme="light"] .board-card[data-repository-color="aqua"] { --repository-footer-background: #e5f2f4; --repository-footer-text: #263541; }
+:root[data-theme="light"] .board-card[data-repository-color="amber"] { --repository-footer-background: #f7eee3; --repository-footer-text: #263541; }
+.card-repository-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-right: 8px;
+  max-width: 100%;
+}
+.card-repository-item .repo-dot {
+  align-self: center;
+  height: 6px;
+  width: 6px;
 }
 .all-dot {
   border: 1px solid #99aeb9;
@@ -611,6 +645,7 @@ h1 {
   margin: 0 -16px;
   padding: 11px 16px;
   border-radius: 0 0 9px 9px;
+  color: var(--text-secondary);
 }
 .board-card .change-title {
   font-size: 15px;
@@ -2162,6 +2197,32 @@ h1 {
   }
 }
 @media (max-width: 600px) {
+  .board-section > .section-heading.spaced {
+    flex-wrap: wrap;
+  }
+  .board-section > .section-heading.spaced > div:first-child {
+    min-width: 0;
+  }
+  .board-section .board-filter {
+    width: 100%;
+    align-items: stretch;
+  }
+  .board-section .board-filter-input {
+    width: 100%;
+  }
+  .review-inbox > .section-heading > div:first-child {
+    min-width: 0;
+  }
+  .review-inbox .inbox-controls {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+  .review-inbox .inbox-controls > .editor-select {
+    max-width: 100%;
+  }
   .workspace main {
     padding: 25px 15px 15px;
   }
