@@ -6,6 +6,7 @@
 - Session identity: codex-repository-card-colors-20261104
 - Since (UTC): 2026-11-04T19:12:15Z
 - Previous owner: none
+- Status: finished; implementation verified and committed.
 
 ## Assignments and reservations
 
@@ -116,5 +117,5 @@ A subsequent Release rebuild was locked by a dashboard from an earlier disposabl
 - Findings: ANALYSIS-001, QA-001, and ANALYSIS-061 verified; QA-041 retained as duplicate of ANALYSIS-061. No unresolved blockers, suggestions, or unapproved deferrals.
 - Nonblocking follow-ups: none recorded.
 - Evidence gaps / provider restrictions: no provider restrictions or required acceptance gaps remain. Dashboard changes are client-neutral. User's installation was outside scope and untouched; validation package was not installed. Two additional bounded rounds were explicitly authorized by the user; prior failed reports/screenshots remain as history.
-- Commit: not yet committed.
+- Commit: e7ab070691e61256c86a045bf7e3d38cb5067273 on feature/add-repository-card-colors contains the implementation, change artifacts, and review evidence. All nine implementation working-file hashes remained unchanged from the reviewed target after staging and commit. This completion record follows in a separate metadata commit; no push or publication performed.
 - OpenSpec task reconciliation: 8/8 verified, including user-authorized responsive control task 2.3. Strict OpenSpec validation passes; no archive or publication requested.
