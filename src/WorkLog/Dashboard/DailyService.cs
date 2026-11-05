@@ -11,7 +11,8 @@ internal sealed record DailyRequest(string Before, string Timezone, string[]? Re
 internal sealed record DailyItem(string Id, string Title, string Repository, Ticket[] Tickets, string[] Changes, string Status, Entry Primary, Entry[] Others);
 /// <param name="Covers">The sorted IDs of the observations a stored agent digest covers.</param>
 internal sealed record DayDigest(string[] Covers, string Text);
-internal sealed record DailyDigest(string? Day, string? PreviousDay, string? NextDay, DailyItem[] Items, DailyItem[] Today, DayDigest[] Digests);
+internal sealed record DailyDigestIssue(string Category, string Message);
+internal sealed record DailyDigest(string? Day, string? PreviousDay, string? NextDay, DailyItem[] Items, DailyItem[] Today, DayDigest[] Digests, DailyDigestIssue? DigestIssue = null);
 
 internal sealed class DailyService(DashboardJournal journal, DigestStore? digests = null)
 {
@@ -41,30 +42,34 @@ internal sealed class DailyService(DashboardJournal journal, DigestStore? digest
 
         var day = requested ?? (journal.LatestBefore(before, repositories, data.Snapshot) is { } latest ? LocalDate(latest, zone) : (DateOnly?)null);
         if (day is null)
-            return new(null, null, null, [], today, Digests(today));
+        {
+            var (todayDigests, issue) = Digests(today);
+            return new(null, null, null, [], today, todayDigests, issue);
+        }
         var start = Midnight(day.Value, zone);
         var end = Midnight(day.Value.AddDays(1), zone);
         var items = Items(data.Entries.Where(e => e.OccurredAt < end).ToArray(), start, end, zone, data.Snapshot);
         var previous = journal.LatestBefore(start, repositories, data.Snapshot);
         var next = journal.EarliestBetween(end, before, repositories, data.Snapshot);
+        var (dayDigests, digestIssue) = Digests(items, today);
         return new(day.Value.ToString(DateFormat, CultureInfo.InvariantCulture),
             previous is { } p ? LocalDate(p, zone).ToString(DateFormat, CultureInfo.InvariantCulture) : null,
             next is { } n ? LocalDate(n, zone).ToString(DateFormat, CultureInfo.InvariantCulture) : null,
-            items, today, Digests(items, today));
+            items, today, dayDigests, digestIssue);
     }
 
-    /// <summary>Stored digests of the items in the response. Digests are optional: a missing or unreadable store is empty.</summary>
-    private DayDigest[] Digests(params DailyItem[][] sections)
+    /// <summary>Stored digests of the items in the response. Missing storage is normal; read failures are reported separately.</summary>
+    private (DayDigest[] Digests, DailyDigestIssue? Issue) Digests(params DailyItem[][] sections)
     {
-        if (digests is null) return [];
+        if (digests is null) return ([], null);
         try
         {
             var ids = sections.SelectMany(s => s).Where(i => !i.Id.StartsWith("adhoc:", StringComparison.Ordinal)).Select(i => i.Id).ToHashSet(StringComparer.Ordinal);
-            return digests.Read(ids).Select(d => new DayDigest(d.Covers, d.Text)).ToArray();
+            return (digests.Read(ids).Select(d => new DayDigest(d.Covers, d.Text)).ToArray(), null);
         }
         catch
         {
-            return [];
+            return ([], new("unavailable", "Saved digests are temporarily unavailable."));
         }
     }
 

@@ -9,7 +9,8 @@ namespace WorkLog.Journaling;
 /// Computes digest requests for logged observations and validates and stores agent-written day digests.
 /// Work items use ticket grouping; local days use the machine's timezone. Digests never change observations.
 /// </summary>
-public sealed partial class DigestService(Journal journal, DigestStore store, TimeZoneInfo? zone = null)
+public sealed partial class DigestService(Journal journal, DigestStore store, TimeZoneInfo? zone = null,
+    Action<string>? diagnosticSink = null, TimeProvider? timeProvider = null)
 {
     internal const int MinimumEntries = 2;
     internal const int MaximumEntries = 30;
@@ -17,6 +18,9 @@ public sealed partial class DigestService(Journal journal, DigestStore store, Ti
     internal const string Instruction = LoggingGuidance.DigestInstruction;
 
     private readonly TimeZoneInfo zone = zone ?? TimeZoneInfo.Local;
+    private readonly TimeProvider diagnosticClock = timeProvider ?? TimeProvider.System;
+    private readonly object diagnosticGate = new();
+    private readonly Dictionary<string, DateTimeOffset> lastDiagnostic = new(StringComparer.Ordinal);
 
     /// <summary>The digest request for a newly created observation, or null. Never throws: a failure only drops the request.</summary>
     public DigestRequest? Request(Entry created)
@@ -34,10 +38,30 @@ public sealed partial class DigestService(Journal journal, DigestStore store, Ti
             return new DigestRequest(item, day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), zone.Id,
                 entries.Select(e => new DigestEntry(e.Id, e.OccurredAt, e.Status, e.Change, e.Tickets, e.Summary)).ToArray(), Instruction);
         }
-        catch
+        catch (Exception exception)
         {
+            ReportOptionalFailure(exception);
             return null;
         }
+    }
+
+    private void ReportOptionalFailure(Exception exception)
+    {
+        if (diagnosticSink is null) return;
+        var category = exception switch
+        {
+            DigestStoreUnavailableException => "store-unavailable",
+            IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException => "storage-read",
+            _ => "request-failed"
+        };
+        var now = diagnosticClock.GetUtcNow();
+        lock (diagnosticGate)
+        {
+            if (lastDiagnostic.TryGetValue(category, out var previous) && now - previous < TimeSpan.FromMinutes(1)) return;
+            lastDiagnostic[category] = now;
+        }
+        try { diagnosticSink($"Optional digest request skipped ({category})."); }
+        catch { /* Diagnostics must never change the result of a saved observation. */ }
     }
 
     public SavedDigest Save(string[] entryIds, string text)

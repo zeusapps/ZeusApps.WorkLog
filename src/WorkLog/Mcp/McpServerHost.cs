@@ -21,7 +21,12 @@ internal static class McpServerHost
         builder.Logging.AddConsole(options => options.LogToStandardErrorThreshold = LogLevel.Trace);
         var journal = new Journal(settings, repository);
         builder.Services.AddSingleton(journal);
-        builder.Services.AddSingleton(new DigestService(journal, new DigestStore(settings.DataDirectory)));
+        builder.Services.AddSingleton(serviceProvider =>
+        {
+            var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("WorkLog.OptionalDigests");
+            return new DigestService(journal, new DigestStore(settings.DataDirectory),
+                diagnosticSink: message => logger.LogWarning("{DigestDiagnostic}", message));
+        });
         using var http = ReleaseClient.CreateHttpClient();
         var updates = new UpdateDiscovery(settings, new ReleaseClient(http));
         builder.Services.AddSingleton(updates);

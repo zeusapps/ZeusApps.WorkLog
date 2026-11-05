@@ -21,21 +21,13 @@ export interface RenderedDocument {
 }
 /** The marker text of every review comment in a document, found by the same rule the reader renders them with. */
 export function parseReviews(text: string): Review[] {
-  return renderMarkdown(text).reviews;
+  const md = createMarkdownParser();
+  return md.parse(text, {}).filter((token) => token.type === "worklog_review").map(reviewFromToken);
 }
 
-/**
- * Renders a document. With `marks`, blocks that share a line with a changed range carry the `changed-since-read` class,
- * and each removed passage becomes a collapsed `removed-since-read` disclosure before the top-level block it preceded.
- */
-export function renderMarkdown(text: string, canComment = false, marks: ReadMarks | null = null): RenderedDocument {
-  const md = new MarkdownIt({
-    html: false,
-    linkify: false,
-    typographer: false,
-  });
-  const headings: Heading[] = [],
-    reviews: Review[] = [];
+/** The review block rule is shared by rendering and token-only baseline extraction. */
+function createMarkdownParser(): Parser {
+  const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
   md.block.ruler.before(
     "fence",
     "worklog_review",
@@ -51,25 +43,39 @@ export function renderMarkdown(text: string, canComment = false, marks: ReadMark
       if (silent) return true;
       const token = state.push("worklog_review", "aside", 0);
       token.map = [start, next];
-      token.content = state.src
-        .slice(offset + prefix[0].length, close).trim();
+      token.content = state.src.slice(offset + prefix[0].length, close).trim();
       token.meta = { marker: state.src.slice(offset, close + 3) };
       state.line = next;
       return true;
     },
     { alt: ["paragraph", "reference", "blockquote", "list"] },
   );
+  return md;
+}
+
+function reviewFromToken(token: Token): Review {
+  const structured = token.content.match(/^id=([a-f0-9]{32})\nTarget: preceding passage\nQuote: ([^\n]*)\nComment:\n([\s\S]*)$/);
+  const decode = (value: string) => value.replaceAll("-&#45;", "--");
+  return {
+    text: decode(structured ? structured[3].trim() : token.content),
+    line: token.map?.[0] ?? 0,
+    id: structured?.[1] ?? null,
+    quote: structured ? decode(structured[2]) : "",
+    marker: String(token.meta?.["marker"] ?? ""),
+  };
+}
+
+/**
+ * Renders a document. With `marks`, blocks that share a line with a changed range carry the `changed-since-read` class,
+ * and each removed passage becomes a collapsed `removed-since-read` disclosure before the top-level block it preceded.
+ */
+export function renderMarkdown(text: string, canComment = false, marks: ReadMarks | null = null): RenderedDocument {
+  const md = createMarkdownParser();
+  const headings: Heading[] = [],
+    reviews: Review[] = [];
   md.renderer.rules["worklog_review"] = (tokens, index) => {
     const t = tokens[index];
-    const structured = t.content.match(/^id=([a-f0-9]{32})\nTarget: preceding passage\nQuote: ([^\n]*)\nComment:\n([\s\S]*)$/);
-    const decode = (value: string) => value.replaceAll("-&#45;", "--");
-    const review: Review = {
-      text: decode(structured ? structured[3].trim() : t.content),
-      line: t.map?.[0] ?? 0,
-      id: structured?.[1] ?? null,
-      quote: structured ? decode(structured[2]) : "",
-      marker: String(t.meta?.["marker"] ?? ""),
-    };
+    const review = reviewFromToken(t);
     reviews.push(review);
     const changed = t.meta?.["changed"] === true;
     return (

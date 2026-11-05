@@ -481,6 +481,41 @@ describe("Daily agent digests", () => {
     fixture.destroy();
   });
 
+  it("keeps one digest issue across repeated failure and clears it after an absent or null successful response", async () => {
+    let payload: DailyDigest = {
+      ...digest(),
+      digestIssue: { category: "unavailable", message: "Saved digests are temporarily unavailable." },
+    };
+    const harness = await shown(payload);
+    const { app, fixture, element } = harness;
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) =>
+      String(input) === "/api/daily" ? Response.json(payload) : serve(input, init));
+
+    expect(element.querySelectorAll("[data-testid='daily-digest-issue']")).toHaveLength(1);
+    expect(element.querySelector("[data-testid='daily-digest-issue']")!.textContent).toContain("temporarily unavailable");
+    expect(element.querySelector("[data-testid='daily-summary']")!.textContent).toContain("Retry policy for export jobs merged");
+    expect(element.querySelector("[data-testid='daily-today-summary']")!.textContent).toContain("Export retries wired to the job scheduler");
+    await app.loadDaily();
+    fixture.detectChanges();
+    expect(element.querySelectorAll("[data-testid='daily-digest-issue']")).toHaveLength(1);
+    expect(element.querySelector("[data-testid='daily-summary']")!.textContent).toContain("Retry policy for export jobs merged");
+
+    payload = { ...digest(), digestIssue: null };
+    await app.loadDaily();
+    fixture.detectChanges();
+    expect(element.querySelector("[data-testid='daily-digest-issue']")).toBeNull();
+    expect(element.querySelector("[data-testid='daily-summary']")!.textContent).toContain("Retry policy for export jobs merged");
+    expect(element.querySelector("[data-testid='daily-today-summary']")!.textContent).toContain("Export retries wired to the job scheduler");
+
+    payload = digest();
+    await app.loadDaily();
+    fixture.detectChanges();
+    expect(element.querySelector("[data-testid='daily-digest-issue']")).toBeNull();
+    expect(element.querySelector("[data-testid='daily-summary']")!.textContent).toContain("Retry policy for export jobs merged");
+    fixture.destroy();
+  });
+
   it("shows a matching digest on a Today line", async () => {
     const { fixture, element } = await shown(withDigests([{ covers: ["x0", "x1"], text: "Scheduler hook is in." }]));
     const line = element.querySelector('[data-testid="daily-today-line"][data-card-key^="ticket:"]')!;

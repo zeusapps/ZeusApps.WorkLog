@@ -46,17 +46,33 @@ public sealed class DailyDigestResponseTests
     }
 
     [Fact]
-    public void MissingOrUnreadableStoreGivesAnEmptyList()
+    public void MissingStoreIsNormalAndUnreadableStoreHasASafeIssue()
     {
         using var box = new TestWorkspace();
-        Open(box).Log(new("done", "c", Tickets: [Retry], Summary: "friday", OccurredAt: "2026-10-23T10:00:00Z"));
+        var friday = Open(box).Log(new("done", "c", Tickets: [Retry], Summary: "friday", OccurredAt: "2026-10-23T10:00:00Z")).Entry;
         var journal = new DashboardJournal(box.Data);
-        Assert.Empty(new DailyService(journal, new DigestStore(box.Data)).Query(Monday()).Digests);
-        Assert.Empty(new DailyService(journal).Query(Monday()).Digests);
+        var missing = new DailyService(journal, new DigestStore(box.Data)).Query(Monday());
+        Assert.Empty(missing.Digests);
+        Assert.Null(missing.DigestIssue);
+        var noStore = new DailyService(journal).Query(Monday());
+        Assert.Empty(noStore.Digests);
+        Assert.Null(noStore.DigestIssue);
         Directory.CreateDirectory(Path.Combine(box.Data, "digests.db"));
         var result = new DailyService(journal, new DigestStore(box.Data)).Query(Monday());
         Assert.Empty(result.Digests);
+        Assert.Equal("unavailable", result.DigestIssue?.Category);
+        Assert.Equal("Saved digests are temporarily unavailable.", result.DigestIssue?.Message);
         Assert.Equal("2026-10-23", result.Day);
+        var noItems = new DailyService(journal, new DigestStore(box.Data)).Query(Monday() with { Repositories = ["unmatched"] });
+        Assert.Empty(noItems.Today);
+        Assert.Null(noItems.DigestIssue);
+        var repeated = new DailyService(journal, new DigestStore(box.Data)).Query(Monday());
+        Assert.Equal("unavailable", repeated.DigestIssue?.Category);
+        Directory.Delete(Path.Combine(box.Data, "digests.db"));
+        new DigestStore(box.Data).Save(new(Item(friday), "2026-10-23", [friday.Id], "Recovered digest.", DateTimeOffset.UtcNow));
+        var recovered = new DailyService(journal, new DigestStore(box.Data)).Query(Monday());
+        Assert.Null(recovered.DigestIssue);
+        Assert.Equal("Recovered digest.", Assert.Single(recovered.Digests).Text);
     }
 
     [Fact]
@@ -85,6 +101,7 @@ public sealed class DailyDigestResponseTests
             var digest = Assert.Single(response.RootElement.GetProperty("digests").EnumerateArray());
             Assert.Equal("Friday rollup.", digest.GetProperty("text").GetString());
             Assert.Equal(2, digest.GetProperty("covers").GetArrayLength());
+            Assert.True(!response.RootElement.TryGetProperty("digestIssue", out var issue) || issue.ValueKind == JsonValueKind.Null);
         }
         finally { await app.StopAsync(); await app.DisposeAsync(); }
     }

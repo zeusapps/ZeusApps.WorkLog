@@ -121,7 +121,7 @@ function setup() {
   const app = fixture.componentInstance;
   app.catalog.set(server.catalog);
   vi.spyOn(document, "hidden", "get").mockReturnValue(false);
-  return { app, fixture, server };
+  return { app, fixture, server, events };
 }
 afterEach(() => {
   vi.restoreAllMocks();
@@ -131,6 +131,42 @@ const puts = (server: ReturnType<typeof setup>["server"]) =>
   server.calls.filter((c) => c.path === "/api/state" && c.method === "PUT");
 
 describe("history range", () => {
+  it("does not steal focus from a connected reader input used while a document navigation is pending", async () => {
+    const { app, fixture } = setup();
+    const selected = {
+      ...change,
+      documents: [
+        { path: "design.md", label: "design", fingerprint: "1:1" },
+        { path: "tasks.md", label: "tasks", fingerprint: "1:2" },
+      ],
+    };
+    app.selectedChange.set(selected);
+    app.document.set(design);
+    app["renderDocument"](design);
+    fixture.detectChanges();
+    const navigationControl = fixture.nativeElement.querySelector(".document-link") as HTMLButtonElement;
+    const filter = fixture.nativeElement.querySelector("#document-filter-desktop") as HTMLInputElement;
+    expect(navigationControl).not.toBeNull();
+    expect(filter).not.toBeNull();
+    navigationControl.focus();
+
+    let finishDocument!: (response: Response) => void;
+    const pendingDocument = new Promise<Response>((resolve) => { finishDocument = resolve; });
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation((input, options) =>
+      String(input) === "/api/document" ? pendingDocument : serve(input, options),
+    );
+    const navigation = app["loadDocument"]({ sourceId: "s", change: "demo", path: "tasks.md", variant: "v" });
+    filter.focus();
+    finishDocument(Response.json({ ...design, path: "tasks.md", revision: "r2" }));
+    await navigation;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    fixture.detectChanges();
+
+    expect(document.activeElement).toBe(filter);
+    fixture.destroy();
+  });
+
   it("uses the default relative range for a saved range without a kind and rolls it forward", async () => {
     const { app, server, fixture } = setup();
     server.state = {
@@ -170,6 +206,102 @@ describe("history range", () => {
     fixture.detectChanges();
     expect(app.versionLabel()).toBe("");
     expect(fixture.nativeElement.querySelector(".version-label")).toBeNull();
+    fixture.destroy();
+  });
+
+  it("accepts an existing protected session after a spent launch token", async () => {
+    const { app, server, fixture } = setup();
+    window.history.replaceState(null, "", "/ongoing#connect=already-used");
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) =>
+      String(input) === "/api/bootstrap"
+        ? Response.json({ error: "Launch token expired." }, { status: 401 })
+        : serve(input, options));
+
+    await app["start"]();
+
+    expect(server.calls.filter((call) => call.path === "/api/info")).toHaveLength(1);
+    expect(app.ready()).toBe(true);
+    expect(app.unauthorized()).toBe(false);
+    expect(window.location.hash).toBe("");
+    fixture.destroy();
+  });
+
+  it("does not enter the workspace when a spent launch token cannot prove the existing session", async () => {
+    const { app, fixture } = setup();
+    window.history.replaceState(null, "", "/ongoing#connect=already-used");
+    const requests: string[] = [];
+    vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+      const path = String(input);
+      requests.push(path);
+      return Response.json({ error: "Unauthorized." }, { status: 401 });
+    });
+
+    await app["start"]();
+
+    expect(requests).toEqual(["/api/bootstrap", "/api/info"]);
+    expect(app.ready()).toBe(false);
+    expect(app.unauthorized()).toBe(true);
+    expect(window.location.hash).toBe("");
+    fixture.destroy();
+  });
+
+  it("shows a retry after startup failure and keeps startup retries single-flight", async () => {
+    const { app, fixture } = setup();
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let catalogCalls = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) => {
+      if (String(input) === "/api/catalog" && catalogCalls++ === 0)
+        return Response.json({ error: "Temporary catalog failure." }, { status: 503 });
+      return serve(input, options);
+    });
+
+    await Promise.all([app["start"](), app["start"]()]);
+
+    expect(catalogCalls).toBe(1);
+    expect(app.ready()).toBe(false);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.textContent).toContain("Could not open your workspace");
+    expect(fixture.nativeElement.textContent).toContain("Retry");
+    await app.retryStartup();
+    expect(app.ready()).toBe(true);
+    fixture.destroy();
+  });
+
+  it("retries a network-failed launch token from memory and starts one polling timer", async () => {
+    const { app, fixture, events } = setup();
+    window.history.replaceState(null, "", "/ongoing#connect=retryable-token");
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    const tokens: string[] = [];
+    let bootstrapCalls = 0;
+    let finishBootstrap!: (response: Response) => void;
+    const delayedBootstrap = new Promise<Response>((resolve) => { finishBootstrap = resolve; });
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) => {
+      if (String(input) === "/api/bootstrap") {
+        bootstrapCalls++;
+        tokens.push(JSON.parse(options!.body as string).token);
+        if (bootstrapCalls === 1) throw new TypeError("Failed to fetch");
+        return delayedBootstrap;
+      }
+      return serve(input, options);
+    });
+    const interval = vi.spyOn(globalThis, "setInterval");
+
+    await app["start"]();
+    expect(app.ready()).toBe(false);
+    expect(app.error()).toContain("Failed to fetch");
+    expect(window.location.hash).toBe("");
+
+    const retry = app.retryStartup();
+    const duplicateRetry = app.retryStartup();
+    expect(bootstrapCalls).toBe(2);
+    expect(tokens).toEqual(["retryable-token", "retryable-token"]);
+    finishBootstrap(Response.json({}));
+    await Promise.all([retry, duplicateRetry]);
+
+    expect(app.ready()).toBe(true);
+    expect(interval.mock.calls.filter((call) => call[1] === 2000)).toHaveLength(1);
+    expect(events.observers).toHaveLength(1);
     fixture.destroy();
   });
 

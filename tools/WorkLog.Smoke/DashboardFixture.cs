@@ -26,7 +26,10 @@ internal static class DashboardFixture
         var storeMember = Repository(root, "store-member");
         File.WriteAllText(Path.Combine(storeMember, "openspec", "config.yaml"), "store: dashboard-fixture-missing-" + Guid.NewGuid().ToString("N") + "\n");
         settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(storeMember)] = new(new("example/store-member"));
-        Change(storeMember, "must-not-fallback", "# Local shadow\n\nA store declaration must never silently use these local documents.\n");
+        var precedence = Repository(root, "store-precedence");
+        File.WriteAllText(Path.Combine(precedence, "openspec", "config.yaml"), "store: dashboard-fixture-missing-" + Guid.NewGuid().ToString("N") + "\n");
+        settings.Configuration.RepositoryContexts[GitRepository.GetCommonDirectory(precedence)] = new(new("example/store-precedence"));
+        Change(precedence, "real-root-precedence", "# Real root precedence\n\nA real planning root takes precedence over its store declaration.\n");
         var planningStore = Path.Combine(root, "planning-store");
         Directory.CreateDirectory(Path.Combine(planningStore, "openspec"));
         File.WriteAllText(Path.Combine(planningStore, "openspec", "config.yaml"), "schema: spec-driven\n");

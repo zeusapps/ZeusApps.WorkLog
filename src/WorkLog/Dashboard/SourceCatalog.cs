@@ -34,6 +34,7 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
     private readonly TimeProvider clock = time ?? TimeProvider.System;
     private LocalSettings current = settings;
     private string? configStamp;
+    private string? configReloadIssue;
     private long repositorySnapshot = -1;
     private string[] repositoryNames = [];
     private CatalogSnapshot? cached;
@@ -99,13 +100,20 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
         catch (Exception e) when (e is IOException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException) { notices.Add(e.Message); }
         // Repository contexts come from config.json. Reload them when the file changes; without a file the in-memory settings stay.
         var stamp = FileStamp(current.ConfigPath);
-        if (configStamp is not null && stamp != configStamp)
+        if (configStamp is null)
+            configStamp = stamp;
+        else if (configReloadIssue is not null || stamp != configStamp)
         {
-            try { current = new LocalSettings(current.DataDirectory); }
+            try
+            {
+                current = new LocalSettings(current.DataDirectory);
+                configStamp = stamp;
+                configReloadIssue = null;
+            }
             catch (Exception e) when (e is IOException or JsonException or ArgumentException or UnauthorizedAccessException)
-            { notices.Add("Repository configuration could not be reloaded: " + e.Message); }
+            { configReloadIssue = "Repository configuration could not be reloaded; the last valid configuration remains in use: " + e.Message; }
         }
-        configStamp = stamp;
+        if (configReloadIssue is not null) notices.Add(configReloadIssue);
         var contexts = current.Configuration.RepositoryContexts.Where(p => Directory.Exists(p.Key)).ToArray();
         foreach (var pair in current.Configuration.RepositoryContexts) AddRepository(pair.Value.Repository.Identity);
         var worktrees = new CommandOutput[contexts.Length];

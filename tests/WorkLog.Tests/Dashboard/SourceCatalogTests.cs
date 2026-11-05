@@ -48,6 +48,35 @@ public sealed class SourceCatalogTests
     }
 
     [Fact]
+    public async Task ConfigurationReloadFailurePersistsUntilAValidConfigurationLoads()
+    {
+        using var box = new TestWorkspace();
+        Directory.CreateDirectory(Path.Combine(box.Repo, ".git"));
+        DashboardTests.Write(box, "openspec/changes/demo/design.md", "# Local design");
+        var settings = new LocalSettings(box.Data);
+        settings.Configuration.RepositoryContexts[Path.Combine(box.Repo, ".git")] = new(new("repo"));
+        settings.Save();
+        var validConfiguration = File.ReadAllBytes(settings.ConfigPath);
+        var catalog = new SourceCatalog(settings, new DashboardJournal(box.Data), new DashboardTests.FixtureCommand(box.Repo), box.Repo);
+        var initial = await catalog.GetAsync();
+        Assert.Single(initial.Repositories, repository => repository.Id == "repo");
+
+        File.WriteAllText(settings.ConfigPath, "{");
+        var failed = await catalog.GetAsync(force: true);
+        var repeated = await catalog.GetAsync(force: true);
+        Assert.Single(failed.Notices, notice => notice.StartsWith("Repository configuration could not be reloaded;", StringComparison.Ordinal));
+        Assert.Single(repeated.Notices, notice => notice.StartsWith("Repository configuration could not be reloaded;", StringComparison.Ordinal));
+        Assert.Contains("last valid configuration remains in use", Assert.Single(repeated.Notices, notice => notice.StartsWith("Repository configuration could not be reloaded;", StringComparison.Ordinal)));
+        Assert.Single(repeated.Repositories, repository => repository.Id == "repo");
+        Assert.Single(repeated.Changes, change => change.Name == "demo");
+
+        File.WriteAllBytes(settings.ConfigPath, validConfiguration);
+        var recovered = await catalog.GetAsync(force: true);
+        Assert.DoesNotContain(recovered.Notices, notice => notice.StartsWith("Repository configuration could not be reloaded;", StringComparison.Ordinal));
+        Assert.Single(recovered.Repositories, repository => repository.Id == "repo");
+    }
+
+    [Fact]
     public async Task DuplicateArchivesRequireChoiceAndDatedNamesStillResolve()
     {
         using var box = new TestWorkspace(); var setup = DashboardTests.Setup(box);

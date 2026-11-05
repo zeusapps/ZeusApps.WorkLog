@@ -14,6 +14,13 @@ public sealed class DigestTests
     private static readonly Ticket Dep7 = new("jira", "company", "DEP-7");
     private static readonly Ticket Dep8 = new("jira", "company", "DEP-8");
 
+    private sealed class TestClock : TimeProvider
+    {
+        private DateTimeOffset now = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => now;
+        public void Advance(TimeSpan amount) => now += amount;
+    }
+
     private sealed class Rig : IDisposable
     {
         public TestWorkspace Box { get; } = new();
@@ -221,6 +228,50 @@ public sealed class DigestTests
         Assert.Equal(2, rig.Tools.QueryWork(new("2026-10-20T00:00:00Z", "2026-10-21T00:00:00Z", "UTC")).Entries.Length);
         var failure = Assert.Throws<McpException>(() => rig.Tools.SaveDigest([second.Entry.Id, "x"], "text"));
         Assert.Contains("unavailable", failure.Message);
+    }
+
+    [Fact]
+    public void OptionalRequestDiagnosticsAreSafeBoundedAndCannotBreakLogging()
+    {
+        using var box = new TestWorkspace();
+        var journal = new Journal(new LocalSettings(box.Data), new("repo"));
+        Directory.CreateDirectory(Path.Combine(box.Data, "digests.db"));
+        var clock = new TestClock();
+        var messages = new List<string>();
+        var service = new DigestService(journal, new DigestStore(box.Data), TimeZoneInfo.Utc, messages.Add, clock);
+        var tools = new JournalTools(journal, null, service);
+        var first = tools.LogWork(new("in_progress", Tickets: [Dep7], Summary: "private observation text", OccurredAt: "2026-10-20T09:00:00Z"));
+        var second = tools.LogWork(new("in_progress", Tickets: [Dep7], Summary: "private observation text", OccurredAt: "2026-10-20T10:00:00Z"));
+        var third = tools.LogWork(new("in_progress", Tickets: [Dep7], Summary: "private observation text", OccurredAt: "2026-10-20T11:00:00Z"));
+
+        Assert.True(first.Created && second.Created && third.Created);
+        Assert.Null(second.DigestRequest);
+        Assert.Null(third.DigestRequest);
+        Assert.Single(messages);
+        Assert.Equal("Optional digest request skipped (storage-read).", messages[0]);
+        Assert.DoesNotContain("private observation text", messages[0]);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        var fourth = tools.LogWork(new("in_progress", Tickets: [Dep7], Summary: "private observation text", OccurredAt: "2026-10-20T12:00:00Z"));
+        Assert.True(fourth.Created);
+        Assert.Equal(2, messages.Count);
+    }
+
+    [Fact]
+    public void OptionalDiagnosticSinkFailureDoesNotChangeLogWorkResult()
+    {
+        using var box = new TestWorkspace();
+        var journal = new Journal(new LocalSettings(box.Data), new("repo"));
+        Directory.CreateDirectory(Path.Combine(box.Data, "digests.db"));
+        var service = new DigestService(journal, new DigestStore(box.Data), TimeZoneInfo.Utc,
+            diagnosticSink: _ => throw new IOException("diagnostic sink failed"));
+        var tools = new JournalTools(journal, null, service);
+        tools.LogWork(new("in_progress", Tickets: [Dep7], Summary: "one", OccurredAt: "2026-10-20T09:00:00Z"));
+
+        var result = tools.LogWork(new("in_progress", Tickets: [Dep7], Summary: "two", OccurredAt: "2026-10-20T10:00:00Z"));
+
+        Assert.True(result.Created);
+        Assert.Null(result.DigestRequest);
+        Assert.Equal(2, journal.ReadBetween(DateTimeOffset.Parse("2026-10-20T00:00:00Z"), DateTimeOffset.Parse("2026-10-21T00:00:00Z")).Length);
     }
 
     [Fact]

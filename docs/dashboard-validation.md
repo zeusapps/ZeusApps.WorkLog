@@ -239,6 +239,62 @@ Recorded on 2026-10-29 on Windows 10.0.26300.0, using .NET SDK 10.0.113, Node 24
 - The plain-text copy scenario expects the fixture journal as created, so it runs before the scenario that logs an observation for today (the file runs serially); repeating a scenario against the same fixture (`--repeat-each`) sees that observation.
 - Live observation on the maintainer's installation was not performed.
 
+## Reader navigation and bounded comparisons (improve-dashboard-reading-and-reliability)
+
+Recorded on 2026-11-05 with Node 24.13.0 on Windows x64. All browser fixtures and benchmark inputs are synthetic; browser screenshots and raw benchmark output stay under ignored `dashboard/test-results/` and `artifacts/` paths. Previous sections remain the historical records for their changes.
+
+### Current implementation checks
+
+| Check | Result |
+| --- | --- |
+| `dotnet restore --locked-mode` | Passed. |
+| `dotnet build -c Release --no-restore` and fresh 0.4.1 package build | Passed with 0 warnings and 0 errors; source version remains 0.4.1 and the review candidate was not published. |
+| `dotnet test -c Release --no-build --no-restore` | 427 passed, none skipped. Independent backend QA also passed 72/72 checks; its separate code-analyzer review found no production blocker. |
+| `npm test --prefix dashboard` | 270 passed in 20 files. This includes the deferred-response focus regression and the QA-020 deleted-document 404/read-state 503 cases; both failure cases retain successful marks and drafts and show neutral refresh/retry guidance. |
+| Focused normal Release browser scenarios before the final focus guard | 3/3 passed in 47.1 seconds. This earlier run is retained as focused evidence; the final full suite below covers the final source. |
+| Full normal Release browser suite, final source | 44/44 passed in 4.8 minutes. |
+| Fresh self-contained 0.4.1 packaged browser suite with Node absent | 44/44 passed in 2.3 minutes, including the declared-store scenario with no exclusions. |
+| Packaged `--updates-only` smoke | `BOOTSTRAP PASSED`: launcher/version, MCP protocol/EOF, and offline status. |
+| Integrated independent review | See this change's review reports and completion ledger for the current QA and code-analyzer disposition. |
+
+### Comparison timing
+
+The opt-in harness uses the same Node 24.13 Windows x64 environment, harness and workload definitions before and after the change: 3 warm-ups and 30 measured samples for each of eight workloads (50/200/400/800 KiB, small edit and full rewrite). Helper identity changed from `d4b657ceef14bc87ef90217d8e95d02402ada17ec3c8999b6f7664a766dcc585` to `9102bb3ebf64aa33084784bf50fe2b671a1ef4690a8652319a7225a2964ab92a`; harness SHA-256 is `481a15e4ef04c0d1e6dfd4756b93cecb28378721a352574089aa08a5c56e169b`.
+
+| Full-rewrite size | Before p95 (ms) | After p95 (ms) |
+| ---: | ---: | ---: |
+| 50 KiB | 15.8704 | 16.786 |
+| 200 KiB | 485.1853 | 51.5529 |
+| 400 KiB | 1554.8551 | 51.0624 |
+| 800 KiB | 3005.1003 | 51.973 |
+
+The largest after p95 is 51.973 ms, below the 100 ms synchronous comparison target. All small-edit samples remained precise, with p95 below 3.3 ms. The bounded limit trades passage-level precision for the whole-document fallback on 200 and 400 KiB full rewrites; the 800 KiB rewrite was already incomplete in every baseline sample. This harness measures `readMarks` normalization, line tokenization, diffing and result processing. It does not measure complete Markdown rendering, removed-comment token extraction, browser interaction latency or arbitrary device performance. The focused browser case separately verifies that an empty current document still has a visible, focusable document-level stop without synthetic text.
+
+Raw JSON: `artifacts/dashboard-reading-reliability/c04/baseline-before.json` and `artifacts/dashboard-reading-reliability/c04/after-bounded.json`.
+
+Reproduce the opt-in timing run with at least 30 samples and one warm-up; the recorded run used 30 and 3:
+
+```powershell
+node scripts/benchmark-review-comparison.mjs --run --samples=30 --warmups=3 --out=artifacts/dashboard-reading-reliability/c04/<run>.json
+```
+
+Run dashboard checks from the repository root:
+
+```powershell
+npm test --prefix dashboard
+npm run test:e2e --prefix dashboard
+```
+
+The packaged browser run requires a fresh self-contained package and uses its actual executable with Node removed from the fixture runtime path:
+
+```powershell
+$env:WORKLOG_DASHBOARD_EXECUTABLE = 'artifacts/releases/<package>/worklog.exe'
+$env:WORKLOG_DASHBOARD_NO_NODE = 'true'
+npm run test:e2e --prefix dashboard
+```
+
+Reader screenshots are captured from the synthetic reader body, including the unfiltered 50-document rail, and remain in ignored test output until reviewers reserve evidence. They exclude machine-specific provenance and do not hardcode an active change into default output.
+
 ## Agent digests on the Daily view (add-day-digests)
 
 Recorded on 2026-10-29 on Windows 10.0.26300.0, using Node 24.13.0 and headless Microsoft Edge. All data used isolated synthetic fixtures under ignored artifacts directories.

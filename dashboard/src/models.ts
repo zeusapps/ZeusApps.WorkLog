@@ -129,6 +129,10 @@ export interface DayDigest {
   covers: string[];
   text: string;
 }
+export interface DailyDigestIssue {
+  category: string;
+  message: string;
+}
 /** The last recorded day (or the selected one), its neighbours, and the current day's lines so far. `day` is null without earlier work. */
 export interface DailyDigest {
   day: string | null;
@@ -138,6 +142,8 @@ export interface DailyDigest {
   today: DailyItem[];
   /** Stored agent digests of the listed items; absent from an older server. */
   digests?: DayDigest[];
+  /** Optional private status when saved digest reads fail; absent from older servers and when no store is available. */
+  digestIssue?: DailyDigestIssue | null;
 }
 export interface ObservationPage {
   entries: Entry[];

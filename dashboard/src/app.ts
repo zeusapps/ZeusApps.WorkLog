@@ -45,6 +45,7 @@ import { DailyFormat, dailyText, dailyToday, dayLabel, digestFor, digestIndex, n
 import { markdownObservationLimit, workItemMarkdown } from "./workitem-markdown";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
 import { repositoryColorKey } from "./repository-colors";
+import { groupDocuments } from "./document-navigation";
 import {
   baselineKey,
   changeKey,
@@ -120,6 +121,7 @@ export class App implements OnDestroy, AfterViewInit {
   view = signal<ViewName>("ongoing");
   ready = signal(false);
   unauthorized = signal(false);
+  startupRetrying = signal(false);
   error = signal("");
   notice = signal("");
   loading = signal(false);
@@ -160,6 +162,8 @@ export class App implements OnDestroy, AfterViewInit {
   historyQuery: TimelineQuery | null = null;
   ongoingQuery: TimelineQuery | null = null;
   selectedChange = signal<Change | null>(null);
+  documentFilter = signal("");
+  mobileDocumentNavigationOpen = signal(false);
   copies = signal<Change[]>([]);
   /** The document the user asked for when a change card opened the copy chooser. */
   copyPath: string | undefined;
@@ -242,6 +246,7 @@ export class App implements OnDestroy, AfterViewInit {
   readonly repositoryUrl = repositoryUrl;
   readonly branchUrl = branchUrl;
   readonly quietDays = quietDays;
+  readonly authorizationLostMessage = "Authorization was lost; run `worklog dashboard` again to authorize this browser.";
   /** A short confirmation after a copy action, and the text to copy by hand when the clipboard is unavailable. */
   copyToast = signal("");
   manualCopy = signal<{ title: string; text: string; multiline: boolean } | null>(null);
@@ -258,6 +263,9 @@ export class App implements OnDestroy, AfterViewInit {
   detailLoading = signal(false);
   detailQuery: TimelineQuery | null = null;
   private timer?: ReturnType<typeof setInterval>;
+  private startupAttempt?: Promise<void>;
+  private pendingConnectToken: string | null = null;
+  private documentFilterOwner = "";
   private saveTimer?: ReturnType<typeof setTimeout>;
   private searchTimer?: ReturnType<typeof setTimeout>;
   private historyEpoch = 0;
@@ -270,6 +278,7 @@ export class App implements OnDestroy, AfterViewInit {
   private overviewRevision: string | null = null;
   private changeCursor = -1;
   private marksMemo: { key: string; marks: ReadMarks | null } | null = null;
+  private removedReviewsMemo: { key: string; reviews: Review[] } | null = null;
   private drafts = new Map<
     string,
     { selection: Selection | null; comment: string; editing: (Review & { revision: string }) | null }
@@ -353,6 +362,9 @@ export class App implements OnDestroy, AfterViewInit {
         )
       : [];
   });
+  readonly documentNavigationGroups = computed(() =>
+    groupDocuments(this.selectedChange()?.documents ?? [], this.documentFilter()),
+  );
   readonly visibleObservations = computed(() => {
     const day = this.detailDay();
     return day
@@ -376,21 +388,53 @@ export class App implements OnDestroy, AfterViewInit {
     clearTimeout(this.toastTimer);
   }
   private async start() {
+    if (this.ready()) return;
+    if (this.startupAttempt) return this.startupAttempt;
+    this.startupRetrying.set(true);
+    const attempt = this.initializeStart();
+    this.startupAttempt = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.startupAttempt === attempt) this.startupAttempt = undefined;
+      this.startupRetrying.set(false);
+    }
+  }
+  async retryStartup() {
+    if (this.startupAttempt || this.ready()) return;
+    this.error.set("");
+    this.unauthorized.set(false);
+    await this.start();
+  }
+  private async initializeStart() {
     try {
       const fragment = new URLSearchParams(window.location.hash.slice(1));
       const token = fragment.get("connect");
-      if (token) {
-        await api("bootstrap", { token });
+      if (token && this.pendingConnectToken === null) {
+        this.pendingConnectToken = token;
         window.history.replaceState(
           null,
           "",
           window.location.pathname + window.location.search,
         );
       }
+      let verifiedInfo: { timezone: string; version?: string } | undefined;
+      if (this.pendingConnectToken !== null) {
+        try {
+          await api("bootstrap", { token: this.pendingConnectToken });
+          this.pendingConnectToken = null;
+        } catch (error) {
+          if (!(error instanceof ApiError && error.status === 401)) throw error;
+          // A one-time launch token may already have been used in this browser. Only the
+          // protected endpoint below can prove that its existing cookie still works.
+          this.pendingConnectToken = null;
+          verifiedInfo = await api<{ timezone: string; version?: string }>("info");
+        }
+      }
       const [catalog, state, info] = await Promise.all([
         api<Catalog>("catalog"),
         api<Preferences>("state"),
-        api<{ timezone: string; version?: string }>("info"),
+        verifiedInfo ? Promise.resolve(verifiedInfo) : api<{ timezone: string; version?: string }>("info"),
       ]);
       this.catalog.set(catalog);
       this.versionLabel.set(info.version ?? "");
@@ -447,7 +491,7 @@ export class App implements OnDestroy, AfterViewInit {
       await this.refreshData();
       this.overviewRevision = this.catalog()?.revision ?? null;
       await this.refreshOverview();
-      this.timer = setInterval(() => void this.poll(), 2000);
+      if (!this.timer) this.timer = setInterval(() => void this.poll(), 2000);
     } catch (error) {
       this.report(error);
     }
@@ -678,7 +722,11 @@ export class App implements OnDestroy, AfterViewInit {
     if (copies.length > 1) {
       this.copyPath = path;
       this.copies.set(copies);
-    } else void this.openChange(copies[0] ?? card.change!, path);
+    } else {
+      this.copyPath = undefined;
+      this.copies.set([]);
+      void this.openChange(copies[0] ?? card.change!, path);
+    }
   }
   cardComments(card: BoardCard) {
     return card.copies.reduce((total, copy) => total + this.commentCount(copy), 0);
@@ -690,7 +738,10 @@ export class App implements OnDestroy, AfterViewInit {
     return activityFor(change, this.activity());
   }
   trackChange(_index: number, c: Change) {
-    return c.sourceId + c.variant;
+    return changeKey(c.sourceId, c.variant);
+  }
+  trackCopy(_index: number, c: Change) {
+    return changeKey(c.sourceId, c.variant);
   }
   toggleRepository(id: string) {
     const current = this.selectedRepos();
@@ -1070,6 +1121,8 @@ export class App implements OnDestroy, AfterViewInit {
     await this.loadHistory();
   }
   async openChange(change: Change, path?: string, anchor?: string) {
+    this.copies.set([]);
+    this.copyPath = undefined;
     const same =
       this.catalog()?.changes.filter(
         (c) =>
@@ -1110,6 +1163,23 @@ export class App implements OnDestroy, AfterViewInit {
       },
     });
   }
+  selectReaderDocument(path: string) {
+    if (this.mobileDocumentNavigationOpen()) this.closeMobileDocumentNavigation();
+    void this.openDocument(path);
+  }
+  closeMobileDocumentNavigation() {
+    this.mobileDocumentNavigationOpen.set(false);
+    document.querySelector<HTMLElement>(".mobile-document-selector-toggle")?.focus({ preventScroll: true });
+  }
+  private selectChange(change: Change | null) {
+    const identity = change ? changeKey(change.sourceId, change.variant) : "";
+    if (identity !== this.documentFilterOwner) {
+      this.documentFilterOwner = identity;
+      this.documentFilter.set("");
+      this.mobileDocumentNavigationOpen.set(false);
+    }
+    this.selectedChange.set(change);
+  }
   async refreshDocument() {
     const current = this.document();
     if (current) await this.loadDocument(current);
@@ -1119,8 +1189,9 @@ export class App implements OnDestroy, AfterViewInit {
     this.documentEpoch++;
     this.documentLoading.set(false);
     this.document.set(null);
-    this.selectedChange.set(null);
+    this.selectChange(null);
     this.copies.set([]);
+    this.copyPath = undefined;
     await this.router.navigate(["/" + this.view()]);
   }
   private async routeChanged() {
@@ -1156,6 +1227,7 @@ export class App implements OnDestroy, AfterViewInit {
         this.documentEpoch++;
         this.documentLoading.set(false);
         this.copies.set(selected);
+        this.copyPath = path;
         this.document.set(null);
         return;
       }
@@ -1172,7 +1244,8 @@ export class App implements OnDestroy, AfterViewInit {
         void this.refreshData();
       }
       this.copies.set([]);
-      this.selectedChange.set(selected[0] ?? null);
+      this.copyPath = undefined;
+      this.selectChange(selected[0] ?? null);
       await this.loadDocument(
         { sourceId: source, change, path, variant },
         url.queryParams["anchor"],
@@ -1183,7 +1256,8 @@ export class App implements OnDestroy, AfterViewInit {
       this.documentLoading.set(false);
       this.document.set(null);
       this.copies.set([]);
-      this.selectedChange.set(null);
+      this.copyPath = undefined;
+      this.selectChange(null);
     }
     this.remember();
   }
@@ -1207,6 +1281,10 @@ export class App implements OnDestroy, AfterViewInit {
   ) {
     const old = this.document();
     const same = old && this.documentKey(old) === this.documentKey(request);
+    const navigationFocus = !poll && document.activeElement instanceof HTMLElement
+      && document.activeElement.closest(".document-navigation")
+      ? document.activeElement
+      : null;
     const epoch = ++this.documentEpoch;
     if (!poll) {
       this.stashDraft();
@@ -1282,10 +1360,15 @@ export class App implements OnDestroy, AfterViewInit {
               ? scroll
               : (this.preferences.positions?.[this.documentKey(value)] ?? 0);
         }
-        if (!same && !anchor)
-          document
-            .querySelector<HTMLElement>(".reader")
-            ?.focus({ preventScroll: true });
+        if (!same && !anchor) {
+          const active = document.activeElement;
+          const focusMoved = active instanceof HTMLElement && active.isConnected
+            && active !== document.body && active !== navigationFocus;
+          if (!focusMoved) {
+            if (navigationFocus?.isConnected) navigationFocus.focus({ preventScroll: true });
+            else document.querySelector<HTMLElement>(".reader")?.focus({ preventScroll: true });
+          }
+        }
       }, 0);
     } catch (error) {
       if (epoch === this.documentEpoch) {
@@ -1306,7 +1389,15 @@ export class App implements OnDestroy, AfterViewInit {
     this.headings.set(rendered.headings);
     this.reviews.set(rendered.reviews);
     const baseline = this.baseline();
-    this.removedComments.set(marks && baseline ? removedReviews(baseline.text, rendered.reviews) : []);
+    if (marks && baseline) {
+      const key = this.documentKey(value) + "|" + baseline.revision + ">" + value.revision;
+      if (this.removedReviewsMemo?.key !== key)
+        this.removedReviewsMemo = { key, reviews: removedReviews(baseline.text, rendered.reviews) };
+      this.removedComments.set(this.removedReviewsMemo.reviews);
+    } else {
+      this.removedReviewsMemo = null;
+      this.removedComments.set([]);
+    }
   }
   /** Differences between the baseline and `value`, worked out once per pair of revisions. */
   private marksFor(value: DocumentContent): ReadMarks | null {
@@ -1341,6 +1432,7 @@ export class App implements OnDestroy, AfterViewInit {
     this.baseline.set(null);
     this.readMarks.set(null);
     this.removedComments.set([]);
+    this.removedReviewsMemo = null;
     try {
       const document = this.readRequest(value);
       let baseline = await api<ReadBaseline | null>("reads/get", { document });
@@ -1382,6 +1474,11 @@ export class App implements OnDestroy, AfterViewInit {
         setTimeout(() => this.syncStops(), 0);
       }
     } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        this.unauthorized.set(true);
+        this.notice.set(this.authorizationLostMessage);
+        return;
+      }
       this.notice.set(
         error instanceof ApiError && error.status === 409
           ? "The document changed while you were reading. It has been reloaded; review the changes, then mark it read."
@@ -1394,7 +1491,10 @@ export class App implements OnDestroy, AfterViewInit {
   async markChangeRead() {
     const change = this.selectedChange();
     if (!change) return;
+    let marked = 0;
+    let conflicts = 0;
     let failed = 0;
+    let authorizationLost = false;
     for (const item of change.documents) {
       try {
         const request: DocumentRequest = {
@@ -1406,21 +1506,29 @@ export class App implements OnDestroy, AfterViewInit {
         const content = await api<DocumentContent>("document", request);
         const result = await api<ReadMarkResult>("reads/mark", { document: request, revision: content.revision });
         this.noteRead(request, result);
+        marked++;
         const open = this.document();
         if (open && open.path === item.path && open.revision === content.revision) {
           this.baseline.set({ revision: content.revision, text: content.text });
           this.renderDocument(open);
           setTimeout(() => this.syncStops(), 0);
         }
-      } catch {
-        failed++;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          authorizationLost = true;
+          break;
+        }
+        if (error instanceof ApiError && error.status === 409) conflicts++;
+        else failed++;
       }
     }
-    this.notice.set(
-      failed
-        ? failed + (failed === 1 ? " document" : " documents") + " changed while being marked and still show changes."
-        : "Every document of this change is marked as read.",
-    );
+    const outcomes = [
+      marked ? `${marked} ${marked === 1 ? "document was" : "documents were"} marked as read` : "",
+      conflicts ? `${conflicts} ${conflicts === 1 ? "document changed" : "documents changed"} while being marked and still show changes` : "",
+      failed ? `${failed} ${failed === 1 ? "document could" : "documents could"} not be marked; refresh the change, confirm its documents and read state are available, then retry` : "",
+      authorizationLost ? this.authorizationLostMessage : "",
+    ].filter(Boolean);
+    this.notice.set(outcomes.join(". ") + (outcomes.length ? "." : ""));
   }
   /** After the user's own comment write, the new revision becomes the baseline if the user had read everything before it. */
   private async advanceBaseline(d: DocumentRequest, written: DocumentContent, epoch: number) {
@@ -1445,7 +1553,8 @@ export class App implements OnDestroy, AfterViewInit {
     this.changeCount.set(this.readMarks() ? this.stops().length : 0);
   }
   changeStatus(marks: ReadMarks) {
-    if (marks.incomplete) return "Too many differences to mark individually.";
+    if (marks.incomplete)
+      return "Comparison is incomplete; individual passages are not marked. Use Next change to review this document.";
     const count = this.changeCount();
     return this.changePosition()
       ? "Change " + this.changePosition() + " of " + count
@@ -2030,7 +2139,7 @@ export class App implements OnDestroy, AfterViewInit {
             (c.name === d.change || c.directoryName === d.change) &&
             (!d.variant || c.variant === d.variant),
         );
-        this.selectedChange.set(candidates.length === 1 ? candidates[0] : null);
+        this.selectChange(candidates.length === 1 ? candidates[0] : null);
         // An archive move changes the document's state without changing its text, so it needs the full response.
         const moved = candidates.length === 1 && candidates[0].archived !== d.archived;
         await this.loadDocument(d, undefined, true, !moved);
@@ -2090,6 +2199,11 @@ export class App implements OnDestroy, AfterViewInit {
       }
       if (this.detail()) {
         this.detail.set(null);
+        return;
+      }
+      if (this.mobileDocumentNavigationOpen()) {
+        this.closeMobileDocumentNavigation();
+        event.preventDefault();
         return;
       }
       if (this.document() || this.copies().length) {

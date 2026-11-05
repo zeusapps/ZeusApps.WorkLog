@@ -132,6 +132,54 @@ describe("Angular workspace behavior", () => {
     expect(navigate.mock.calls[1][1].queryParams.doc).toBe("tasks.md");
     fixture.destroy();
   });
+  it("shows full relative paths, explicit current state, local filtering and source-reference context", () => {
+    const { app, fixture } = setup();
+    const documents = [
+      { path: "proposal.md", label: "proposal", fingerprint: "1:1" },
+      { path: "specs/accounts/spec.md", label: "spec", fingerprint: "1:2" },
+      { path: "specs/billing/spec.md", label: "spec", fingerprint: "1:3" },
+      { path: "notes/rollout/plan.md", label: "plan", fingerprint: "1:4" },
+    ];
+    app["selectChange"]({ ...change, documents });
+    app.document.set({
+      sourceId: "s", change: "demo", path: "specs/billing/spec.md", location: "project", revision: "r1",
+      text: "# Billing", archived: false, canComment: true, tasks: [],
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll(".document-picker-desktop .document-link")).toHaveLength(4);
+    expect(fixture.nativeElement.querySelector(".document-link[aria-current='page']")?.textContent).toContain("specs/billing/spec.md");
+    app.documentFilter.set("accounts/spec.md");
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll(".document-picker-desktop .document-link")).toHaveLength(1);
+    expect(fixture.nativeElement.querySelector(".document-current")?.textContent).toContain("specs/billing/spec.md");
+
+    app["selectChange"](null);
+    app.documentFilter.set("");
+    app.document.set({
+      sourceId: "s", change: "@source", path: "standards/guidance.md", location: "project", revision: "r2",
+      text: "# Guidance", archived: false, canComment: false, tasks: [],
+    });
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector(".source-document-context")?.textContent).toContain("Reference document from project");
+    expect(fixture.nativeElement.querySelector(".document-picker-desktop")).toBeNull();
+    fixture.destroy();
+  });
+  it("dismisses the mobile selector without closing the reader", () => {
+    const { app, fixture } = setup();
+    app.document.set({
+      sourceId: "s", change: "demo", path: "design.md", location: "project", revision: "r1",
+      text: "# Design", archived: false, canComment: true, tasks: [],
+    });
+    app["selectChange"](change);
+    app.mobileDocumentNavigationOpen.set(true);
+    fixture.detectChanges();
+    const event = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    app.keyboard(event);
+    fixture.detectChanges();
+    expect(app.mobileDocumentNavigationOpen()).toBe(false);
+    expect(fixture.nativeElement.querySelector(".reader")).not.toBeNull();
+    fixture.destroy();
+  });
   it("scopes active changes without manufacturing journal activity", () => {
     const { app, fixture } = setup();
     expect(app.activeChanges()).toHaveLength(1);

@@ -99,8 +99,14 @@ public sealed class DigestStore(string dataDirectory, TimeSpan? lockTimeout = nu
     /// <summary>Digests of the given items. Read-only; a missing store is empty. Throws when the store cannot be read or is newer than supported.</summary>
     public StoredDigest[] Read(IReadOnlyCollection<string> items)
     {
-        if (items.Count == 0 || !File.Exists(path))
+        if (items.Count == 0)
             return [];
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(path); }
+        catch (FileNotFoundException) { return []; }
+        catch (DirectoryNotFoundException) { return []; }
+        if ((attributes & FileAttributes.Directory) != 0)
+            throw new IOException("Digest store path is a directory and cannot be read as a database file.");
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = path,

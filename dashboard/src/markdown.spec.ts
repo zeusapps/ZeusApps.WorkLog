@@ -1,8 +1,19 @@
-import { describe, it, expect } from "vitest";
-import { renderMarkdown } from "./markdown";
+import { describe, it, expect, vi } from "vitest";
+import DOMPurify from "dompurify";
+import { parseReviews, renderMarkdown } from "./markdown";
 import { boundary, elapsed, addDays } from "./api";
 
 describe("OpenSpec document rendering", () => {
+  it("extracts review markers through the shared parser without rendering or sanitizing the baseline", () => {
+    const sanitize = vi.spyOn(DOMPurify, "sanitize");
+    const marker = '<!-- REVIEW: id=123456781234123412341234567890ab\nTarget: preceding passage\nQuote: A &amp; B\nComment:\nFix -&#45;> this\n-->';
+    expect(parseReviews("```md\n" + marker + "\n```\n\n" + marker)).toMatchObject([
+      { id: "123456781234123412341234567890ab", quote: "A &amp; B", text: "Fix --> this" },
+    ]);
+    expect(sanitize).not.toHaveBeenCalled();
+    sanitize.mockRestore();
+  });
+
   it("retains heading identity and source block ranges", () => {
     const result = renderMarkdown(
       "# Design\n\n## Decision\n\nParagraph.\n\n## Decision\n\n- [x] 1.1 Done\n- [ ] 1.2 Next\n",

@@ -136,12 +136,24 @@
         <p>
           Run <code>worklog dashboard</code> and open the printed local URL.
         </p>
+        <button class="secondary-button" [disabled]="startupRetrying()" (click)="retryStartup()">
+          {{startupRetrying()?'Retrying…':'Retry connection'}}
+        </button>
       </section>
       } @else if(!ready()){
       <section class="empty-state" role="status">
+        @if(error()){
+        <div class="empty-symbol">!</div>
+        <h2>Could not open your workspace</h2>
+        <p>{{error()}}</p>
+        <button class="secondary-button" [disabled]="startupRetrying()" (click)="retryStartup()">
+          {{startupRetrying()?'Retrying…':'Retry'}}
+        </button>
+        }@else{
         <span class="spinner"></span>
         <h2>Opening your workspace</h2>
         <p>Reading local repositories and recorded activity.</p>
+        }
       </section>
       } @else { @if(error()){
       <div class="message error" role="alert">
@@ -490,6 +502,9 @@
           </div>
         </div>
         @if(dailyData();as data){
+        @if(data.digest.digestIssue;as digestIssue){
+        <p class="message" role="status" data-testid="daily-digest-issue">{{digestIssue.message}}</p>
+        }
         <section class="daily-section" aria-labelledby="daily-yesterday-title" data-testid="daily-yesterday">
           <header class="daily-section-heading">
             <h3 id="daily-yesterday-title">Yesterday</h3>
@@ -922,7 +937,7 @@
 <section class="copy-choice panel" aria-label="Choose document source">
   <h2>Choose a document copy</h2>
   <p>Several sources contain this change. Select the copy you want to read.</p>
-  @for(copy of copies();track copy.variant){<button
+  @for(copy of copies();track trackCopy($index,copy)){<button
     class="work-list-item"
     (click)="openChange(copy,copyPath)"
   >
@@ -955,6 +970,13 @@
       </div>
     </div>
     <div class="reader-actions">
+      <div class="document-mode" role="group" aria-label="Document view">
+        <button [class.selected]="!sourceView()" [attr.aria-pressed]="!sourceView()" (click)="setSourceView(false)">
+          Read</button
+        ><button [class.selected]="sourceView()" [attr.aria-pressed]="sourceView()" (click)="setSourceView(true)">
+          Source
+        </button>
+      </div>
       <button
         class="icon-button"
         aria-label="Refresh document"
@@ -993,21 +1015,6 @@
       </button>
     </div>
   </header>
-  <div class="document-tabs" role="navigation" aria-label="Change documents">
-    @for(item of selectedChange()?.documents??[];track item.path){<button
-      [class.current]="item.path===doc.path"
-      (click)="openDocument(item.path)"
-    >
-      {{item.label}}</button
-    >}
-    <div class="document-mode">
-      <button [class.selected]="!sourceView()" (click)="setSourceView(false)">
-        Read</button
-      ><button [class.selected]="sourceView()" (click)="setSourceView(true)">
-        Source
-      </button>
-    </div>
-  </div>
   <div class="reader-meta">
     <span><i class="live-dot"></i>Current local file · {{doc.path}}</span
     ><span
@@ -1074,8 +1081,61 @@
   <div class="loading-line" role="status">Reading document...</div>
   }
   <div class="reader-body">
-    <aside class="document-outline">
-      <span class="sidebar-label">ON THIS PAGE</span>@for(heading of
+    <aside class="document-navigation" aria-label="Document navigation">
+      <div class="document-current">
+        <span>Current document</span>
+        <strong>{{doc.path}}</strong>
+      </div>
+      @if(selectedChange()){
+      <div class="document-picker document-picker-desktop">
+        <label for="document-filter-desktop">Filter documents</label>
+        <input id="document-filter-desktop" aria-label="Filter documents" placeholder="Filter by path" [ngModel]="documentFilter()" (ngModelChange)="documentFilter.set($event)" />
+        <nav class="document-list" aria-label="Change documents">
+          @for(group of documentNavigationGroups();track group.id){
+          <section class="document-group" [attr.data-group]="group.id">
+            <h3>{{group.label}}</h3>
+            @for(item of group.documents;track item.path){<button
+              type="button"
+              class="document-link"
+              [class.current]="item.path===doc.path"
+              [attr.aria-current]="item.path===doc.path?'page':null"
+              (click)="selectReaderDocument(item.path)"
+            >{{item.path}}@if(item.path===doc.path){<span>Current</span>}</button>}
+          </section>
+          }@empty{<p class="document-filter-empty">No documents match this filter.</p>}
+        </nav>
+      </div>
+      <div class="document-picker document-picker-mobile">
+        <button type="button" class="mobile-document-selector-toggle" [attr.aria-expanded]="mobileDocumentNavigationOpen()" (click)="mobileDocumentNavigationOpen.set(!mobileDocumentNavigationOpen())">
+          Documents · {{doc.path}}
+        </button>
+        @if(mobileDocumentNavigationOpen()){
+        <div class="mobile-document-selector-panel">
+          <label for="document-filter-mobile">Filter documents</label>
+          <input id="document-filter-mobile" aria-label="Filter documents" placeholder="Filter by path" [ngModel]="documentFilter()" (ngModelChange)="documentFilter.set($event)" />
+          <nav class="document-list" aria-label="Change documents">
+            @for(group of documentNavigationGroups();track group.id){
+            <section class="document-group" [attr.data-group]="group.id">
+              <h3>{{group.label}}</h3>
+              @for(item of group.documents;track item.path){<button
+                type="button"
+                class="document-link"
+                [class.current]="item.path===doc.path"
+                [attr.aria-current]="item.path===doc.path?'page':null"
+                (click)="selectReaderDocument(item.path)"
+              >{{item.path}}@if(item.path===doc.path){<span>Current</span>}</button>}
+            </section>
+            }@empty{<p class="document-filter-empty">No documents match this filter.</p>}
+          </nav>
+        </div>
+        }
+      </div>
+      }@else{
+      <p class="source-document-context">Reference document from <strong>{{doc.location}}</strong>.</p>
+      }
+      <details class="document-outline">
+      <summary>On this page</summary>
+      @for(heading of
       headings();track heading.id){
       <div class="outline-row" [class.nested]="heading.level>2">
         <button (click)="scrollTo(heading.id)">{{heading.text}}</button
@@ -1109,10 +1169,11 @@
         </button>
       </div>
       }}
+      </details>
     </aside>
     <div class="document-scroll" (scroll)="onScroll($event)">
       @if(sourceView()){
-      <pre class="source-text">@for(part of sourceParts();track $index){<span [class.changed-since-read]="part.changed" [attr.data-read-state]="part.changed?'changed':null" [attr.tabindex]="part.changed?-1:null">{{part.text}}</span>}</pre>
+      <pre class="source-text" [class.changed-since-read]="readMarks()?.incomplete" [attr.data-read-state]="readMarks()?.incomplete?'changed':null" [attr.tabindex]="readMarks()?.incomplete?-1:null">@for(part of sourceParts();track $index){<span [class.changed-since-read]="part.changed" [attr.data-read-state]="part.changed?'changed':null" [attr.tabindex]="part.changed?-1:null">{{part.text}}</span>}</pre>
       @for(review of reviews();track review.line){
       <aside class="review-note">
         <div class="review-note-header">
@@ -1128,6 +1189,9 @@
       }}@else{
       <article
         class="markdown"
+        [class.changed-since-read]="readMarks()?.incomplete"
+        [attr.data-read-state]="readMarks()?.incomplete?'changed':null"
+        [attr.tabindex]="readMarks()?.incomplete?-1:null"
         [innerHTML]="html()"
         (click)="readerClick($event)"
         (keydown)="readerKey($event)"

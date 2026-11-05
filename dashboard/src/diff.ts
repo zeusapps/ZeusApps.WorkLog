@@ -1,10 +1,12 @@
 import { diffLines, type Change } from "diff";
 
 /** The longest the line diff may run before the changes are reported as not computable. */
-export const diffTimeoutMilliseconds = 3000;
+export const diffTimeoutMilliseconds = 50;
+/** Bound the edit distance so very different documents cannot consume unbounded synchronous work. */
+export const diffMaxEditLength = 2000;
 
 /** The line comparison readMarks runs. A seam so a test can supply one that cannot finish; jsdiff returns undefined on timeout. */
-export type LineComparer = (before: string, after: string, options: { timeout: number }) => Change[] | undefined;
+export type LineComparer = (before: string, after: string, options: { timeout: number; maxEditLength: number }) => Change[] | undefined;
 
 /** A passage that was in the text last read but is gone: its lines and the current line it sat before. */
 export interface RemovedHunk {
@@ -44,7 +46,7 @@ export function readMarks(baseline: string, current: string, compare: LineCompar
   const before = normalizeText(baseline);
   const after = normalizeText(current);
   if (before === after) return null;
-  const parts = compare(before, after, { timeout: diffTimeoutMilliseconds });
+  const parts = compare(before, after, { timeout: diffTimeoutMilliseconds, maxEditLength: diffMaxEditLength });
   if (!parts) return { changed: [], removed: [], incomplete: true };
   const marks: ReadMarks = { changed: [], removed: [] };
   let line = 0;

@@ -62,6 +62,8 @@ if (process.env.WORKLOG_DASHBOARD_NO_NODE === "true" && !isDll) {
   runtimeEnvironment.DOTNET_ROOT = join(root, "no-installed-dotnet");
   runtimeEnvironment.DOTNET_ROOT_X64 = runtimeEnvironment.DOTNET_ROOT;
   runtimeEnvironment.DOTNET_MULTILEVEL_LOOKUP = "0";
+  runtimeEnvironment.DOTNET_BUNDLE_EXTRACT_BASE_DIR = join(root, "bundle-extraction");
+  await mkdir(runtimeEnvironment.DOTNET_BUNDLE_EXTRACT_BASE_DIR, { recursive: true });
 }
 function start() {
   const processChild = spawn(

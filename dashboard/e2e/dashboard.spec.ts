@@ -1,8 +1,10 @@
 import { test, expect, Page, BrowserContext, Route } from "@playwright/test";
-import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
-import { resolve, join } from "node:path";
-import { createHmac } from "node:crypto";
+import { readFile, writeFile, mkdir, rename, mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { dirname, resolve, join } from "node:path";
+import { createHmac, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 const testPort = Number(process.env["WORKLOG_DASHBOARD_TEST_PORT"] ?? "47942");
 if (!Number.isInteger(testPort) || testPort < 1 || testPort > 65535 || testPort === 47831)
   throw new Error("WORKLOG_DASHBOARD_TEST_PORT must be a valid test port other than 47831.");
@@ -20,13 +22,13 @@ const fixture = async () =>
     executable: string;
     launchLog: string;
   };
-async function authorize(page: Page) {
-  const info = await fixture();
-  const health = (await (await fetch(base + "/health")).json()) as {
+async function authorize(page: Page, serverBase = base, serverInfo?: Awaited<ReturnType<typeof fixture>>) {
+  const selectedFixture = serverInfo ?? await fixture();
+  const health = (await (await fetch(serverBase + "/health")).json()) as {
     instance: string;
   };
-  const secret = await readFile(join(info.data, "dashboard.secret"));
-  const response = await fetch(base + "/api/launch", {
+  const secret = await readFile(join(selectedFixture.data, "dashboard.secret"));
+  const response = await fetch(serverBase + "/api/launch", {
     method: "POST",
     headers: {
       "X-WorkLog-Launch": createHmac("sha256", secret)
@@ -35,10 +37,101 @@ async function authorize(page: Page) {
     },
   });
   const { token } = (await response.json()) as { token: string };
-  await page.goto("/ongoing#connect=" + token);
+  await page.goto(serverBase + "/ongoing#connect=" + token);
   await expect(
     page.getByRole("heading", { name: "Ongoing board" }),
   ).toBeVisible({ timeout: 45_000 });
+}
+async function unusedPort() {
+  const probe = createServer();
+  await new Promise<void>((done, fail) => probe.once("error", fail).listen(0, "127.0.0.1", done));
+  const address = probe.address();
+  if (!address || typeof address === "string") throw new Error("Could not reserve an isolated dashboard test port.");
+  const port = address.port;
+  await new Promise<void>((done, fail) => probe.close((error) => error ? fail(error) : done()));
+  return port;
+}
+async function stopIsolatedServer(child: ReturnType<typeof spawn>, port: number) {
+  let exitObserved = child.exitCode !== null;
+  const exited = new Promise<void>((done) => child.once("exit", () => { exitObserved = true; done(); }));
+  if (child.exitCode === null) {
+    child.kill();
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([exited, new Promise<void>((_, fail) => { timeout = setTimeout(() => fail(new Error("The isolated Daily dashboard did not stop during teardown.")), 5000); })]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+  }
+  if (!exitObserved) throw new Error("The isolated Daily dashboard process is still running after teardown.");
+  const released = createServer();
+  await new Promise<void>((done, fail) => released.once("error", fail).listen(port, "127.0.0.1", done));
+  await new Promise<void>((done, fail) => released.close((error) => error ? fail(error) : done()));
+}
+async function isolatedDailyServer() {
+  const fixtureParent = resolve("../artifacts/dashboard-e2e/daily-real-write-" + randomUUID());
+  const fixtureRoot = join(fixtureParent, "fixture");
+  await mkdir(fixtureParent, { recursive: true });
+  const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
+  const generated = spawnSync("dotnet", [smoke, "--dashboard-fixture", fixtureRoot], { encoding: "utf8", windowsHide: true });
+  if (generated.status !== 0) {
+    await rm(fixtureParent, { recursive: true, force: true });
+    throw new Error("Could not create the isolated Daily acceptance fixture.");
+  }
+  const info = JSON.parse(await readFile(join(fixtureRoot, "fixture.json"), "utf8")) as Awaited<ReturnType<typeof fixture>>;
+  const executable = process.env["WORKLOG_DASHBOARD_EXECUTABLE"] ?? resolve("../src/WorkLog/bin/Release/net10.0/worklog.dll");
+  const port = await unusedPort();
+  const serverBase = `http://127.0.0.1:${port}`;
+  const launchLog = join(fixtureParent, "editor-launches.log");
+  const isDll = executable.toLowerCase().endsWith(".dll");
+  const environment: NodeJS.ProcessEnv = { ...process.env, WORKLOG_DASHBOARD_TEST_LAUNCH_LOG: launchLog };
+  if (process.env["WORKLOG_DASHBOARD_NO_NODE"] === "true") {
+    environment.PATH = (process.env.PATH ?? "").split(process.platform === "win32" ? ";" : ":").filter((directory) =>
+      !["node.exe", "node", "openspec.cmd", "openspec"].some((name) => existsSync(join(directory, name))),
+    ).join(process.platform === "win32" ? ";" : ":");
+    if (!isDll) {
+      environment.DOTNET_ROOT = join(fixtureParent, "no-installed-dotnet");
+      environment.DOTNET_ROOT_X64 = environment.DOTNET_ROOT;
+      environment.DOTNET_MULTILEVEL_LOOKUP = "0";
+      environment.DOTNET_BUNDLE_EXTRACT_BASE_DIR = join(fixtureParent, "bundle-extraction");
+      await mkdir(environment.DOTNET_BUNDLE_EXTRACT_BASE_DIR, { recursive: true });
+    }
+  }
+  const args = ["dashboard", "--no-open", "--port", String(port), "--data-dir", info.data, "--repository", info.repo];
+  const child = spawn(isDll ? "dotnet" : executable, isDll ? [executable, ...args] : args, {
+    cwd: resolve(".."), env: environment, windowsHide: true, stdio: "ignore",
+  });
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 150; attempt++) {
+      if (child.exitCode !== null) break;
+      try {
+        if ((await fetch(serverBase + "/health")).ok) { ready = true; break; }
+      } catch { /* server is still starting */ }
+      await new Promise((done) => setTimeout(done, 100));
+    }
+    if (!ready) throw new Error("The isolated Daily acceptance dashboard did not become ready.");
+    return {
+      info: { ...info, executable, launchLog, baseUrl: serverBase },
+      baseUrl: serverBase,
+      close: async () => {
+        try {
+          await stopIsolatedServer(child, port);
+        } catch {
+          throw new Error(`Could not stop the isolated Daily dashboard on port ${port}; its fixture was retained at ${fixtureParent} to protect possible live journal data.`);
+        }
+        await rm(fixtureParent, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    try {
+      await stopIsolatedServer(child, port);
+    } catch {
+      throw new Error(`Could not stop the isolated Daily dashboard on port ${port}; its fixture was retained at ${fixtureParent} to protect possible live journal data.`);
+    }
+    await rm(fixtureParent, { recursive: true, force: true });
+    throw error;
+  }
 }
 // Writes the preferences document out of band. A loaded page holds an older copy and saves it back 350 ms after its last change,
 // which would overwrite this write, so the page is left first (dropping that pending timer) and the write is read back.
@@ -182,7 +275,7 @@ test("opens design first, searches across scope, and renders without remote reso
     fullPage: true,
   });
   await openTimeline(page, true);
-  await expect(page.locator(".document-tabs .current")).toHaveText("design");
+  await expect(page.locator(".document-current strong")).toHaveText("design.md");
   await expect(page.locator(".markdown table")).toBeVisible();
   await expect(page.locator(".markdown img")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("design.png") });
@@ -266,26 +359,26 @@ test("switches documents during polling and ignores slower earlier selections", 
   });
   try {
     await catalogReady;
-    await page.getByRole("button", { name: "proposal", exact: true }).click();
+    await page.getByRole("button", { name: "proposal.md", exact: true }).click();
     await documentReady;
     const catalogResponse = page.waitForResponse(r => r.url().endsWith("/api/catalog"));
     releaseCatalog();
     await catalogResponse;
     await page.evaluate(() => new Promise(requestAnimationFrame));
     releaseDocument();
-    await expect(page.locator(".document-tabs .current")).toHaveText("proposal");
+    await expect(page.locator(".document-current strong")).toHaveText("proposal.md");
     await expect(page.locator(".markdown h1")).toHaveText("Proposal");
     heldPath = "tasks.md";
     documentHeld = new Promise<void>(resolve => releaseDocument = resolve);
     documentReady = new Promise<void>(resolve => documentStarted = resolve);
-    await page.getByRole("button", { name: "tasks", exact: true }).click();
+    await page.getByRole("button", { name: "tasks.md", exact: true }).click();
     await documentReady;
-    await page.getByRole("button", { name: "specs/work-dashboard/spec", exact: true }).click();
+    await page.getByRole("button", { name: "specs/work-dashboard/spec.md", exact: true }).click();
     await expect(page.locator(".markdown h1")).toHaveText("work-dashboard specification");
     releaseDocument();
-    for (const label of ["specs/openspec-browser/spec", "tasks", "proposal", "design"]) {
-      await page.getByRole("button", { name: label, exact: true }).click();
-      await expect(page.locator(".document-tabs .current")).toHaveText(label);
+    for (const documentPath of ["specs/openspec-browser/spec.md", "tasks.md", "proposal.md", "design.md"]) {
+      await page.getByRole("button", { name: documentPath, exact: true }).click();
+      await expect(page.locator(".document-current strong")).toHaveText(documentPath);
     }
     await expect(page.locator(".markdown h1")).toHaveText("Activity timeline");
     await expect(page.getByText("Reading document...", { exact: true })).toHaveCount(0);
@@ -359,9 +452,9 @@ test("edits referenced notes in both views and deletes only after confirmation",
   const comment = page.getByRole("textbox", { name: "Review comment" });
   await expect(comment).toHaveValue("Keep the elapsed span explicit --> please.");
   await comment.fill("Draft retained between documents");
-  await page.getByRole("button", { name: "tasks", exact: true }).click();
-  await expect(page.locator(".document-tabs .current")).toHaveText("tasks");
-  await page.getByRole("button", { name: "design", exact: true }).click();
+  await page.getByRole("button", { name: "tasks.md", exact: true }).click();
+  await expect(page.locator(".document-current strong")).toHaveText("tasks.md");
+  await page.getByRole("button", { name: "design.md", exact: true }).click();
   await expect(comment).toHaveValue("Draft retained between documents");
   await page.getByRole("button", { name: "Cancel edit", exact: true }).click();
   expect(await readFile(file, "utf8")).toBe(original);
@@ -587,6 +680,7 @@ test("copies section and task links with useful missing-target fallbacks", async
   await page
     .getByRole("button", { name: "Inline review comments", exact: true })
     .click();
+  await openDocumentOutline(page);
   await page
     .getByRole("button", {
       name: "Copy link to Review after editing",
@@ -598,7 +692,8 @@ test("copies section and task links with useful missing-target fallbacks", async
   expect(section).not.toContain("connect=");
   await page.goto(section);
   await expect(page.locator(".markdown #review-after-editing")).toBeFocused();
-  await page.getByRole("button", { name: "tasks", exact: true }).click();
+  await page.getByRole("button", { name: "tasks.md", exact: true }).click();
+  await openDocumentOutline(page);
   await page
     .getByRole("button", { name: "Copy task link 1.2", exact: true })
     .click();
@@ -756,11 +851,13 @@ test("search reports unavailable sources only for the selected repositories", as
 test("keeps history available when a declared store cannot be resolved",async({page})=>{
   await authorize(page);
   await page.getByRole('button',{name:'All repositories',exact:true}).click();
-  await expect(page.getByRole('button',{name:'Must not fallback',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Local shadow',exact:true})).toHaveCount(0);
   const sources=page.locator('details.source-notices').last();
   await sources.locator('summary').click();
   await expect(sources).toContainText('store-member');
   await expect(sources).toContainText(/store.*(resolved|registered|unavailable)|not registered/i);
+  if (process.env["WORKLOG_DASHBOARD_NO_NODE"] !== "true")
+    await expect(page.locator('.change-card').filter({hasText:'Real root precedence'})).toHaveCount(1);
   await page.getByRole('button',{name:'Work history',exact:false}).click();
   await expect(page.locator('.timeline-row').first()).toBeVisible();
 });
@@ -770,7 +867,11 @@ async function writeChange(root: string, name: string, files: Record<string, str
   const directory = join(root, "openspec", "changes", name);
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, ".openspec.yaml"), "schema: spec-driven\ncreated: 2026-10-27\n");
-  for (const [file, text] of Object.entries(files)) await writeFile(join(directory, file), text);
+  for (const [file, text] of Object.entries(files)) {
+    const target = join(directory, file);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, text);
+  }
 }
 const structuredMarker = (id: string, quote: string, comment: string) =>
   `<!-- REVIEW: id=${id}\nTarget: preceding passage\nQuote: ${quote}\nComment:\n${comment}\n-->`;
@@ -778,6 +879,13 @@ const panel = (page: Page) => page.locator(".review-inbox");
 const cardFor = (page: Page, title: string) =>
   page.locator(".change-card").filter({ has: page.getByRole("button", { name: title, exact: true }) });
 const closeReader = (page: Page) => page.getByRole("button", { name: "Close document reader" }).click();
+async function openDocumentOutline(page: Page) {
+  const outline = page.locator(".document-outline");
+  await expect(outline).toBeVisible();
+  if (!(await outline.evaluate((element) => (element as HTMLDetailsElement).open)))
+    await outline.locator("summary").click();
+  await expect.poll(() => outline.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true);
+}
 
 test("lists open comments across two changes, opens one at its note, and follows an agent removing a marker", async ({ page }, testInfo) => {
   const info = await fixture();
@@ -908,6 +1016,53 @@ test("highlights an agent's edit of a read design, lists the addressed comment, 
   await card.getByRole("button", { name: /^Design/ }).click();
   await expect(page.locator(".read-banner")).toHaveCount(0);
   await closeReader(page);
+});
+
+test("shows and navigates an honest document-level fallback when a large comparison is incomplete", async ({ page }) => {
+  const info = await fixture();
+  const lines = (prefix: string) => Array.from({ length: 2100 }, (_, index) => `${prefix} unique line ${index}`).join("\n") + "\n";
+  const largeName = "zz-e2e-large-comparison";
+  const emptyName = "zz-e2e-empty-comparison";
+  await writeChange(info.repo, largeName, { "design.md": `# Large comparison\n\n${lines("baseline")}` });
+  await writeChange(info.repo, emptyName, { "design.md": lines("empty baseline") });
+  await authorize(page);
+
+  const largeCard = cardFor(page, "Zz e2e large comparison");
+  await largeCard.getByRole("button", { name: /^Design/ }).click();
+  await expect(page.locator(".markdown h1")).toHaveText("Large comparison");
+  await writeFile(join(info.repo, "openspec/changes", largeName, "design.md"), `# Large comparison updated\n\n${lines("replacement")}`);
+  await page.getByRole("button", { name: "Refresh document" }).click();
+  const banner = page.locator(".read-banner");
+  await expect(banner).toContainText("Comparison is incomplete");
+  await expect(banner).toContainText("Use Next change");
+  const renderedFallback = page.locator(".document-scroll > .markdown.changed-since-read");
+  await expect(renderedFallback).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next change", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Next change", exact: true }).click();
+  await expect(renderedFallback).toBeFocused();
+
+  await page.getByRole("button", { name: "Source", exact: true }).click();
+  const sourceFallback = page.locator(".document-scroll > .source-text.changed-since-read");
+  await expect(sourceFallback).toBeVisible();
+  await expect(sourceFallback).toHaveAttribute("tabindex", "-1");
+  await page.getByRole("button", { name: "Next change", exact: true }).click();
+  await expect(sourceFallback).toBeFocused();
+  await closeReader(page);
+
+  const emptyCard = cardFor(page, "Zz e2e empty comparison");
+  await emptyCard.getByRole("button", { name: /^Design/ }).click();
+  // View mode is reader state and deliberately carries across documents.
+  await page.getByRole("button", { name: "Read", exact: true }).click();
+  await expect(page.locator(".markdown")).toBeVisible();
+  await writeFile(join(info.repo, "openspec/changes", emptyName, "design.md"), "");
+  await page.getByRole("button", { name: "Refresh document" }).click();
+  await expect(banner).toContainText("Comparison is incomplete");
+  const emptyFallback = page.locator(".document-scroll > .markdown.changed-since-read");
+  await expect(emptyFallback).toBeVisible();
+  await expect(emptyFallback).toHaveText("");
+  await expect(page.getByRole("button", { name: "Next change", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Next change", exact: true }).click();
+  await expect(emptyFallback).toBeFocused();
 });
 
 test("lists a comment left behind in an archived change as read-only", async ({ page }, testInfo) => {
@@ -1049,6 +1204,7 @@ test("Open in editor records the expected document and line for a heading, the r
   await page.getByRole("button", { name: "All repositories", exact: true }).click();
   await cardFor(page, "Zz e2e editor").getByRole("button", { name: /^Design/ }).click();
   await expect(page.locator(".markdown h1")).toHaveText("Editor target");
+  await openDocumentOutline(page);
   const before = (await launches()).length;
   const target = "/openspec/changes/zz-e2e-editor/design.md";
   // A heading opens at its own line (zero-based 4, one-based 5).
@@ -1109,6 +1265,145 @@ async function openHistory(page: Page) {
 }
 const ticketFilter = (page: Page) => page.getByRole("textbox", { name: "Ticket filter" });
 
+test("filters and selects full document paths at reader scale across themes and widths", async ({ page }, testInfo) => {
+  const info = await fixture();
+  for (const count of [10, 30, 50]) {
+    const name = `zz-e2e-reader-navigation-${count}`;
+    const files: Record<string, string> = {
+      "proposal.md": "# Navigation proposal\n\nReader acceptance fixture.\n",
+      "design.md": "# Navigation design\n\nReader acceptance fixture.\n",
+      "tasks.md": "# Tasks\n\n- [ ] 1.1 Reader fixture\n",
+    };
+    const specs = Math.max(2, Math.floor((count - 3) / 2));
+    for (let index = 0; index < specs; index++)
+      files[`specs/capability-${index}/spec.md`] = `# Capability ${index}\n\nNested specification ${index}.\n`;
+    for (let index = 0; Object.keys(files).length < count; index++)
+      files[`notes/area-${index}/readme.md`] = `# Note ${index}\n\nOther document ${index}.\n`;
+    await writeChange(info.repo, name, files);
+  }
+  await authorize(page);
+  for (const count of [10, 30, 50]) {
+    const name = `zz-e2e-reader-navigation-${count}`;
+    await page.getByRole("button", { name: `Zz e2e reader navigation ${count}`, exact: true }).click();
+    await expect(page.locator(".reader")).toBeVisible();
+    await expect(page.locator(".document-picker-desktop .document-link")).toHaveCount(count);
+    const target = `specs/capability-${Math.max(2, Math.floor((count - 3) / 2)) - 1}/spec.md`;
+    await page.getByRole("textbox", { name: "Filter documents" }).first().fill(target);
+    await page.locator(".document-picker-desktop .document-link").filter({ hasText: target }).click();
+    await expect(page.locator(".document-current strong")).toHaveText(target);
+    await expect(page.locator(".markdown h1")).toHaveText(new RegExp(`Capability ${Math.max(2, Math.floor((count - 3) / 2)) - 1}`));
+    await closeReader(page);
+  }
+
+  const name = "zz-e2e-reader-navigation-50";
+  await page.getByRole("button", { name: "Zz e2e reader navigation 50", exact: true }).click();
+  await expect(page.locator(".reader")).toBeVisible();
+  for (const width of [390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const theme of ["dark", "light"] as const) {
+      await closeReader(page);
+      const toggle = page.getByRole("button", { name: theme === "dark" ? "Switch to dark theme" : "Switch to light theme" });
+      if (await toggle.count()) await toggle.click();
+      await page.getByRole("button", { name: "Zz e2e reader navigation 50", exact: true }).click();
+      await expect(page.locator(".reader")).toBeVisible();
+      const target = theme === "dark" ? "specs/capability-2/spec.md" : "notes/area-1/readme.md";
+      if (width <= 850) {
+        const selector = page.getByRole("button", { name: /Documents ·/ });
+        if (!(await page.locator("#document-filter-mobile").isVisible().catch(() => false))) await selector.click();
+        await page.locator("#document-filter-mobile").fill(target);
+        await page.locator(".document-picker-mobile .document-link").filter({ hasText: target }).click();
+      } else {
+        await page.locator("#document-filter-desktop").fill(target);
+        await page.locator(".document-picker-desktop .document-link").filter({ hasText: target }).click();
+      }
+      await expect(page.locator(".document-current strong")).toHaveText(target);
+      if (width === 1440 && theme === "dark") {
+        const filter = page.locator("#document-filter-desktop");
+        await filter.fill("");
+        const rail = page.locator(".document-navigation");
+        await expect(rail.locator(".document-picker-desktop .document-link")).toHaveCount(50);
+        await page.locator(".reader-body").screenshot({ path: testInfo.outputPath("reader-nav-1440-dark-all-documents.png") });
+        const content = page.locator(".document-scroll");
+        const contentPosition = await content.evaluate((element) => element.scrollTop);
+        const windowPosition = await page.evaluate(() => window.scrollY);
+        await rail.hover();
+        await page.mouse.wheel(0, 400);
+        await expect.poll(() => rail.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+        expect(await content.evaluate((element) => element.scrollTop)).toBe(contentPosition);
+        expect(await page.evaluate(() => window.scrollY)).toBe(windowPosition);
+        await rail.evaluate((element) => { element.scrollTop = 0; });
+        await filter.fill(target);
+        await rail.locator(".document-picker-desktop .document-link").filter({ hasText: target }).click();
+        await expect(page.locator(".document-current strong")).toHaveText(target);
+      }
+      expect(await page.locator(".reader").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await page.locator(".reader-body").screenshot({ path: testInfo.outputPath(`reader-nav-${width}-${theme}.png`) });
+      if (width <= 850) {
+        await page.getByRole("button", { name: /Documents ·/ }).click();
+        const filter = page.locator("#document-filter-mobile");
+        await expect(filter).toBeVisible();
+        await filter.focus();
+        await filter.press("Escape");
+        expect(await filter.evaluate((element) => document.activeElement !== element)).toBe(true);
+        await expect(page.locator(".reader")).toBeFocused();
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("button", { name: /Documents ·/ })).toHaveAttribute("aria-expanded", "false");
+        await expect(page.getByRole("button", { name: /Documents ·/ })).toBeFocused();
+        await expect(page.locator(".reader")).toBeVisible();
+      }
+    }
+  }
+  await closeReader(page);
+});
+
+test("keyboard document rail navigation preserves an unsaved draft and the reading position", async ({ page }) => {
+  const info = await fixture();
+  const name = "zz-e2e-reader-navigation-state";
+  const paragraphs = Array.from({ length: 90 }, (_, index) => `Reading passage ${index + 1}. This paragraph gives the design enough height to retain a real reader position.`).join("\n\n");
+  await writeChange(info.repo, name, {
+    "design.md": `# Reader state design\n\nThis is a selectable passage for a navigation draft.\n\n${paragraphs}\n`,
+    "tasks.md": "# Reader state tasks\n\nA separate document to exercise rail navigation.\n",
+  });
+  await authorize(page);
+  await page.getByRole("button", { name: "All repositories", exact: true }).click();
+  const card = cardFor(page, "Zz e2e reader navigation state");
+  await expect(card).toBeVisible({ timeout: 20_000 });
+  await card.getByRole("button", { name: /^Design/ }).click();
+  const reader = page.getByRole("dialog", { name: "OpenSpec document reader" });
+  await expect(reader).toBeVisible();
+  await page.locator(".markdown p").filter({ hasText: "This is a selectable passage" }).click();
+  const comment = page.getByRole("textbox", { name: "Review comment" });
+  await comment.fill("Keep this draft while I read the tasks.");
+
+  const savedPosition = page.waitForResponse((response) => {
+    if (!response.url().endsWith("/api/state") || response.request().method() !== "PUT") return false;
+    const positions = response.request().postDataJSON().positions ?? {};
+    return Object.keys(positions).some((key) => key.includes(`:${name}:design.md:`));
+  });
+  await page.locator(".document-scroll").evaluate((element) => {
+    element.scrollTop = 700;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await savedPosition;
+  const originalPosition = await page.locator(".document-scroll").evaluate((element) => element.scrollTop);
+  expect(originalPosition).toBeGreaterThan(400);
+
+  const tasksLink = page.locator(".document-picker-desktop .document-link").filter({ hasText: "tasks.md" });
+  await tasksLink.focus();
+  await tasksLink.press("Enter");
+  await expect(page.locator(".markdown h1")).toHaveText("Reader state tasks");
+  await expect(tasksLink).toBeFocused();
+  const designLink = page.locator(".document-picker-desktop .document-link").filter({ hasText: "design.md" });
+  await designLink.focus();
+  await designLink.press("Enter");
+  await expect(page.locator(".markdown h1")).toHaveText("Reader state design");
+  await expect(designLink).toBeFocused();
+  await expect(comment).toHaveValue("Keep this draft while I read the tasks.");
+  await expect.poll(() => page.locator(".document-scroll").evaluate((element) => element.scrollTop)).toBeGreaterThan(400);
+  await closeReader(page);
+});
+
 test("links tickets, repositories and branches from recorded facts without navigating", async ({ page, context }) => {
   const external: string[] = [];
   page.on("request", (r) => {
@@ -1124,18 +1419,16 @@ test("links tickets, repositories and branches from recorded facts without navig
   // Azure DevOps organization/project, a recorded URL, an unrecognized scope, and a local-only repository.
   await ticketFilter(page).fill("4211");
   await ticketFilter(page).press("Enter");
-  // The previous filter's rows stay until the new query returns; a strict attribute check on them throws at once instead of retrying.
+  await expect(page.locator(".timeline-row .ticket-link[href='https://dev.azure.com/contoso/Payments/_workitems/edit/4211']")).toBeVisible();
   await expect(page.locator(".timeline-row .ticket-link")).toHaveCount(1);
-  await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://dev.azure.com/contoso/Payments/_workitems/edit/4211");
   await ticketFilter(page).fill("REC-5");
   await ticketFilter(page).press("Enter");
-  // The previous filter's rows stay until the new query returns; a strict attribute check on them throws at once instead of retrying.
+  await expect(page.locator(".timeline-row .ticket-link[href='https://tracker.example.invalid/browse/REC-5']")).toBeVisible();
   await expect(page.locator(".timeline-row .ticket-link")).toHaveCount(1);
-  await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://tracker.example.invalid/browse/REC-5");
   await ticketFilter(page).fill("UNK-7");
   await ticketFilter(page).press("Enter");
-  await expect(page.locator(".timeline-row")).toHaveCount(1);
   await expect(page.locator(".timeline-row .ticket-id")).toHaveText("UNK-7");
+  await expect(page.locator(".timeline-row")).toHaveCount(1);
   await expect(page.locator(".timeline-row a")).toHaveCount(0);
   // Copy ID works without a link.
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
@@ -1144,6 +1437,7 @@ test("links tickets, repositories and branches from recorded facts without navig
   // A link opens only after an explicit click, through window.open without the opener.
   await ticketFilter(page).fill("jira:company.atlassian.net:DEP-12");
   await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row .ticket-link[href='https://company.atlassian.net/browse/DEP-12']")).toBeVisible();
   await expect(page.locator(".timeline-row")).toHaveCount(1);
   await page.evaluate(() => {
     (window as unknown as { opened: unknown[] }).opened = [];
@@ -1164,6 +1458,7 @@ test("links tickets, repositories and branches from recorded facts without navig
   // No repository or branch link for a local-only identity.
   await ticketFilter(page).fill("DEP-30");
   await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row .ticket-link[href='https://company.atlassian.net/browse/DEP-30']")).toBeVisible();
   await expect(page.locator(".timeline-row")).toHaveCount(1);
   await expect(page.locator(".timeline-row .ticket-link")).toHaveAttribute("href", "https://company.atlassian.net/browse/DEP-30");
   await page.locator(".timeline-row .row-label").click();
@@ -1182,16 +1477,20 @@ test("filters History by ticket, keeps the full lifecycle, and remembers the fil
   await expect(page.locator(".timeline-row")).toHaveCount(50);
   await ticketFilter(page).fill("  jira:other.atlassian.net:DEP-12  ");
   await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row .ticket-link[href='https://other.atlassian.net/browse/DEP-12']")).toBeVisible();
   await expect(page.locator(".timeline-row")).toHaveCount(1);
   await expect(page.locator(".ticket-filter-active")).toContainText("jira:other.atlassian.net:DEP-12");
   await ticketFilter(page).fill("jira:company.atlassian.net:DEP-12");
   await ticketFilter(page).press("Enter");
+  await expect(page.locator(".timeline-row .ticket-link[href='https://company.atlassian.net/browse/DEP-12']")).toBeVisible();
   await expect(page.locator(".timeline-row")).toHaveCount(1);
   // The company ticket's two observations are 4 days apart: the filter keeps its whole recorded span.
   await expect(page.locator(".timeline-row .row-label small")).toContainText("2 activity dates");
   await ticketFilter(page).fill("DEP-12");
   await ticketFilter(page).press("Enter");
   await expect(page.locator(".timeline-row")).toHaveCount(2);
+  await expect(page.locator(".timeline-row .ticket-link[href='https://company.atlassian.net/browse/DEP-12']")).toBeVisible();
+  await expect(page.locator(".timeline-row .ticket-link[href='https://other.atlassian.net/browse/DEP-12']")).toBeVisible();
   await expect.poll(async () => page.evaluate(async () => (await (await fetch("/api/state")).json()).history?.ticket), { timeout: 20_000 }).toBe("DEP-12");
   await page.reload();
   await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible({ timeout: 45_000 });
@@ -1210,7 +1509,7 @@ test("copies a work item as Markdown, loading every observation page", async ({ 
   await openHistory(page);
   await ticketFilter(page).fill("jira:company.atlassian.net:DEP-12");
   await ticketFilter(page).press("Enter");
-  // The unfiltered rows stay until the new query returns; a click on them would be a strict-mode violation.
+  await expect(page.locator(".timeline-row .ticket-link[href='https://company.atlassian.net/browse/DEP-12']")).toBeVisible();
   await expect(page.locator(".timeline-row")).toHaveCount(1);
   await page.locator(".timeline-row .row-label").click();
   await expect(page.locator(".observation")).toHaveCount(2);
@@ -1567,21 +1866,26 @@ test.describe("Ongoing board", () => {
 test.describe("Daily view", () => {
   // The fixture records its Daily repository on fixed past dates: work on Tue 6 Jan and Fri 9 Jan 2026. The browser clock is Monday 12 January 2026.
   const monday = new Date("2026-01-12T12:30:00Z");
-  const stateWith = (page: Page, repositories: string[] | null, extra: object = {}) =>
-    putState(page, { schemaVersion: 1, repositories, ...extra });
-  const open = async (page: Page, context: BrowserContext, repository = "example/daily-demo") => {
-    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
+  const stateWith = async (page: Page, repositories: string[] | null, extra: object = {}, serverBase = base) => {
+    await page.goto("about:blank");
+    const response = await page.request.put(serverBase + "/api/state", { data: { schemaVersion: 1, repositories, ...extra } });
+    expect(response.status()).toBe(204);
+    const stored = await (await page.request.get(serverBase + "/api/state")).json();
+    expect(stored).toMatchObject({ repositories, ...extra });
+  };
+  const open = async (page: Page, context: BrowserContext, repository = "example/daily-demo", serverBase = base, serverInfo?: Awaited<ReturnType<typeof fixture>>) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: serverBase });
     await page.clock.install({ time: monday });
-    await authorize(page);
-    await stateWith(page, [repository]);
-    await page.goto("/daily");
+    await authorize(page, serverBase, serverInfo);
+    await stateWith(page, [repository], {}, serverBase);
+    await page.goto(serverBase + "/daily");
     await expect(page.locator("#daily-title")).toBeVisible();
     await expect(page.getByTestId("daily-day")).toBeVisible();
     // Copy for daily is enabled only once Today is built from the loaded Ongoing rows, so this is the settled state.
     await expect(page.getByTestId("copy-daily")).toBeEnabled();
     await expect(page.getByTestId("daily-today-line").first()).toBeVisible();
   };
-  const reset = async (page: Page) => stateWith(page, null);
+  const reset = async (page: Page, serverBase = base) => stateWith(page, null, {}, serverBase);
   const copied = async (page: Page) => {
     await page.getByTestId("copy-daily").click();
     await expect(page.locator(".copy-toast")).toHaveText("Daily copied.");
@@ -1653,9 +1957,10 @@ test.describe("Daily view", () => {
   });
 
   test("a new observation for today appears under Today with its summary, and a ticket worked on both days shows each day's summary", async ({ page, context }) => {
-    await open(page, context);
+    const isolated = await isolatedDailyServer();
     try {
-      const info = await fixture();
+      await open(page, context, "example/daily-demo", isolated.baseUrl, isolated.info);
+      const info = isolated.info;
       const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
       const logged = spawnSync(
         "dotnet",
@@ -1676,7 +1981,7 @@ test.describe("Daily view", () => {
       await expect(quiet.getByTestId("daily-today-summary")).toHaveCount(0);
       expect(await copied(page)).toContain("Today:\n- DEMO-2 — in progress — Export retries wired to the job scheduler; load test remains.\n- DEMO-3\nBlockers:");
     } finally {
-      await reset(page);
+      await isolated.close();
     }
   });
 
@@ -1714,15 +2019,15 @@ test.describe("Daily view", () => {
   });
 
   test("a further observation makes the digest stale, and the line falls back to the new summary after a refresh", async ({ page, context }) => {
-    await open(page, context, "example/digest-demo");
+    const isolated = await isolatedDailyServer();
     try {
+      await open(page, context, "example/digest-demo", isolated.baseUrl, isolated.info);
       const today = page.getByTestId("daily-today-line").filter({ hasText: "DGT-2" });
       await expect(today.getByTestId("daily-digest-mark")).toHaveCount(1);
-      const info = await fixture();
       const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
       const logged = spawnSync(
         "dotnet",
-        [smoke, "--dashboard-log", info.root, "example/digest-demo", "in_progress", "-", "DGT-2", "2026-01-12T12:20:00.000Z", "Added the retention dry-run flag."],
+        [smoke, "--dashboard-log", isolated.info.root, "example/digest-demo", "in_progress", "-", "DGT-2", "2026-01-12T12:20:00.000Z", "Added the retention dry-run flag."],
         { encoding: "utf8", windowsHide: true },
       );
       expect(logged.status, logged.stdout + logged.stderr).toBe(0);
@@ -1737,31 +2042,39 @@ test.describe("Daily view", () => {
       expect(text).not.toContain("Retention sweep runs in batches.");
       expect(text).toContain("- DGT-1 — done — Built and merged the audit export.");
     } finally {
-      await reset(page);
+      try {
+        await reset(page, isolated.baseUrl);
+      } finally {
+        await isolated.close();
+      }
     }
   });
 
   test("a digest saved while Daily is open appears and is copied within a poll, without Refresh", async ({ page, context }) => {
-    await open(page, context, "example/digest-demo");
+    const isolated = await isolatedDailyServer();
     try {
-      const info = await fixture();
+      await open(page, context, "example/digest-demo", isolated.baseUrl, isolated.info);
       const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
       const run = (args: string[]) => {
         const done = spawnSync("dotnet", [smoke, ...args], { encoding: "utf8", windowsHide: true });
         expect(done.status, done.stdout + done.stderr).toBe(0);
       };
-      run(["--dashboard-log", info.root, "example/digest-demo", "started", "-", "DGT-3", "2026-01-12T12:05:00.000Z", "Started the export audit trail."]);
-      run(["--dashboard-log", info.root, "example/digest-demo", "in_progress", "-", "DGT-3", "2026-01-12T12:10:00.000Z", "Trail records every export."]);
+      run(["--dashboard-log", isolated.info.root, "example/digest-demo", "started", "-", "DGT-3", "2026-01-12T12:05:00.000Z", "Started the export audit trail."]);
+      run(["--dashboard-log", isolated.info.root, "example/digest-demo", "in_progress", "-", "DGT-3", "2026-01-12T12:10:00.000Z", "Trail records every export."]);
       await page.getByRole("button", { name: "Refresh dashboard" }).click();
       const line = page.getByTestId("daily-today-line").filter({ hasText: "DGT-3" });
       await expect(line.getByTestId("daily-today-summary")).toHaveText("Trail records every export.");
       await expect(line.getByTestId("daily-digest-mark")).toHaveCount(0);
-      run(["--dashboard-digest", info.root, "example/digest-demo", "DGT-3", "Export audit trail records every export."]);
+      run(["--dashboard-digest", isolated.info.root, "example/digest-demo", "DGT-3", "Export audit trail records every export."]);
       await expect(line.getByTestId("daily-today-summary")).toContainText("Export audit trail records every export.", { timeout: 10_000 });
       await expect(line.getByTestId("daily-digest-mark")).toHaveText("agent digest");
       expect(await copied(page)).toContain("- DGT-3 — in progress — Export audit trail records every export.");
     } finally {
-      await reset(page);
+      try {
+        await reset(page, isolated.baseUrl);
+      } finally {
+        await isolated.close();
+      }
     }
   });
 

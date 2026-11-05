@@ -33,9 +33,21 @@ interface Call {
 }
 function setup(changes: Change[] = [change("proposal", 0, 9), change("busy", 0, 9), change("finished", 9, 9), change("second", 0, 9)]) {
   const calls: Call[] = [];
+  const router = {
+    events: new Subject(),
+    navigate: vi.fn().mockResolvedValue(true),
+    parseUrl: (url: string) => {
+      const [path, query = ""] = url.split("?");
+      const segments = path.split("/").filter(Boolean).map((segment) => ({ path: segment }));
+      const queryParams: Record<string, string> = {};
+      new URLSearchParams(query).forEach((value, key) => { queryParams[key] = value; });
+      return { queryParams, root: { children: { primary: { segments } } } };
+    },
+    url: "/ongoing",
+  };
   TestBed.configureTestingModule({
     imports: [App],
-    providers: [{ provide: Router, useValue: { events: new Subject(), navigate: vi.fn().mockResolvedValue(true), parseUrl: () => ({ queryParams: {} }), url: "/ongoing" } }],
+    providers: [{ provide: Router, useValue: router }],
   });
   const fixture = TestBed.createComponent(App);
   const app = fixture.componentInstance;
@@ -56,7 +68,7 @@ function setup(changes: Change[] = [change("proposal", 0, 9), change("busy", 0, 
     if (path === "/api/ongoing/unlinked") return Response.json({ snapshot: 7, entries: [], truncated: false });
     throw new Error("Unexpected request: " + path);
   });
-  return { app, fixture, calls, element: fixture.nativeElement as HTMLElement };
+  return { app, fixture, calls, router, element: fixture.nativeElement as HTMLElement };
 }
 afterEach(() => {
   vi.useRealTimers();
@@ -146,13 +158,35 @@ describe("loading and saving", () => {
   it("offers only the copies that contain the requested document", () => {
     const doc = (path: string) => ({ path, label: "design", fingerprint: "1:1" });
     const a = change("dup", 0, 9, { sourceId: "a", variant: "va", documents: [doc("design.md")] });
-    const b = change("dup", 0, 9, { sourceId: "b", variant: "vb", documents: [doc("design.md"), doc("tasks.md")] });
+    const b = change("dup", 0, 9, { sourceId: "b", variant: "va", documents: [doc("design.md"), doc("tasks.md")] });
     const { app, fixture } = setup([a, b]);
     const dup = app.fullBoard().proposed[0];
     app.openCard(dup, "tasks.md");
     expect(app.copies()).toEqual([]);
     app.openCard(dup, "design.md");
     expect(app.copies().map((c) => c.sourceId)).toEqual(["a", "b"]);
+    expect(new Set(app.copies().map((copy, index) => app.trackCopy(index, copy))).size).toBe(2);
+    expect(app.copyPath).toBe("design.md");
+    app.openCard(dup, "tasks.md");
+    expect(app.copies()).toEqual([]);
+    expect(app.copyPath).toBeUndefined();
+    fixture.destroy();
+  });
+
+  it("sets a route-driven chooser target and clears it when the chooser closes", async () => {
+    const doc = (path: string) => ({ path, label: path, fingerprint: "1:1" });
+    const first = change("dup", 0, 9, { sourceId: "a", variant: "one", documents: [doc("specs/nested.md")] });
+    const second = change("dup", 0, 9, { sourceId: "a", variant: "two", documents: [doc("specs/nested.md")] });
+    const { app, fixture, router } = setup([first, second]);
+    router.url = "/history?source=a&change=dup&doc=specs%2Fnested.md";
+
+    await app["routeChanged"]();
+
+    expect(app.copies()).toHaveLength(2);
+    expect(app.copyPath).toBe("specs/nested.md");
+    await app.closeDocument();
+    expect(app.copies()).toEqual([]);
+    expect(app.copyPath).toBeUndefined();
     fixture.destroy();
   });
 

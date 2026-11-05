@@ -258,6 +258,22 @@ Recorded in one run on 2026-11-02 on Windows 10.0.26300.0 (.NET SDK 10.0.114, se
 
 Packaging and the fixtures rewrote no lock file beyond the refresh above.
 
+## Optional digest failure diagnostics (improve-dashboard-reading-and-reliability)
+
+Optional digest work happens after the observation write and must not turn a saved observation into a failed `log_work` result. `McpServerHost` supplies the existing `DigestService` diagnostic path through the stdio server's stderr logger. Diagnostics use bounded fixed categories and safe messages, with at most one diagnostic per unchanged category per minute, and do not include observation text, private settings, or raw exceptions. A diagnostic sink exception is contained. The tool schemas are unchanged and stdout remains protocol-only.
+
+| Check | Result |
+| --- | --- |
+| Shared-server protocol fixtures labeled for Claude Code and Codex | Passed. Both labels exercise the same MCP server protocol path; these are fixture checks, not native-client connection or live-agent evaluations. |
+| Saved observation when optional digest processing fails | Passed; the write remains successful and available to subsequent queries. |
+| Diagnostic suppression and sink failure | Passed; repeated unchanged categories are coalesced and a throwing sink does not fail the tool call. |
+| Protocol stdout | Passed; successful calls remain parseable as MCP messages while diagnostics are written to stderr. |
+| Independent backend QA | 72/72 checks passed. The separate code-analyzer review reported no production blocker. Its stderr-delivery test-maintenance suggestion was deferred by severity decision; it did not identify a production defect. |
+
+The optional Daily response status is private and additive: missing or null `digestIssue` means no failure, while an unavailable digest read preserves observations and fallback summaries and produces one inline dashboard indication. The Daily API does not repair the store. Dashboard component and browser acceptance are recorded in [Dashboard validation](dashboard-validation.md#reader-navigation-and-bounded-comparisons-improve-dashboard-reading-and-reliability).
+
+The final Release build completed with zero warnings and errors, the full .NET suite passed 427/427 without skips, and the dashboard unit suite passed 270/270 across 20 files. The fresh self-contained 0.4.1 review package passed the full no-Node dashboard browser suite, 44/44 in 2.3 minutes, with no declared-store exclusion; the full normal Release browser suite passed 44/44 in 4.8 minutes. Source version 0.4.1 remains unchanged and this review candidate was not published. The packaged `--updates-only` smoke passed `BOOTSTRAP PASSED`, checking launcher/version, MCP protocol/EOF and offline status. QA-020 regression coverage verifies that a document 404 and read-state storage 503 produce neutral refresh/retry guidance while retaining successful marks and drafts. These checks do not turn the paired shared-server protocol fixtures into native-client or live-agent evidence. See this change's review reports and completion ledger for the current integrated QA and code-analyzer disposition.
+
 ## Sources
 
 - [Official C# SDK: tools, structured content, errors and annotations](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/tools/tools.md)

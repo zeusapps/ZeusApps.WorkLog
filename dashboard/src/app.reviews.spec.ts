@@ -279,6 +279,148 @@ describe("read baselines in the reader", () => {
     fixture.destroy();
   });
 
+  it("reports a deleted document without claiming the dashboard connection failed", async () => {
+    const { app, server, open, fixture } = setup();
+    server.seed("design.md", design);
+    server.seed("tasks.md", "# Tasks\n\n- [ ] 1.1 One\n");
+    await open("design.md");
+    app.selection.set({ start: 1, end: 2, text: "Intro paragraph." });
+    app.comment.set("Keep this draft when a document disappears.");
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) => {
+      const body = options?.body ? JSON.parse(options.body as string) : undefined;
+      if (String(input) === "/api/document" && body.path === "tasks.md")
+        return Response.json({ error: "Document unavailable." }, { status: 404 });
+      return serve(input, options);
+    });
+
+    await app.markChangeRead();
+
+    expect(app.readSummary()[baselineKey("s", "demo", "design.md")]).toBe("100:5000");
+    expect(app.notice()).toContain("1 document was marked as read");
+    expect(app.notice()).toContain("1 document could not be marked");
+    expect(app.notice()).toContain("refresh the change, confirm its documents and read state are available, then retry");
+    expect(app.notice()).not.toContain("connection");
+    expect(app.notice()).not.toContain("Document unavailable");
+    expect(app.selection()).toEqual({ start: 1, end: 2, text: "Intro paragraph." });
+    expect(app.comment()).toBe("Keep this draft when a document disappears.");
+    fixture.destroy();
+  });
+
+  it("reports a read-state storage failure with one aggregate retry hint", async () => {
+    const { app, server, open, fixture } = setup();
+    server.seed("design.md", design);
+    server.seed("tasks.md", "# Tasks\n\n- [ ] 1.1 One\n");
+    await open("design.md");
+    app.selection.set({ start: 1, end: 2, text: "Intro paragraph." });
+    app.comment.set("Keep this draft when read state cannot be saved.");
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) => {
+      const body = options?.body ? JSON.parse(options.body as string) : undefined;
+      if (String(input) === "/api/reads/mark" && body.document.path === "tasks.md")
+        return Response.json({ error: "Read storage unavailable." }, { status: 503 });
+      return serve(input, options);
+    });
+
+    await app.markChangeRead();
+
+    expect(app.readSummary()[baselineKey("s", "demo", "design.md")]).toBe("100:5000");
+    expect(app.notice()).toContain("1 document was marked as read");
+    expect(app.notice()).toContain("1 document could not be marked");
+    expect(app.notice()).toContain("refresh the change, confirm its documents and read state are available, then retry");
+    expect(app.notice().match(/could not be marked/g)).toHaveLength(1);
+    expect(app.notice()).not.toContain("connection");
+    expect(app.notice()).not.toContain("Read storage unavailable");
+    expect(app.selection()).toEqual({ start: 1, end: 2, text: "Intro paragraph." });
+    expect(app.comment()).toBe("Keep this draft when read state cannot be saved.");
+    fixture.destroy();
+  });
+
+  it("summarizes mixed mark outcomes while retaining successful fingerprints", async () => {
+    const { app, server, open, fixture } = setup();
+    server.seed("design.md", design);
+    server.seed("tasks.md", "# Tasks\n\n- [ ] 1.1 One\n");
+    server.seed("proposal.md", "# Proposal\n\nOne more document.\n");
+    await open("design.md");
+    app.selectedChange.set({ ...change, documents: [...change.documents, { path: "proposal.md", label: "proposal", fingerprint: "20:7000" }] });
+    app.selection.set({ start: 1, end: 2, text: "Intro paragraph." });
+    app.comment.set("Keep this draft across a partial mark failure.");
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let marks = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) => {
+      if (String(input) === "/api/reads/mark") {
+        marks++;
+        if (marks === 2) return Response.json({ error: "Changed during mark." }, { status: 409 });
+        if (marks === 3) throw new TypeError("Failed to fetch");
+      }
+      return serve(input, options);
+    });
+
+    await app.markChangeRead();
+
+    expect(marks).toBe(3);
+    expect(app.readSummary()[baselineKey("s", "demo", "design.md")]).toBe("100:5000");
+    expect(app.readSummary()[baselineKey("s", "demo", "tasks.md")]).toBeUndefined();
+    expect(app.readSummary()[baselineKey("s", "demo", "proposal.md")]).toBeUndefined();
+    expect(app.notice()).toContain("1 document was marked as read");
+    expect(app.notice()).toContain("1 document changed while being marked");
+    expect(app.notice()).toContain("1 document could not be marked");
+    expect(app.notice()).toContain("refresh the change, confirm its documents and read state are available, then retry");
+    expect(app.selection()).toEqual({ start: 1, end: 2, text: "Intro paragraph." });
+    expect(app.comment()).toBe("Keep this draft across a partial mark failure.");
+    fixture.destroy();
+  });
+
+  it("stops a change-wide mark on authorization loss and reports other failures separately", async () => {
+    const { app, server, open, fixture } = setup();
+    server.seed("design.md", design);
+    server.seed("tasks.md", "# Tasks\n\n- [ ] 1.1 One\n");
+    server.seed("proposal.md", "# Proposal\n\nOne more document.\n");
+    await open("design.md");
+    app.selectedChange.set({ ...change, documents: [...change.documents, { path: "proposal.md", label: "proposal", fingerprint: "20:7000" }] });
+    app.selection.set({ start: 1, end: 2, text: "Intro paragraph." });
+    app.comment.set("Keep this draft after authorization loss.");
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let marks = 0;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) => {
+      if (String(input) === "/api/reads/mark") {
+        marks++;
+        return Response.json({ error: "Unavailable." }, { status: marks === 1 ? 503 : 401 });
+      }
+      return serve(input, options);
+    });
+
+    await app.markChangeRead();
+
+    expect(marks).toBe(2);
+    expect(app.notice()).toContain("1 document could not be marked");
+    expect(app.notice()).toContain("refresh the change, confirm its documents and read state are available, then retry");
+    expect(app.notice()).toContain("Authorization was lost");
+    expect(app.notice()).not.toContain("changed while being marked");
+    expect(app.selection()).toEqual({ start: 1, end: 2, text: "Intro paragraph." });
+    expect(app.comment()).toBe("Keep this draft after authorization loss.");
+    fixture.destroy();
+  });
+
+  it("gives a fresh dashboard launch action when marking one document loses authorization", async () => {
+    const { app, server, open, fixture } = setup();
+    server.seed("design.md", design);
+    await open("design.md");
+    app.comment.set("Keep this single-document draft.");
+    const serve = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, options) =>
+      String(input) === "/api/reads/mark"
+        ? Response.json({ error: "Unauthorized." }, { status: 401 })
+        : serve(input, options));
+
+    await app.markRead();
+
+    expect(app.unauthorized()).toBe(true);
+    expect(app.notice()).toContain("run `worklog dashboard` again");
+    expect(app.comment()).toBe("Keep this single-document draft.");
+    fixture.destroy();
+  });
+
   it("shows nothing to compare when the baseline cannot be read, and still renders the document", async () => {
     const { app, server, open, fixture } = setup();
     server.seed("design.md", design);
@@ -306,6 +448,7 @@ describe("removed since last read", () => {
     const { app, server, open, fixture } = setup();
     const withComment = design + "\n" + marker(idA, "Third paragraph.", "Say more about the third.") + "\n";
     server.seed("design.md", withComment);
+    server.seed("tasks.md", "# Tasks\n");
     await open("design.md");
     expect(app.removedComments()).toEqual([]);
     // The agent addresses the comment: the marker is removed and the paragraph rewritten.
@@ -313,6 +456,14 @@ describe("removed since last read", () => {
     await app["poll"]();
     expect(app.removedComments().map((r) => [r.id, r.quote, r.text])).toEqual([[idA, "Third paragraph.", "Say more about the third."]]);
     expect(changedStarts(html(app))).toEqual(["6"]);
+    const cached = app["removedReviewsMemo"];
+    app["renderDocument"](app.document()!);
+    expect(app["removedReviewsMemo"]).toBe(cached);
+    server.edit("design.md", server.docs.get("design.md")!.text + "\nAn additional current paragraph.\n");
+    await app["poll"]();
+    expect(app["removedReviewsMemo"]).not.toBe(cached);
+    await open("tasks.md");
+    expect(app["removedReviewsMemo"]).toBeNull();
     fixture.destroy();
   });
 
@@ -578,6 +729,48 @@ describe("navigating between changes", () => {
     expect(app.changeCount()).toBe(marked.length);
     app.navigateChange(1);
     expect(app.changePosition()).toBe(1);
+    fixture.destroy();
+  });
+
+  it("uses a focusable document-level stop when a large comparison is incomplete, including an empty current document", async () => {
+    const { app, server, open, fixture } = setup();
+    const before = Array.from({ length: 2100 }, (_, index) => `baseline unique line ${index}`).join("\n") + "\n";
+    const after = Array.from({ length: 2100 }, (_, index) => `replacement unique line ${index}`).join("\n") + "\n";
+    server.seed("design.md", before);
+    await open("design.md");
+
+    server.edit("design.md", after);
+    await app["poll"]();
+    fixture.detectChanges();
+    app["syncStops"]();
+    expect(app.readMarks()?.incomplete).toBe(true);
+    expect((fixture.nativeElement.querySelector(".markdown") as HTMLElement).classList.contains("changed-since-read")).toBe(true);
+    expect(app.changeCount()).toBe(1);
+    expect(app.changeStatus(app.readMarks()!)).toContain("Use Next change");
+    app.navigateChange(1);
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector(".markdown"));
+
+    app.setSourceView(true);
+    fixture.detectChanges();
+    app["syncStops"]();
+    const source = fixture.nativeElement.querySelector(".source-text");
+    expect(source.classList.contains("changed-since-read")).toBe(true);
+    expect(source.getAttribute("tabindex")).toBe("-1");
+    app.navigateChange(1);
+    expect(document.activeElement).toBe(source);
+
+    server.edit("design.md", "");
+    await app["poll"]();
+    app.setSourceView(false);
+    fixture.detectChanges();
+    app["syncStops"]();
+    const empty = fixture.nativeElement.querySelector(".markdown");
+    expect(app.readMarks()).toMatchObject({ changed: [], removed: [], incomplete: true });
+    expect(empty.classList.contains("changed-since-read")).toBe(true);
+    expect(empty.textContent).toBe("");
+    expect(app.changeCount()).toBe(1);
+    app.navigateChange(1);
+    expect(document.activeElement).toBe(empty);
     fixture.destroy();
   });
 });

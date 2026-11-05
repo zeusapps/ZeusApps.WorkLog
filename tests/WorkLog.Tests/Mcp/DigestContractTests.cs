@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Collections.Concurrent;
 using Json.Schema;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -100,5 +101,57 @@ public sealed class DigestContractTests
         }, cancellationToken: timeout.Token);
         Assert.True(unknown.IsError);
         Assert.Contains("Unknown field 'extra'", Assert.IsType<TextContentBlock>(Assert.Single(unknown.Content)).Text);
+    }
+
+    [Theory]
+    [InlineData("Claude Code protocol fixture")]
+    [InlineData("Codex protocol fixture")]
+    public async Task OptionalDigestFailureKeepsSavedLoggingAndStdoutProtocolUsable(string fixtureLabel)
+    {
+        // These equivalent labels exercise the shared MCP server protocol fixture; they do not run either native agent.
+        Assert.False(string.IsNullOrWhiteSpace(fixtureLabel));
+        using var box = new TestWorkspace();
+        box.Git("init");
+        Directory.CreateDirectory(Path.Combine(box.Data, "digests.db"));
+        var settings = new LocalSettings(box.Data);
+        settings.Configuration.Updates.Enabled = false;
+        settings.Save();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        var stderr = new ConcurrentQueue<string>();
+        var transport = new StdioClientTransport(new()
+        {
+            Name = "optional-digest-" + fixtureLabel,
+            Command = "dotnet",
+            Arguments = [typeof(Program).Assembly.Location, "serve", "--repository", box.Repo, "--data-dir", box.Data],
+            StandardErrorLines = stderr.Enqueue
+        });
+        await using var client = await McpClient.CreateAsync(transport, cancellationToken: timeout.Token);
+
+        async Task<CallToolResult> Log(string at) => await client.CallToolAsync("log_work", new Dictionary<string, object?>
+        {
+            ["entry"] = new { status = "in_progress", change = "protocol-fixture", occurredAt = at, summary = "saved observation" }
+        }, cancellationToken: timeout.Token);
+        var first = await Log("2026-10-20T10:07:00Z");
+        var second = await Log("2026-10-20T10:11:00Z");
+        var third = await Log("2026-10-20T10:13:00Z");
+        Assert.NotEqual(true, first.IsError);
+        Assert.NotEqual(true, second.IsError);
+        Assert.NotEqual(true, third.IsError);
+        Assert.True(second.StructuredContent!.Value.GetProperty("created").GetBoolean());
+        Assert.False(second.StructuredContent.Value.TryGetProperty("digestRequest", out _));
+        Assert.True(third.StructuredContent!.Value.GetProperty("created").GetBoolean());
+        Assert.False(third.StructuredContent.Value.TryGetProperty("digestRequest", out _));
+        var digestDiagnostics = stderr.Where(line => line.Contains("Optional digest request skipped", StringComparison.Ordinal)).ToArray();
+        Assert.Single(digestDiagnostics);
+        Assert.Contains("storage-read", digestDiagnostics[0]);
+        Assert.DoesNotContain("saved observation", string.Join("\n", stderr));
+        var report = await client.CallToolAsync("query_work", new Dictionary<string, object?>
+        {
+            ["period"] = new { from = "2026-10-20T00:00:00Z", to = "2026-10-21T00:00:00Z", timezone = "UTC" }
+        }, cancellationToken: timeout.Token);
+        Assert.NotEqual(true, report.IsError);
+        Assert.Equal(3, report.StructuredContent!.Value.GetProperty("entries").GetArrayLength());
+        using var protocolText = JsonDocument.Parse(Assert.IsType<TextContentBlock>(Assert.Single(report.Content)).Text);
+        Assert.True(JsonElement.DeepEquals(protocolText.RootElement, report.StructuredContent.Value));
     }
 }
