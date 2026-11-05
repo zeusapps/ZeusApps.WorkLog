@@ -3,10 +3,10 @@
 ## Current orchestrator
 
 - Client / version: Codex CLI 0.165.0
-- Session identity: codex-repository-card-colors-20261104
-- Since (UTC): 2026-11-04T19:12:15Z
-- Previous owner: none
-- Status: finished; implementation verified and committed.
+- Session identity: codex-repository-card-colors-archive-20261105
+- Since (UTC): 2026-11-05
+- Previous owner: codex-repository-card-colors-20261104 (finished)
+- Status: active; user-authorized archive, commit, and merge follow-up.
 
 ## Assignments and reservations
 
@@ -35,6 +35,7 @@
 | QA-001 | [qa-001](qa-001.md), [qa-002](qa-002.md), [qa-003](qa-003.md) | 2.3, 3.1; narrow board acceptance | warning | blocking criterion satisfied | verified | orchestrator | qa-003 and normal eight-test browser sequence |
 | ANALYSIS-061 | [analysis-004](analysis-004.md), [analysis-005](analysis-005.md), [qa-004](qa-004.md) | 3.2; no-Node CI-mode movement | warning | blocking criterion satisfied | verified | orchestrator | analysis-005 and qa-004; eight tests pass in each mode |
 | QA-041 | [qa-003](qa-003.md) | 3.2; no-Node CI-mode movement | warning | tracked by canonical ANALYSIS-061 | duplicate | orchestrator | duplicate of ANALYSIS-061 |
+| ORCH-001 | archive-maintenance source inspection, [qa-005](qa-005.md), [analysis-006](analysis-006.md) | 3.4; archive-safe screenshot output | warning | blocking criterion satisfied | verified | orchestrator | matching identities; both browser modes and path/archive checks passed |
 
 ## Finding details and history
 
@@ -119,3 +120,19 @@ A subsequent Release rebuild was locked by a dashboard from an earlier disposabl
 - Evidence gaps / provider restrictions: no provider restrictions or required acceptance gaps remain. Dashboard changes are client-neutral. User's installation was outside scope and untouched; validation package was not installed. Two additional bounded rounds were explicitly authorized by the user; prior failed reports/screenshots remain as history.
 - Commit: e7ab070691e61256c86a045bf7e3d38cb5067273 on feature/add-repository-card-colors contains the implementation, change artifacts, and review evidence. All nine implementation working-file hashes remained unchanged from the reviewed target after staging and commit. This completion record follows in a separate metadata commit; no push or publication performed.
 - OpenSpec task reconciliation: 8/8 verified, including user-authorized responsive control task 2.3. Strict OpenSpec validation passes; no archive or publication requested.
+
+## Archive and merge follow-up (2026-11-05)
+
+- User authorized archival, commit, and merge into main, then explicitly selected syncing the main spec first.
+- Synced all three added requirements and nine scenarios into `openspec/specs/work-dashboard/spec.md`; exact comparison confirms prior main-spec content is preserved. Strict validation: 10 specs passed.
+- Moved the complete change to `openspec/changes/archive/2026-11-05-add-repository-card-colors`; no review markers or incomplete original tasks remained. Historical reports and screenshots are preserved.
+- Hygiene scan: initial `sk-` substring matches were ordinary task-related wording; credential-shaped matches and other prescribed text patterns were absent.
+- ORCH-001 (warning, blocking archive maintenance): `dashboard/e2e/dashboard.spec.ts:1398` writes screenshots under the former active change root, recreating it on future browser runs. Developer must use ignored test-results output; product behavior and historical evidence remain unchanged.
+- DEV-006: developer / Codex / gpt-6-luna (role default), owns only `dashboard/e2e/dashboard.spec.ts`; task 3.4 / ORCH-001; baseline `91f8fdb`; stable handoff returned. One-line path correction uses ignored `dashboard/test-results/repository-card-colors`. Sandboxed unit startup failed with temporary-file EPERM before collecting tests; root rerun outside sandbox authorized.
+- QA-REVIEW-005 assigned: `reports/qa-005.md`, optional `screenshots/qa-008-*`; QA-081 through QA-100; task 3.4 / ORCH-001 plus normal and packaged focused browser regression, archive/spec correctness and hygiene; qa / gpt-6-luna (role default).
+- ANALYSIS-REVIEW-006 assigned: `reports/analysis-006.md`; ANALYSIS-101 through ANALYSIS-120; task 3.4 / ORCH-001 plus path safety and archive/spec regression; code-analyzer / gpt-6.1-sol high (role default).
+- Review target for both roles: `head=91f8fdb baseline=91f8fdb files=1 diff=215c07d45cd2 untracked=0/e3b0c44298fc`; full tracked diff SHA-256 `215c07d45cd25a5dadf71efae43ba366debc579335ad1bec8a5143571ea051ab`. Implementation identity scope is only `dashboard/e2e/dashboard.spec.ts`; main-spec synchronization is separately compared with the archived delta. Prior product coverage carries forward because product sources are unchanged from the reviewed `e7ab070` implementation.
+- Root-coordinated verification: unit suite passed outside sandbox (19 files / 250 tests); focused color browser test passed in normal Release mode (11.5s test, 21.3s total) and existing packaged no-Node mode (5.4s test, 14.4s total), both exit 0. Six dark/light/narrow screenshots were generated under ignored test results with `qa-008-normal` and `qa-008-package` prefixes; no active change directory was recreated. The sandbox browser fixture stalled before server readiness; root coordinated successful authorized outside-sandbox runs. No installation or user processes were changed.
+- [analysis-006](analysis-006.md) and [qa-005](qa-005.md) returned with no new findings and matching before/after implementation identities. QA verified both browser modes, ignored screenshot output, absent former active root, archive preservation, main-spec sync, and committable hygiene. Analysis independently verified the path, original archive blobs, and exact spec merge.
+- ORCH-001 history: reported during archive source inspection; assigned to DEV-006; moved to awaiting-verification on stable handoff; verified using QA-REVIEW-005 and ANALYSIS-REVIEW-006. No blockers, scope deferrals, or new suggestions remain.
+- Completion: 9/9 tasks verified including archive-maintenance task 3.4; 10/10 main specs validate; no active changes remain; both isolated fixture ports were released. The approved archive and screenshot-path correction are ready to commit on the feature branch and fast-forward into main.

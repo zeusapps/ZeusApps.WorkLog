@@ -1395,7 +1395,7 @@ test.describe("Ongoing board", () => {
       await expect(cardNamed(page, "in_progress", "Board proposal")).toHaveAttribute("data-repository-color", proposedColor!);
       await expect(repoLink.locator(".repo-dot")).toHaveAttribute("data-repository-color", proposedColor!);
 
-      const evidenceDirectory = resolve("..", "openspec/changes/add-repository-card-colors/screenshots");
+      const evidenceDirectory = resolve("test-results/repository-card-colors");
       await mkdir(evidenceDirectory, { recursive: true });
       const darkContrast = await renderPaletteAndMeasure(page, "dark");
       expect(darkContrast.keys).toEqual(["teal", "blue", "sand", "green", "rose", "violet", "aqua", "amber"]);
