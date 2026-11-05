@@ -6,7 +6,7 @@
 - Session identity: codex-repository-card-colors-archive-20261105
 - Since (UTC): 2026-11-05
 - Previous owner: codex-repository-card-colors-20261104 (finished)
-- Status: active; user-authorized archive, commit, and merge follow-up.
+- Status: finished; archive and maintenance correction verified and committed; fast-forward into main authorized.
 
 ## Assignments and reservations
 
@@ -136,3 +136,4 @@ A subsequent Release rebuild was locked by a dashboard from an earlier disposabl
 - [analysis-006](analysis-006.md) and [qa-005](qa-005.md) returned with no new findings and matching before/after implementation identities. QA verified both browser modes, ignored screenshot output, absent former active root, archive preservation, main-spec sync, and committable hygiene. Analysis independently verified the path, original archive blobs, and exact spec merge.
 - ORCH-001 history: reported during archive source inspection; assigned to DEV-006; moved to awaiting-verification on stable handoff; verified using QA-REVIEW-005 and ANALYSIS-REVIEW-006. No blockers, scope deferrals, or new suggestions remain.
 - Completion: 9/9 tasks verified including archive-maintenance task 3.4; 10/10 main specs validate; no active changes remain; both isolated fixture ports were released. The approved archive and screenshot-path correction are ready to commit on the feature branch and fast-forward into main.
+- Archive commit: `0827417` on `feature/add-repository-card-colors` contains the synchronized main spec, complete archive, reviewed screenshot-path correction, and current independent reports. Implementation target remained unchanged after review. This metadata record accompanies the authorized fast-forward into main; no push or publication is authorized.
