@@ -45,4 +45,4 @@ Implementation order is **C05 -> C03 -> C02 -> C01 -> C04**, followed by integra
 
 ## 7. Completion
 
-- [ ] 7.1 Reconcile this checklist with independent evidence, strict OpenSpec validation and the final implementation identity, then record the scoped implementation commit and actual remaining work; verify no release publication, installation, archive or source-version change is implied by completing the v0.5.0 implementation candidate.
+- [x] 7.1 Reconcile this checklist with independent evidence, strict OpenSpec validation and the final implementation identity, then record the scoped implementation commit and actual remaining work; verify no release publication, installation, archive or source-version change is implied by completing the v0.5.0 implementation candidate.
