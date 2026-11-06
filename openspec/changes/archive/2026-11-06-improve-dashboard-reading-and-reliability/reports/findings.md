@@ -5,9 +5,9 @@ Orchestrator-owned ledger. Planning and implementation are separate; unchecked t
 ## Current orchestrator
 
 - Client / version: Codex / version not exposed
-- Session identity: codex-dashboard-reading-apply-20261105
-- Since (UTC): 2026-11-05T10:08:44Z
-- Previous owner: none
+- Session identity: codex-dashboard-reading-archive-20261106
+- Since (UTC): 2026-11-06T08:07:10Z
+- Previous owner: codex-dashboard-reading-apply-20261105 (implementation complete)
 
 ## Assignments and reservations
 
@@ -44,6 +44,8 @@ Orchestrator-owned ledger. Planning and implementation are separate; unchecked t
 | ANALYSIS-REVIEW-003 | code-analyzer | Codex / role default gpt-6.1-sol high | none | QA-020 plus regression/docs correctness/safety; cycle 1 source files=2 diff=b5e7fc93006e untracked=0/e3b0c44298fc; initial whole target d9f5e6948847 | reports/analysis-003.md; ignored fix-1/analysis/ | ANALYSIS-040 through ANALYSIS-059; no new suggestions in recheck | accepted; QA-020 verified; no new findings; final target 6ad03108e2ee |
 
 ## Summary
+
+Archive review reservations (2026-11-06): QA-REVIEW-004 owns `reports/qa-004.md` and QA-060 through QA-079; ANALYSIS-REVIEW-004 owns `reports/analysis-004.md` and ANALYSIS-060 through ANALYSIS-079. Both use native role defaults without overrides. Scope is the three synced main specs and archive integrity, including rebased design references; implementation bytes and prior accepted evidence are unchanged. Both reports are accepted with no findings; the reserved finding ranges remain consumed.
 
 | ID | Source report(s) | Task / requirement | Severity | Blocking decision | Status | Owner | Latest verification |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -201,3 +203,11 @@ Orchestrator-owned ledger. Planning and implementation are separate; unchecked t
 - OpenSpec: 24/24 tasks checked; strict validation passed. Implementation and required evidence are complete; only the two documented optional test-maintenance follow-ups remain deferred.
 - Implementation commit: `2182cd98f3ec3f384a3027257d753de54dc94596` on `change/improve-dashboard-reading-and-reliability`. The final reviewed dirty-tree identity was verified immediately before staging, and SHA-256 hashes of all 32 implementation files matched before/after staging. This maps the accepted review target to the committed content despite the expected tracked/untracked representation change. Completion metadata is recorded in a separate follow-up commit; no implementation bytes changed after review.
 - Hygiene: QA 003 passed the full committable change/document check; orchestrator rescanned late checklist/ledger changes with zero secret, personal-data or residue hits. No unrelated files were staged. Working-tree completion is checked after the metadata commit.
+
+## Archive completion (2026-11-06)
+
+- User authorized archive, commit and merge into local main. All artifacts and 24 tasks were complete, strict change validation passed, and no review markers remained outside fenced examples.
+- Synced six added requirements and two modified requirements across day-digests, openspec-browser and work-dashboard. Every delta requirement matches its main-spec counterpart; all previous modified-requirement scenarios remain. Strict validation passed for all ten main specs.
+- Moved the complete change to `openspec/changes/archive/2026-11-06-improve-dashboard-reading-and-reliability` and rebased the design's six historical report links for the archived location. Historical reports, screenshots and implementation remain unchanged.
+- Archive-only [QA 004](qa-004.md) and [analysis 004](analysis-004.md) passed with no findings on matching before/after identities: baseline/head 4a0f4a8, four files, tracked diff c919ab6b4138, untracked design aggregate 4f4afa0f155d. Both independently confirmed requirement preservation and archive integrity; QA passed committable content hygiene. All seven relative design links resolve, including the six adjusted historical links.
+- Implementation acceptance remains the accepted QA/analysis 003 target above; no runtime behavior changed during archive. Commit and fast-forward into main follow the accepted archive review target.

@@ -130,8 +130,8 @@ Implement on a change branch through the developer role after an apply request. 
 ## Evidence references
 
 - Current source: `dashboard/src/app.ts`, `app.html`, `styles.css`, `diff.ts`, `markdown.ts`, `reviews.ts`; `SourceCatalog.cs`, `DailyService.cs`, `DigestService.cs`, `McpServerHost.cs`; browser server/fixture and focused test files.
-- [Review-inbox initial analysis](../archive/2026-10-28-add-review-inbox/reports/analysis-001.md) and [follow-up analysis](../archive/2026-10-28-add-review-inbox/reports/analysis-002.md): comparison, read-status errors.
-- [Board follow-up analysis](../archive/2026-10-29-add-ongoing-board/reports/analysis-002.md): source chooser identity/path.
-- [Reliability analysis](../archive/2026-10-27-fix-dashboard-reliability/reports/analysis-001.md): persistent configuration warning.
-- [Digest analysis](../archive/2026-11-03-add-day-digests/reports/analysis-002.md) and [Daily fixture QA](../archive/2026-11-03-add-day-digests/reports/qa-011.md): optional failures and fixture isolation.
+- [Review-inbox initial analysis](../2026-10-28-add-review-inbox/reports/analysis-001.md) and [follow-up analysis](../2026-10-28-add-review-inbox/reports/analysis-002.md): comparison, read-status errors.
+- [Board follow-up analysis](../2026-10-29-add-ongoing-board/reports/analysis-002.md): source chooser identity/path.
+- [Reliability analysis](../2026-10-27-fix-dashboard-reliability/reports/analysis-001.md): persistent configuration warning.
+- [Digest analysis](../2026-11-03-add-day-digests/reports/analysis-002.md) and [Daily fixture QA](../2026-11-03-add-day-digests/reports/qa-011.md): optional failures and fixture isolation.
 - [Installed-version supported diff options checked against current upstream documentation](https://github.com/kpdecker/jsdiff/blob/master/README.md).
