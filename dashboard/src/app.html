@@ -172,7 +172,7 @@
         <strong>{{presentedLabel()}}</strong>
         <span class="live-status-refresh">{{lastRefreshLabel()}}</span>
         @if(presentedLiveStatus()==='paused'){
-        <button class="secondary-button" [disabled]="liveRetrying()" (click)="retryLiveUpdates()">
+        <button class="secondary-button" [disabled]="liveRetrying()" (click)="retryLiveUpdates($event)">
           {{liveRetrying()?'Retrying…':'Retry updates'}}
         </button>
         }

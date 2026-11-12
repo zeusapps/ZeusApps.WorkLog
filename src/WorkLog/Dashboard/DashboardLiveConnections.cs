@@ -31,13 +31,31 @@ internal sealed class DashboardLiveConnections : BackgroundService
 
         public int PendingCount { get { lock (gate) return latest is null ? 0 : 1; } }
 
-        /// <summary>Keeps only the newest vector; a replaced pending checkpoint tag survives on the replacement.</summary>
+        /// <summary>
+        /// Keeps one pending vector that only moves forward. Concurrent lanes can offer an older snapshot after a newer one, so for the
+        /// same instance the offer merges: component-wise maximum of the domain revisions, the union of the dirty hints in stable order,
+        /// and the larger checkpoint tag. A different instance replaces the pending vector outright.
+        /// </summary>
         public bool Offer(DashboardRevisionVector vector)
         {
             lock (gate)
             {
-                if (latest?.Checkpoint is { } pending && pending > (vector.Checkpoint ?? long.MinValue))
-                    vector = vector with { Checkpoint = pending };
+                // Same instance: merge so the pending vector never moves backwards. A different instance replaces the pending vector
+                // (spec: an update from a new server instance replaces the pending one); its revisions are not comparable with the old ones.
+                if (latest is { } pending && string.Equals(pending.Instance, vector.Instance, StringComparison.Ordinal))
+                {
+                    var checkpoint = pending.Checkpoint is { } held && held > (vector.Checkpoint ?? long.MinValue) ? held : vector.Checkpoint;
+                    vector = vector with
+                    {
+                        Catalog = Math.Max(pending.Catalog, vector.Catalog),
+                        Documents = Math.Max(pending.Documents, vector.Documents),
+                        Journal = Math.Max(pending.Journal, vector.Journal),
+                        Digests = Math.Max(pending.Digests, vector.Digests),
+                        Reads = Math.Max(pending.Reads, vector.Reads),
+                        Dirty = pending.Dirty.Union(vector.Dirty, StringComparer.Ordinal).ToArray(),
+                        Checkpoint = checkpoint
+                    };
+                }
                 latest = vector;
             }
             return Signal.Writer.TryWrite(true);

@@ -986,7 +986,8 @@ public sealed class DashboardLiveCoordinatorTests
         Assert.Null(delivered[0].Checkpoint);
         Assert.Equal(4, delivered[1].Catalog);
         Assert.Equal(4, delivered[1].Reads);
-        Assert.Empty(delivered[1].Dirty);
+        // Dirty hints from superseded pending vectors are kept (ANALYSIS-703), not dropped.
+        Assert.Equal(["Journal"], delivered[1].Dirty);
         Assert.Equal(tag, delivered[1].Checkpoint);
         await connections.StopAsync(CancellationToken.None);
     }
@@ -1019,6 +1020,95 @@ public sealed class DashboardLiveCoordinatorTests
         var later = await proxy.DeliveredCatalog(6);
         Assert.Null(later.Checkpoint);
         await connections.StopAsync(CancellationToken.None);
+    }
+
+    /// <summary>ANALYSIS-703: a late older offer for the same instance must not lower the pending vector.</summary>
+    [Fact]
+    public async Task OlderOfferAfterNewerPendingKeepsNewestRevisionsAndBothDirtyHints()
+    {
+        var (box, connections, proxy) = await ConnectionWithHeldFirstSendAsync("mono");
+        using var boxScope = box;
+        using var connectionsScope = connections;
+        connections.Publish(new DashboardRevisionVector("mono", 5, 5, 5, 5, 5, ["Journal", "Catalog"]));
+        connections.Publish(new DashboardRevisionVector("mono", 4, 6, 3, 4, 7, ["Catalog", "Documents"]));
+        proxy.ReleaseFirst();
+        var delivered = await proxy.Delivered(2);
+
+        Assert.Equal(new DashboardRevisionVector("mono", 5, 6, 5, 5, 7, ["Journal", "Catalog", "Documents"]), delivered[1], new VectorComparer());
+        await connections.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task PendingCheckpointSurvivesAMergeWithAnOlderOffer()
+    {
+        var (box, connections, proxy) = await ConnectionWithHeldFirstSendAsync("merge-tag");
+        using var boxScope = box;
+        using var connectionsScope = connections;
+        connections.Publish(new DashboardRevisionVector("merge-tag", 6, 6, 6, 6, 6, []), checkpoint: true);
+        var tag = connections.CheckpointCount;
+        connections.Publish(new DashboardRevisionVector("merge-tag", 5, 5, 5, 5, 5, ["Journal"]));
+        proxy.ReleaseFirst();
+        var delivered = await proxy.Delivered(2);
+
+        Assert.Equal(6, delivered[1].Catalog);
+        Assert.Equal(tag, delivered[1].Checkpoint);
+        Assert.Equal(["Journal"], delivered[1].Dirty);
+        await connections.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task OlderCheckpointTaggedOfferMergesIntoANewerUntaggedPendingVector()
+    {
+        var (box, connections, proxy) = await ConnectionWithHeldFirstSendAsync("tagged-older");
+        using var boxScope = box;
+        using var connectionsScope = connections;
+        connections.Publish(new DashboardRevisionVector("tagged-older", 5, 5, 5, 5, 5, ["Journal"]));
+        connections.Publish(new DashboardRevisionVector("tagged-older", 4, 4, 4, 4, 4, []), checkpoint: true);
+        proxy.ReleaseFirst();
+        var delivered = await proxy.Delivered(2);
+
+        Assert.Equal(5, delivered[1].Catalog);
+        Assert.Equal(5, delivered[1].Journal);
+        Assert.Equal(5, delivered[1].Reads);
+        Assert.Equal(["Journal"], delivered[1].Dirty);
+        Assert.Equal(connections.CheckpointCount, delivered[1].Checkpoint);
+        await connections.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task OfferFromANewInstanceReplacesThePendingVectorEvenWhenOlder()
+    {
+        var (box, connections, proxy) = await ConnectionWithHeldFirstSendAsync("old");
+        using var boxScope = box;
+        using var connectionsScope = connections;
+        connections.Publish(new DashboardRevisionVector("old", 9, 9, 9, 9, 9, ["Journal"]), checkpoint: true);
+        connections.Publish(new DashboardRevisionVector("new", 1, 2, 3, 4, 5, ["Digests"]));
+        proxy.ReleaseFirst();
+        var delivered = await proxy.Delivered(2);
+
+        Assert.Equal(new DashboardRevisionVector("new", 1, 2, 3, 4, 5, ["Digests"]), delivered[1], new VectorComparer());
+        Assert.Null(delivered[1].Checkpoint);
+        await connections.StopAsync(CancellationToken.None);
+    }
+
+    private sealed class VectorComparer : IEqualityComparer<DashboardRevisionVector>
+    {
+        public bool Equals(DashboardRevisionVector? x, DashboardRevisionVector? y) =>
+            x is not null && y is not null && x.Instance == y.Instance && x.Catalog == y.Catalog && x.Documents == y.Documents
+            && x.Journal == y.Journal && x.Digests == y.Digests && x.Reads == y.Reads && x.Dirty.SequenceEqual(y.Dirty);
+        public int GetHashCode(DashboardRevisionVector obj) => HashCode.Combine(obj.Instance, obj.Catalog, obj.Journal);
+    }
+
+    private static async Task<(TestWorkspace Box, DashboardLiveConnections Connections, RecordingClientProxy Proxy)> ConnectionWithHeldFirstSendAsync(string instance)
+    {
+        var box = new TestWorkspace();
+        var authorization = new DashboardAuthorization(box.Data);
+        var proxy = new RecordingClientProxy();
+        var connections = new DashboardLiveConnections(authorization, new RecordingHubContext(proxy), TimeProvider.System);
+        Assert.True(connections.Add(new TestHubCallerContext(authorization)));
+        connections.Publish(new DashboardRevisionVector(instance, 1, 1, 1, 1, 1, []));
+        await proxy.FirstSendStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        return (box, connections, proxy);
     }
 
     /// <summary>ANALYSIS-700: a send loop that already ended has disposed the slot's token; removal paths must tolerate that.</summary>

@@ -106,7 +106,7 @@ The corrected MCP runner passed all four current/preserved × Claude Code/Codex 
 
 ### Final-target results and limitations
 
-Scope was reduced on 2026-11-11: freshness percentiles, instrumented server-work capture and the 100-cycle matrix moved to the follow-up change `realtime-dashboard-performance-evidence`. The preserved baseline executable, harness and instrumentation approach remain available to it. Reduced REST request counts are not a claim of lower server CPU.
+Scope was reduced on 2026-11-11: freshness percentiles, instrumented server-work capture and the 100-cycle matrix were dropped by the user on 2026-11-12 (see Known limitations); `realtime-dashboard-performance-evidence` will not be created. Reduced REST request counts are not a claim of lower server CPU.
 
 Checks on the final target (Release build, locked restore): .NET suite 461 passed, 0 skipped; dashboard unit suite 329 passed in 22 files; normal browser suite 48 passed on three consecutive final-code runs; the bounded five-category fault smoke passed in five separate runs (25 cycles in total, one per category per run), each with zero incorrect final states, lost observations, discarded drafts, accumulated notices or leaked processes. In the first run the owned host stopped gracefully and the connection registry went from 3 to 0. MCP compatibility passed for current and preserved executables with Claude Code and Codex protocol fixtures (fixtures, not native sessions).
 
@@ -121,7 +121,8 @@ Known limitations:
 - ORCH-018 (`dashboard.spec.ts` "keeps links working after archiving and honors repeat no-open launches", near line 679): "document and review reads must finish before the page is reconciled Live" timed out in 3 of 4 runs in one earlier session, 0 of 10 in later pre-fix runs, and once in the first packaged run above. Residual flake, cause unconfirmed. ANALYSIS-702 (a superseded live load left the page falsely paused) is the plausible cause and fix; the packaged failure above preceded that fix, and there have been 0 ORCH-018 failures in the browser runs since (`:679` 5 of 5, final-code full e2e 48/48 x3). No packaged browser run has been repeated since the fix.
 - ORCH-019a (near line 1155): fixed by ANALYSIS-701; no longer a known limitation.
 - ORCH-019b: a rare .NET test flake that was not captured.
-- Deferred: freshness p95 against the one-second target, server-work measurement and the 100-cycle matrix (`realtime-dashboard-performance-evidence`). Baseline freshness exceeded the target (p95 3.1-5.0 s), and current after-latency is unmeasured.
+- Dropped by the user on 2026-11-12 (not deferred): the freshness p95 measurement against the one-second target, instrumented server-work capture, the 100-cycle matrix, and the minor suggestions ANALYSIS-704, QA-600, QA-601, QA-602 and QA-651. `realtime-dashboard-performance-evidence` will not be created. Baseline freshness exceeded the target (p95 3.1-5.0 s), and current after-latency is unmeasured.
+- QA-652 is resolved by ANALYSIS-782. ANALYSIS-705 (keyboard focus falling to the body during Retry updates) and ANALYSIS-703 (an older offer regressing a newer pending live vector) are fixed by `dashboard-live-polish`, awaiting independent verification.
 
 Safe reproduction: the idle command above, `node scripts/c06-fault-matrix.mjs --smoke --phase five-category-smoke --deadlineMinutes 10`, and the packaged commands above. All use disposable fixtures, owned ports and ignored output.
 

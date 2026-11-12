@@ -154,6 +154,36 @@ test.describe("C06 live transport acceptance", () => {
     await expect(page.locator("[data-testid='live-announcer']")).toContainText("Live");
   });
 
+  test("keeps keyboard focus inside the reader after Enter on Retry while updates are paused (ANALYSIS-705)", async ({ page, context }) => {
+    let refuse = true;
+    await context.route("**/api/live/negotiate*", async (route) => {
+      if (refuse) await route.fulfill({ status: 503, body: "unavailable" });
+      else await route.continue();
+    });
+    await page.goto(base + "/#connect=" + await launchToken());
+    await expect(page.getByRole("heading", { name: "Ongoing board" })).toBeVisible({ timeout: 45_000 });
+    await expect(page.locator(".live-status[data-state='paused']")).toBeVisible({ timeout: 40_000 });
+    const card = page.locator(".change-card").filter({ has: page.getByRole("button", { name: "Activity timeline", exact: true }) }).first();
+    await card.getByRole("button", { name: /^Design/ }).click();
+    await expect(page.getByRole("region", { name: "Choose document source" })).toBeVisible();
+    await page.locator(".copy-choice .work-list-item").filter({ hasNotText: /worktree/ }).first().click();
+    const reader = page.getByRole("dialog", { name: "OpenSpec document reader" });
+    await expect(reader).toBeVisible();
+    const retry = reader.getByTestId("reader-live-status").getByRole("button", { name: "Retry updates" });
+    await expect(retry).toBeVisible();
+    await retry.focus();
+    await expect(retry).toBeFocused();
+    const insideReader = () => page.evaluate(() => !!document.activeElement?.closest(".reader"));
+    await page.keyboard.press("Enter");
+    expect(await insideReader()).toBe(true);
+    // Still inside while recovery runs against the refused negotiate.
+    await page.waitForTimeout(500);
+    expect(await insideReader()).toBe(true);
+    refuse = false;
+    await expect(reader.getByTestId("reader-live-status")).toHaveAttribute("data-state", "live", { timeout: 40_000 });
+    expect(await insideReader()).toBe(true);
+  });
+
   test("protects negotiate and rejects a foreign Origin", async ({ page, browser }) => {
     const unauthenticated = await browser.newContext();
     try {

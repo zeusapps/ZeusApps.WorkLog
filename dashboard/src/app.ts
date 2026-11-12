@@ -628,7 +628,17 @@ export class App implements OnDestroy, AfterViewInit {
     });
     void this.liveConnection.start();
   }
-  async retryLiveUpdates() {
+  /**
+   * Keyboard focus on the Retry button would fall to the body once the button is disabled or removed while recovery runs.
+   * Move it to a stable element of the same surface before awaiting; focus elsewhere (a comment draft) is never touched.
+   */
+  private keepFocusOffRetry(event: Event | undefined, target: HTMLElement | null | undefined) {
+    const button = event?.currentTarget as HTMLElement | null | undefined;
+    if (!button || !target || globalThis.document?.activeElement !== button) return;
+    target.focus({ preventScroll: true });
+  }
+  async retryLiveUpdates(event?: Event) {
+    this.keepFocusOffRetry(event, globalThis.document?.querySelector<HTMLElement>("[data-testid=live-indicator]") ?? globalThis.document?.querySelector<HTMLElement>("main"));
     if (!this.liveConnection) return;
     this.forceNextSnapshot = true;
     this.liveRetrying.set(true);
@@ -640,6 +650,7 @@ export class App implements OnDestroy, AfterViewInit {
   }
   async retryLiveFromReader(event: Event) {
     const reader = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>(".reader") ?? null;
+    this.keepFocusOffRetry(event, reader);
     await this.retryLiveUpdates();
     // The Retry button leaves the DOM once updates resume; keep focus inside the modal.
     setTimeout(() => {

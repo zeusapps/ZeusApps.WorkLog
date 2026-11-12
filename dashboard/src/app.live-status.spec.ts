@@ -392,3 +392,62 @@ describe("live status presentation", () => {
     fixture.destroy();
   });
 });
+
+describe("keyboard focus during Retry updates (ANALYSIS-705)", () => {
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+  function paused(withReader: boolean) {
+    const { app, fixture } = setup();
+    document.body.appendChild(fixture.nativeElement);
+    app["liveConnection"] = { retry: () => new Promise<boolean>(() => {}), stop: async () => {}, markPaused: () => {} } as never;
+    if (withReader) app.document.set(readerDocument);
+    app.setLiveStatus("paused");
+    fixture.detectChanges();
+    return { app, fixture };
+  }
+  const retryButton = (fixture: { nativeElement: HTMLElement }, scope: string) =>
+    fixture.nativeElement.querySelector(`${scope} button`) as HTMLButtonElement;
+
+  it("keeps focus in the reader when the reader Retry is activated while focused", () => {
+    const { app, fixture } = paused(true);
+    const button = retryButton(fixture, "[data-testid=reader-live-status]");
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    button.click();
+    // Synchronous: before any recovery is awaited, and before the button is disabled or removed.
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector(".reader"));
+    fixture.detectChanges();
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector(".reader"));
+    expect(app.liveRetrying()).toBe(true);
+    fixture.destroy();
+  });
+
+  it("moves focus to a focusable page element when the page Retry is activated while focused", () => {
+    const { app, fixture } = paused(false);
+    const button = retryButton(fixture, ".live-status");
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    button.click();
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector("[data-testid=live-indicator]"));
+    fixture.detectChanges();
+    expect(button.disabled).toBe(true);
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector("[data-testid=live-indicator]"));
+    expect(app.liveRetrying()).toBe(true);
+    fixture.destroy();
+  });
+
+  for (const withReader of [true, false]) {
+    it(`leaves focus in a draft when Retry is triggered by pointer (${withReader ? "reader" : "page"})`, () => {
+      const { fixture } = paused(withReader);
+      const draft = document.createElement("textarea");
+      fixture.nativeElement.appendChild(draft);
+      draft.focus();
+      retryButton(fixture, withReader ? "[data-testid=reader-live-status]" : ".live-status").click();
+      expect(document.activeElement).toBe(draft);
+      fixture.detectChanges();
+      expect(document.activeElement).toBe(draft);
+      fixture.destroy();
+    });
+  }
+});
