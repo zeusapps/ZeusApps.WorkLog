@@ -53,4 +53,4 @@ Implementation order is baseline/harness -> detection/revisions -> authenticated
 ## 8. Independent review and completion
 
 - [x] 8.1 Obtain current independent QA and code-analyzer reports on the frozen implementation/evidence target with matching before/after identities; verify every delta scenario and applicable privacy/parity/idle-work check has evidence, all findings are triaged, and no required acceptance or unapproved deferral remains unresolved.
-- [ ] 8.2 Reconcile task state and findings with actual evidence, run strict OpenSpec validation, and record the scoped implementation commit and remaining optional follow-ups; verify a missed recovery target is escalated rather than weakened, and completion does not imply version changes, installation, publication, push, merge or archive.
+- [x] 8.2 Reconcile task state and findings with actual evidence, run strict OpenSpec validation, and record the scoped implementation commit and remaining optional follow-ups; verify a missed recovery target is escalated rather than weakened, and completion does not imply version changes, installation, publication, push, merge or archive.

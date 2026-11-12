@@ -14,10 +14,10 @@ Orchestrator-owned ledger. Task state follows required behavior and evidence; pl
 
 **Read only this section, then act.** Earlier sections are history. Today's full detail is in "Session log: 2026-11-11" directly below.
 
-- **Orchestrator:** Claude Code (Codex finished). Branch `change/realtime-dashboard-updates`, HEAD `0d77685`; everything is uncommitted. No push, merge, archive, install or version change is authorized.
+- **Orchestrator:** Claude Code (Codex finished). Branch `change/realtime-dashboard-updates`, feature committed locally at `e5d3ec7` (workflow `63c89a5`), on top of `0d77685`. No push, merge, archive, install or version change is authorized.
 - **Scope (user decision 2026-11-11):** 7.1 is the idle check only; 7.2 is one clean five-category smoke. Freshness p95, server-work capture and the 100-cycle matrix are deferred to follow-up `realtime-dashboard-performance-evidence`, which is not yet created (`/opsx:new`).
 - **Workflow (user decision 2026-11-11):** `.agents/workflows/openspec-delegation.md` and `AGENTS.md` now set tiered reviews (milestone: both roles; fix: one reviewer; harness/docs: light QA), a per-finding round limit, logs-first triage, bounded long runs, this compact ledger, and checkpoint commits.
-- **Tasks:** 28 of 29 checked. Only **8.2** remains: commit plus final reconciliation. `openspec validate realtime-dashboard-updates --strict` passes.
+- **Tasks:** 29 of 29 checked (8.2 closed 2026-11-12). `openspec validate realtime-dashboard-updates --strict` passes.
 - **Reviews:** milestone `qa-027` (pass) and `analysis-032`; fix rechecks `analysis-033` and `analysis-034` (all verified, no open findings). Saved as reviewer-refused-write fallbacks: 031, 032, 033 and 034.
 - **Last verified runs (final code):** .NET 461/461; dashboard 329/329; full e2e 48/48 x3; five-category smoke passes; packaged no-Node e2e and bootstrap smoke pass (dev040); idle 2x5 min with 0 REST requests (dev041).
 - **Hygiene:** a scan of all 112 committable files is clean. `artifacts/` is gitignored.
@@ -30,7 +30,7 @@ Orchestrator-owned ledger. Task state follows required behavior and evidence; pl
    - (a) Workflow: `AGENTS.md`, `.agents/workflows/openspec-delegation.md`, `docs/agent-workflow.md`.
    - (b) Feature: `src/WorkLog/Dashboard`, `tests/WorkLog.Tests/Dashboard`, `dashboard/` (src, e2e, package.json, lock), `scripts/c06-*`, `tools/WorkLog.Smoke`, `docs/architecture.md`, `docs/dashboard-validation.md`, `docs/mcp-validation.md`, plus the whole change folder.
    - Keep `HANDOFF.md` in the commit as history; it is superseded by this section.
-4. After the commit: check 8.2, record the SHAs here, and log WorkLog `done` only if the user agrees the feature is complete.
+4. **Done 2026-11-12 (user approved):** local commits `63c89a5` (workflow) and `e5d3ec7` (feature) on `change/realtime-dashboard-updates`; 8.2 checked (29/29). Not pushed, merged, archived or installed. WorkLog `done` awaits the user's completion decision.
 
 ### Known limitations (documented, not blocking)
 
