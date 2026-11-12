@@ -13,6 +13,10 @@ Orchestrator-owned ledger.
   - Daily page shows Today and Yesterday side by side, with Today first.
 - **Evidence:** the user's stored digest for 2026-11-09 covered all 7 entries, yet restated only the latest one. The input is complete; the prompt and summaries cause the recency bias.
 
+### Completion and archive (2026-11-12, user request)
+
+- The user marked the change done. 5.2 is checked (8/8). Implementation commit `94303b4`. No REVIEW markers remained. Specs were synced and verified: day-digests (4 modified), daily-preparation (3 modified, 1 added), local-agent-integration (2 modified). Strict spec validation passes. Archived, fast-forward merged into `main`, and shipped as part of v0.5.0.
+
 ### Results (2026-11-12)
 
 - Tasks 1.1–5.1 are checked (7/8). 5.2 awaits the user-approved commit.
