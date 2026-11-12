@@ -54,7 +54,7 @@ Two clients can work on different changes at the same time. Do not have two orch
 ## Targets, commits, and archive
 
 - Identify a dirty working tree with the Review identity command in [project-facts.md](../.agents/roles/project-facts.md). It only reads Git state and prints a manifest and hashes.
-- Specialists never commit. The orchestrator commits verified work on a change branch after both reviews. Pushing, tagging, and publishing need your separate approval.
+- Specialists never commit. The orchestrator makes local checkpoint commits on a change branch after each milestone review passes, and a final commit at completion. Pushing, tagging, and publishing need your separate approval.
 - Before archiving, the orchestrator lists any `<!-- REVIEW` markers left in the change and asks whether to resolve them or archive anyway.
 - Reviewers' write limits and the no-nesting rule are behavioral instructions in the role files. Whether a client enforces them natively is documented only after a recorded probe.
 
