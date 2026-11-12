@@ -30,7 +30,23 @@ The dashboard SHALL detect committed observation and digest changes from indepen
 - **THEN** read indicators refresh in the first browser without overwriting its unsaved comment, document selection, or local preferences
 
 ### Requirement: Live connection health and recovery
-The dashboard SHALL expose accessible connection states labeled Live, Reconnecting, or Updates paused, and identify the last successful refresh when available. Live SHALL mean that a delivery connection is established and the affected visible resources have successfully reconciled, not merely that a connection opened. Initial connection failure and exhaustion of reconnect attempts SHALL expose a useful Retry action with bounded automatic attempts and no accumulated duplicate notices. Retry SHALL be single-flight. Refresh failures SHALL retain the last readable data, preserve pending changes, and expose recovery without falsely reporting Live. A confirmed authorization failure SHALL stop automatic connection and protected refresh attempts and explain how to authorize the browser again; it SHALL NOT discard drafts. After reconnect or server restart, the browser SHALL establish the current authoritative state before returning to Live.
+The dashboard SHALL expose accessible connection states labeled Live, Reconnecting, or Updates paused, and identify the last successful refresh when available. Live SHALL mean that a delivery connection is established and the affected visible resources have successfully reconciled, not merely that a connection opened. Initial connection failure and exhaustion of reconnect attempts SHALL expose a useful Retry action with bounded automatic attempts and no accumulated duplicate notices. Retry SHALL be single-flight. Refresh failures SHALL retain the last readable data, preserve pending changes, and expose recovery without falsely reporting Live. A confirmed authorization failure SHALL stop automatic connection and protected refresh attempts and explain how to authorize the browser again; it SHALL NOT discard drafts. After reconnect or server restart, the browser SHALL establish the current authoritative state before returning to Live. While Live, the state SHALL be presented by a compact header indicator whose accessible name and tooltip give the state and last successful refresh, without a page-level status bar. A page-level status surface SHALL appear for Updates paused, always with Retry, and for Reconnecting only when it persists beyond a short grace period of about two seconds; routine reconciliation within that period SHALL NOT present Reconnecting. The initial connection attempt and deferring work while the tab is hidden are not failures: they SHALL be presented only by the header indicator in a neutral connecting state, never as Updates paused or a page-level bar, until a connection attempt or refresh actually fails.
+
+#### Scenario: Launch in a background tab or a slow cold start
+- **WHEN** the dashboard opens in a hidden tab, or its first live connection takes longer than the grace period
+- **THEN** no page-level bar or Updates paused is shown, the header indicator shows a neutral connecting state, and the visible view reconciles to Live once the tab is visible and the connection is established
+
+#### Scenario: Live is unobtrusive
+- **WHEN** the dashboard is Live
+- **THEN** no page-level status bar is shown, and the header indicator exposes Live and the last refresh time to pointer, keyboard and screen-reader users
+
+#### Scenario: Brief reconciliation does not flash
+- **WHEN** a reconnect or reconciliation completes within the grace period
+- **THEN** no Reconnecting bar is shown and the header indicator returns to Live
+
+#### Scenario: First launch before the first live revision
+- **WHEN** the dashboard opens before the first live revision arrives
+- **THEN** the visible view (Ongoing, History, Archive or Daily) loads its data without navigation, and Live is shown only after that data has reconciled
 
 #### Scenario: Initial live connection fails
 - **WHEN** initial data is readable but the update connection cannot start

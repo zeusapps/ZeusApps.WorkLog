@@ -1,8 +1,10 @@
 import {
   Component,
   computed,
+  effect,
   inject,
   signal,
+  untracked,
   OnDestroy,
   AfterViewInit,
   HostListener,
@@ -103,6 +105,8 @@ import {
 export type ViewName = "ongoing" | "history" | "archive" | "daily";
 
 /** Most recently used reading positions and remembered document selections kept in preferences. */
+/** A Reconnecting state shorter than this is a routine reconciliation and does not raise the page-level status bar. */
+export const reconnectingGraceMs = 2_000;
 export const positionLimit = 100;
 export const documentLimit = 200;
 /** 60 KiB, not the server's 64 KiB: the server counts `&`, `+`, `<`, `>`, `'` and non-ASCII characters as 6-byte \uXXXX escapes. */
@@ -145,8 +149,28 @@ export class App implements OnDestroy, AfterViewInit {
   selectedRepos = signal<string[] | null>(null);
   view = signal<ViewName>("ongoing");
   ready = signal(false);
-  liveStatus = signal<LiveConnectionStatus>("reconnecting");
+  /** The last status that was not Reconnecting; written synchronously with every status change so no steady state is missed. */
+  private readonly steadyStatus = signal<LiveConnectionStatus>("connecting");
+  private readonly liveStatusState = signal<LiveConnectionStatus>("connecting");
+  readonly liveStatus = this.liveStatusState.asReadonly();
+  /** The only writer of the status: it records the last steady (not Reconnecting) state synchronously. */
+  setLiveStatus(value: LiveConnectionStatus) {
+    if (value !== "reconnecting") this.steadyStatus.set(value);
+    this.liveStatusState.set(value);
+  }
+  /** Set when revision work was postponed because the tab is hidden; that is not a failure. */
+  private deferredWhileHidden = false;
   liveRetrying = signal(false);
+  /** True once a Reconnecting state has lasted longer than the grace period; routine reconciliations never reach it. */
+  private reconnectingLong = signal(false);
+  /** The text of the polite status region: only real state changes are announced, never a routine reconciliation. */
+  liveAnnouncement = signal("");
+  private liveAnnounced = false;
+  /** The page-level bar is for Updates paused and for Reconnecting that outlasts the grace period; Live uses the header indicator only. */
+  readonly liveBarVisible = computed(() => {
+    const status = this.presentedLiveStatus();
+    return status === "paused" || status === "reconnecting";
+  });
   lastSuccessfulRefresh = signal<string | null>(null);
   unauthorized = signal(false);
   startupRetrying = signal(false);
@@ -420,6 +444,24 @@ export class App implements OnDestroy, AfterViewInit {
       if (event instanceof NavigationEnd && this.ready())
         void this.routeChanged();
     });
+    effect((onCleanup) => {
+      const status = this.liveStatus();
+      untracked(() => {
+        this.reconnectingLong.set(false);
+        if (status === "paused") this.announceLive("Updates paused");
+        else if (status === "live") this.announceLive(this.liveAnnounced ? "Live" : "");
+      });
+      if (status !== "reconnecting") return;
+      const timer = setTimeout(() => {
+        this.reconnectingLong.set(true);
+        this.announceLive("Reconnecting");
+      }, reconnectingGraceMs);
+      onCleanup(() => clearTimeout(timer));
+    });
+  }
+  private announceLive(text: string) {
+    this.liveAnnounced = text !== "" && text !== "Live";
+    this.liveAnnouncement.set(text);
   }
   ngAfterViewInit() {
     this.autoStartLive = true;
@@ -565,12 +607,13 @@ export class App implements OnDestroy, AfterViewInit {
         .configureLogging(LogLevel.None)
         .build(),
       onRevision: (snapshot) => this.receiveRevision(snapshot),
-      onSnapshot: (snapshot) => {
+      onSnapshot: async (snapshot) => {
         const force = this.forceNextSnapshot;
         this.forceNextSnapshot = false;
-        return this.applyRevisionSnapshot(snapshot, force);
+        const success = await this.applyRevisionSnapshot(snapshot, force);
+        return !success && this.deferredWhileHidden ? "deferred" : success;
       },
-      onStatus: (status) => this.liveStatus.set(status),
+      onStatus: (status) => this.setLiveStatus(status),
       onUnauthorized: () => {
         this.invalidateAuthorizationWork();
         this.notice.set(this.authorizationLostMessage);
@@ -604,8 +647,21 @@ export class App implements OnDestroy, AfterViewInit {
       if (reader?.isConnected && (!active || active === globalThis.document.body)) reader.focus({ preventScroll: true });
     });
   }
-  liveStatusLabel() {
-    return this.liveStatus() === "live" ? "Live" : this.liveStatus() === "reconnecting" ? "Reconnecting" : "Updates paused";
+  /** The status the page presents: a Reconnecting shorter than the grace period keeps showing the previous state. */
+  readonly presentedLiveStatus = computed<LiveConnectionStatus>(() => {
+    const status = this.liveStatus();
+    if (status !== "reconnecting") return status;
+    return this.reconnectingLong() ? status : this.steadyStatus();
+  });
+  presentedLabel() {
+    return this.labelFor(this.presentedLiveStatus());
+  }
+  private labelFor(status: LiveConnectionStatus) {
+    return status === "live" ? "Live" : status === "connecting" ? "Connecting…" : status === "reconnecting" ? "Reconnecting" : "Updates paused";
+  }
+  /** The header indicator's tooltip and accessible name. */
+  liveIndicatorLabel() {
+    return this.presentedLabel() + " · " + this.lastRefreshLabel();
   }
   lastRefreshLabel() {
     const value = this.lastSuccessfulRefresh();
@@ -622,10 +678,14 @@ export class App implements OnDestroy, AfterViewInit {
   }
   private receiveRevision(snapshot: RevisionSnapshot): Promise<void> {
     if (this.destroyed || this.unauthorized()) return Promise.resolve();
-    if (this.liveConnection) this.liveConnection.markReconciling();
-    else this.liveStatus.set("reconnecting");
+    // A hidden tab only postpones the work: the status stays as it is until the tab is visible again.
+    if (!document.hidden) {
+      if (this.liveConnection) this.liveConnection.markReconciling();
+      else this.setLiveStatus("reconnecting");
+    }
     return this.queueRevisionWork(snapshot, false).then((success) => {
       if (success) this.liveConnection?.markReconciled();
+      else if (this.deferredWhileHidden) this.liveConnection?.markDeferred();
       else this.liveConnection?.markPaused();
     });
   }
@@ -681,6 +741,8 @@ export class App implements OnDestroy, AfterViewInit {
   }
   private async applyRevisionSnapshotNow(snapshot: RevisionSnapshot, forcePending: boolean): Promise<boolean> {
     if (this.destroyed || this.unauthorized()) return false;
+    const wasDeferred = this.deferredWhileHidden;
+    this.deferredWhileHidden = false;
     let change;
     try {
       change = this.revisionTracker.accept(snapshot);
@@ -690,14 +752,19 @@ export class App implements OnDestroy, AfterViewInit {
     }
     const pending = this.revisionTracker.pending();
     if (!change.changed && pending.length === 0) return true;
-    if (!change.changed && !forcePending) return false;
-    if (document.hidden) return false;
+    if (document.hidden) {
+      // Pending work waits for the tab to become visible again; that is not a failure.
+      this.deferredWhileHidden = true;
+      return false;
+    }
+    // The first visible apply after a deferral is forced, whichever of focus and visibility arrives first.
+    if (!change.changed && !forcePending && !wasDeferred) return false;
     const domains = change.changed ? pending : pending;
     const target = this.revisionTracker.desired();
     if (!target) return false;
     this.journalSnapshot = target.journal;
     this.digestRevision = target.digests;
-    const success = await this.reconcileDomains(target, domains, forcePending);
+    const success = await this.reconcileDomains(target, domains, forcePending || wasDeferred);
     if (this.destroyed) return false;
     if (!success) return false;
     this.revisionTracker.markApplied(target.instance, target, domains);
@@ -788,9 +855,14 @@ export class App implements OnDestroy, AfterViewInit {
     return results.every(Boolean);
   }
   private async activateLiveScope() {
-    if (this.destroyed) return;
+    if (this.destroyed || document.hidden) return;
     const target = this.revisionTracker.desired();
-    if (!target || !this.liveConnection || document.hidden) return;
+    if (!target || !this.liveConnection) {
+      // ORCH-023: before the first live revision the visible view must not wait for one. The opening route is loaded by
+      // start(); once the live connection exists, any activation loads its own data. Live still waits for a reconciled revision.
+      if (this.dataLoaded && this.liveConnection) await Promise.all([this.loadVisibleJournal(), this.refreshDaily()]);
+      return;
+    }
     const journal = this.refreshQueue.enqueue(
       "journal-view",
       revisionToken(target, ["journal"]) + ":" + this.journalScope(),

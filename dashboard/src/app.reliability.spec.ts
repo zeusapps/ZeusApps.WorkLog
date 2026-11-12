@@ -530,9 +530,9 @@ describe("revision-driven updates", () => {
     const stubLive = (app: App) => {
       app["liveConnection"] = {
         stop: async () => {},
-        markReconciling: () => app.liveStatus.set("reconnecting"),
-        markReconciled: () => app.liveStatus.set("live"),
-        markPaused: () => app.liveStatus.set("paused"),
+        markReconciling: () => app.setLiveStatus("reconnecting"),
+        markReconciled: () => app.setLiveStatus("live"),
+        markPaused: () => app.setLiveStatus("paused"),
         authorizationLost: () => {},
       } as any;
     };
@@ -699,9 +699,9 @@ describe("revision-driven updates", () => {
     app["evaluate"]();
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
     const initial = {
       instance: "startup-instance",
@@ -736,9 +736,9 @@ describe("revision-driven updates", () => {
     vi.spyOn(app, "loadActivity").mockResolvedValue(true);
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
     let finishDaily!: (response: Response) => void;
     const originalFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
@@ -798,9 +798,9 @@ describe("revision-driven updates", () => {
     vi.spyOn(app, "loadActivity").mockResolvedValue(true);
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
     const originalFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
     vi.mocked(globalThis.fetch).mockImplementation((input, options) => {
@@ -838,9 +838,9 @@ describe("revision-driven updates", () => {
     vi.spyOn(app, "loadActivity").mockResolvedValue(true);
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
     const responses: Array<(response: Response) => void> = [];
     const originalFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
@@ -894,9 +894,9 @@ describe("revision-driven updates", () => {
       vi.spyOn(app, "loadActivity").mockResolvedValue(true);
       app["liveConnection"] = {
         stop: async () => {},
-        markReconciling: () => app.liveStatus.set("reconnecting"),
-        markReconciled: () => app.liveStatus.set("live"),
-        markPaused: () => app.liveStatus.set("paused"),
+        markReconciling: () => app.setLiveStatus("reconnecting"),
+        markReconciled: () => app.setLiveStatus("live"),
+        markPaused: () => app.setLiveStatus("paused"),
       } as any;
       const responses: Array<(response: Response) => void> = [];
       const originalFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
@@ -962,9 +962,9 @@ describe("revision-driven updates", () => {
     vi.spyOn(app, "loadActivity").mockResolvedValue(true);
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
       authorizationLost: vi.fn(),
     } as any;
     let failOld!: (response: Response) => void;
@@ -1014,9 +1014,9 @@ describe("revision-driven updates", () => {
     vi.spyOn(app, "loadActivity").mockResolvedValue(true);
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
     const initial = primeLiveRevision(app);
     await app["receiveRevision"]({ ...initial, journal: 2, digests: 2 });
@@ -1076,9 +1076,9 @@ describe("revision-driven updates", () => {
 
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
     const refresh = sendRevision(app, { documents: 2, reads: 2, dirty: ["documents", "reads"] });
     await vi.waitFor(() => expect(server.count("/api/reads/get")).toBe(1));
@@ -1117,9 +1117,9 @@ describe("revision-driven updates", () => {
     });
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
 
     const refresh = sendRevision(app, { documents: 2, reads: 2, dirty: ["documents", "reads"] });
@@ -1152,9 +1152,9 @@ describe("revision-driven updates", () => {
     });
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
 
     const refresh = sendRevision(app, { reads: 2, dirty: ["reads"] });
@@ -1191,9 +1191,9 @@ describe("revision-driven updates", () => {
     });
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
 
     const refresh = sendRevision(app, { reads: 2, dirty: ["reads"] });
@@ -1229,9 +1229,9 @@ describe("revision-driven updates", () => {
     });
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
 
     const documentsCheckpoint = { catalog: 1, documents: 2, dirty: ["documents"] };
@@ -1408,9 +1408,9 @@ describe("revision-driven updates", () => {
     app["liveConnection"] = {
       stop: async () => {},
       authorizationLost: () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
 
     await sendRevision(app, { reads: 2, dirty: ["reads"] });
@@ -1499,12 +1499,14 @@ describe("revision-driven updates", () => {
   it("shows an accessible paused status and preserves the last successful refresh", () => {
     const { app, fixture } = setup();
     app.ready.set(true);
-    app.liveStatus.set("paused");
+    app.setLiveStatus("paused");
     app.lastSuccessfulRefresh.set("2026-10-27T10:00:00.000Z");
     fixture.detectChanges();
     const status = fixture.nativeElement.querySelector(".live-status") as HTMLElement;
-    expect(status.getAttribute("role")).toBe("status");
-    expect(status.getAttribute("aria-live")).toBe("polite");
+    const announcer = fixture.nativeElement.querySelector("[data-testid=live-announcer]") as HTMLElement;
+    expect(announcer.getAttribute("role")).toBe("status");
+    expect(announcer.getAttribute("aria-live")).toBe("polite");
+    expect(announcer.textContent).toContain("Updates paused");
     expect(status.dataset["state"]).toBe("paused");
     expect(status.textContent).toContain("Updates paused");
     expect(status.textContent).toContain("Last successful refresh");
@@ -1525,9 +1527,14 @@ describe("revision-driven updates", () => {
     for (const [state, label] of [["live", "Live"], ["reconnecting", "Reconnecting"], ["paused", "Updates paused"]] as const) {
       it(`shows ${state} truthfully, with one live region and a state-bound dot`, async () => {
         const { app, fixture } = await openReader();
-        app.liveStatus.set(state);
+        app.setLiveStatus(state);
         app.lastSuccessfulRefresh.set("2026-10-27T10:00:00.000Z");
         fixture.detectChanges();
+        // Reconnecting is presented only after the grace period; paused and Live are immediate.
+        if (state === "reconnecting") {
+          app["reconnectingLong"].set(true);
+          fixture.detectChanges();
+        }
         const el = reader(fixture);
         expect(el.dataset["state"]).toBe(state);
         expect(el.textContent).toContain(label);
@@ -1535,8 +1542,9 @@ describe("revision-driven updates", () => {
         expect(!!el.querySelector("button")).toBe(state === "paused");
         const dot = fixture.nativeElement.querySelector(".reader-meta .live-dot") as HTMLElement;
         expect(dot.dataset["state"]).toBe(state);
-        const header = fixture.nativeElement.querySelector(".live-status") as HTMLElement;
-        expect(header.getAttribute("role")).toBeNull();
+        const announcer = fixture.nativeElement.querySelector("[data-testid=live-announcer]") as HTMLElement;
+        expect(announcer.getAttribute("role")).toBeNull();
+        expect(fixture.nativeElement.querySelector(".live-indicator").dataset["state"]).toBe(state);
         expect(fixture.nativeElement.querySelectorAll("[role=status][data-state]").length).toBe(1);
         fixture.destroy();
       });
@@ -1547,7 +1555,7 @@ describe("revision-driven updates", () => {
       const retry = vi.fn(async () => {});
       const stop = vi.fn();
       app["liveConnection"] = { retry, stop } as never;
-      app.liveStatus.set("paused");
+      app.setLiveStatus("paused");
       fixture.detectChanges();
       const before = app.document();
       const button = reader(fixture).querySelector("button") as HTMLButtonElement;
@@ -1569,7 +1577,7 @@ describe("revision-driven updates", () => {
       app.closeDocument();
       fixture.detectChanges();
       expect(fixture.nativeElement.querySelector(".reader-live")).toBeNull();
-      expect((fixture.nativeElement.querySelector(".live-status") as HTMLElement).getAttribute("role")).toBe("status");
+      expect((fixture.nativeElement.querySelector("[data-testid=live-announcer]") as HTMLElement).getAttribute("role")).toBe("status");
       fixture.destroy();
     });
   });
@@ -1679,9 +1687,9 @@ describe("revision-driven updates", () => {
     app["evaluate"]();
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
     } as any;
     primeLiveRevision(app);
     const dailyLine = (id: string, summary: string) => ({
@@ -1802,10 +1810,10 @@ describe("revision-driven updates", () => {
           && app.quiet(app.fullBoard().in_progress.find((card) => card.kind === "change")!)
           && !app.fullBoard().in_progress.some((card) => card.kind === "adhoc"),
         );
-        app.liveStatus.set("live");
+        app.setLiveStatus("live");
       }),
-      markPaused: vi.fn(() => app.liveStatus.set("paused")),
-      markReconciling: vi.fn(() => app.liveStatus.set("reconnecting")),
+      markPaused: vi.fn(() => app.setLiveStatus("paused")),
+      markReconciling: vi.fn(() => app.setLiveStatus("reconnecting")),
       stop: async () => {},
     };
     app["liveConnection"] = live as any;

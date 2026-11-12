@@ -78,7 +78,16 @@
           <span aria-hidden="true">{{theme()==='dark'?'☀':'☾'}}</span>
           {{theme()==='dark'?'Light':'Dark'}}
         </button>
-        <span class="live-dot"></span><span>Local journal</span
+        <span
+          class="live-indicator"
+          data-testid="live-indicator"
+          role="img"
+          tabindex="0"
+          [attr.data-state]="presentedLiveStatus()"
+          [attr.aria-label]="'Local journal: ' + liveIndicatorLabel()"
+          [attr.title]="liveIndicatorLabel()"
+          [attr.data-tip]="liveIndicatorLabel()"
+          ><i class="live-dot" aria-hidden="true"></i><span class="live-indicator-text">Local journal</span></span
         ><button
           class="icon-button"
           aria-label="Refresh dashboard"
@@ -156,16 +165,19 @@
         }
       </section>
       } @else {
-      <div class="live-status" [attr.data-state]="liveStatus()" [attr.role]="document()?null:'status'" [attr.aria-live]="document()?null:'polite'">
+      <div class="visually-hidden" data-testid="live-announcer" [attr.role]="document()?null:'status'" [attr.aria-live]="document()?null:'polite'">{{liveAnnouncement()}}</div>
+      @if(liveBarVisible()){
+      <div class="live-status" [attr.data-state]="presentedLiveStatus()">
         <span class="live-status-indicator" aria-hidden="true"></span>
-        <strong>{{liveStatusLabel()}}</strong>
+        <strong>{{presentedLabel()}}</strong>
         <span class="live-status-refresh">{{lastRefreshLabel()}}</span>
-        @if(liveStatus()==='paused'){
+        @if(presentedLiveStatus()==='paused'){
         <button class="secondary-button" [disabled]="liveRetrying()" (click)="retryLiveUpdates()">
           {{liveRetrying()?'Retrying…':'Retry updates'}}
         </button>
         }
       </div>
+      }
       @if(error()){
       <div class="message error" role="alert">
         {{error()}}<button aria-label="Dismiss error" (click)="error.set('')">
@@ -1027,11 +1039,11 @@
     </div>
   </header>
   <div class="reader-meta">
-    <span><i class="live-dot" aria-hidden="true" [attr.data-state]="liveStatus()"></i>Current local file · {{doc.path}}</span
-    ><div class="reader-live" [attr.data-state]="liveStatus()" role="status" aria-live="polite" data-testid="reader-live-status">
-      <strong>{{liveStatusLabel()}}</strong>
+    <span><i class="live-dot" aria-hidden="true" [attr.data-state]="presentedLiveStatus()"></i>Current local file · {{doc.path}}</span
+    ><div class="reader-live" [attr.data-state]="presentedLiveStatus()" role="status" aria-live="polite" data-testid="reader-live-status">
+      <strong>{{presentedLabel()}}</strong>
       <span class="reader-live-refresh">{{lastRefreshLabel()}}</span>
-      @if(liveStatus()==='paused'){
+      @if(presentedLiveStatus()==='paused'){
       <button type="button" class="secondary-button" [disabled]="liveRetrying()" (mousedown)="$event.preventDefault()" (click)="retryLiveFromReader($event)">
         {{liveRetrying()?'Retrying…':'Retry updates'}}
       </button>

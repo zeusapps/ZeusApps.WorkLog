@@ -2,7 +2,8 @@ import { HttpError } from "@microsoft/signalr";
 import { ApiError, api } from "./api";
 import { RevisionSnapshot } from "./live-updates";
 
-export type LiveConnectionStatus = "live" | "reconnecting" | "paused";
+/** "connecting" is the neutral state before the first Live; "reconnecting" only follows an established connection that was lost. */
+export type LiveConnectionStatus = "connecting" | "live" | "reconnecting" | "paused";
 
 export interface HubConnectionLike {
   on(method: string, handler: (value: RevisionSnapshot) => void): void;
@@ -15,7 +16,8 @@ export interface HubConnectionLike {
 export interface LiveConnectionOptions {
   create: () => HubConnectionLike;
   onRevision: (snapshot: RevisionSnapshot) => void | Promise<void>;
-  onSnapshot: (snapshot: RevisionSnapshot) => Promise<boolean>;
+  /** "deferred" means the work waits for the tab to become visible: neither a success nor a failure. */
+  onSnapshot: (snapshot: RevisionSnapshot) => Promise<boolean | "deferred">;
   onStatus: (status: LiveConnectionStatus) => void;
   onUnauthorized: () => void;
   onAuthorized?: () => void;
@@ -39,7 +41,8 @@ export class LiveConnectionController {
   private outageAttempts = 0;
   private recoveryPending = false;
   private recoveryError?: Error;
-  private status: LiveConnectionStatus = "reconnecting";
+  private status: LiveConnectionStatus = "connecting";
+  private established = false;
   private readonly attemptTimeoutMs: number;
   private readonly random: () => number;
   private readonly delay: (milliseconds: number) => Promise<void>;
@@ -103,7 +106,12 @@ export class LiveConnectionController {
   }
 
   markReconciling() {
-    if (this.connected && !this.unauthorized && !this.disposed) this.setStatus("reconnecting");
+    if (this.connected && !this.unauthorized && !this.disposed) this.setStatus(this.interruptedStatus());
+  }
+
+  /** Connected, but reconciliation waits for a visible tab: the neutral state, never Live and never an outage. */
+  markDeferred() {
+    if (this.connected && !this.unauthorized && !this.disposed) this.setStatus("connecting");
   }
 
   markPaused() {
@@ -119,7 +127,7 @@ export class LiveConnectionController {
 
   private async connectWithRetries(): Promise<boolean> {
     if (this.disposed || this.unauthorized) return false;
-    this.setStatus("reconnecting");
+    this.setStatus(this.interruptedStatus());
     const connection = this.ensureConnection();
     while (this.outageAttempts < 5 && !this.disposed) {
       const attempt = this.outageAttempts + 1;
@@ -169,7 +177,7 @@ export class LiveConnectionController {
       this.lifecycleEpoch++;
       this.connected = false;
       if (!this.disposed && !this.intentionallyStopping) {
-        this.setStatus("reconnecting");
+        this.setStatus(this.interruptedStatus());
         this.recoveryPending = true;
         this.recoveryError = error;
         this.drainRecovery();
@@ -198,6 +206,13 @@ export class LiveConnectionController {
       if (!this.isCurrent(connection, epoch)) return false;
       const success = await this.options.onSnapshot(snapshot);
       if (!this.isCurrent(connection, epoch)) return false;
+      if (success === "deferred") {
+        // The connection works; only the data waits for a visible tab. That is neutral, and ends the outage's counters.
+        this.authorizationProbeUsed = false;
+        this.outageAttempts = 0;
+        this.markDeferred();
+        return true;
+      }
       if (success) {
         this.authorizationProbeUsed = false;
         this.outageAttempts = 0;
@@ -284,7 +299,12 @@ export class LiveConnectionController {
     }
   }
 
+  private interruptedStatus(): LiveConnectionStatus {
+    return this.established ? "reconnecting" : "connecting";
+  }
+
   private setStatus(value: LiveConnectionStatus) {
+    if (value === "live") this.established = true;
     if (this.status === value) return;
     this.status = value;
     this.options.onStatus(value);

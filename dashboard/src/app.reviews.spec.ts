@@ -739,9 +739,9 @@ describe("navigating between changes", () => {
     primeLiveRevision(app);
     app["liveConnection"] = {
       stop: async () => {},
-      markReconciling: () => app.liveStatus.set("reconnecting"),
-      markReconciled: () => app.liveStatus.set("live"),
-      markPaused: () => app.liveStatus.set("paused"),
+      markReconciling: () => app.setLiveStatus("reconnecting"),
+      markReconciled: () => app.setLiveStatus("live"),
+      markPaused: () => app.setLiveStatus("paused"),
       authorizationLost: () => {},
     } as any;
     const edited = server.edit("design.md", design.replace("Intro paragraph.", "Intro, rewritten."));

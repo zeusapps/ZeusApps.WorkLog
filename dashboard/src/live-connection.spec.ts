@@ -79,6 +79,52 @@ describe("live SignalR lifecycle", () => {
     await value.stop();
   });
 
+  it("stays in the neutral connecting state through the first connection and only then reports Live (DEV-045)", async () => {
+    const connection = new FakeConnection();
+    let attempts = 0;
+    connection.startResult = async () => { if (++attempts < 3) throw new Error("not yet"); };
+    const { value, statuses } = controller(connection, { proveAuthorization: async () => true });
+    expect(await value.start()).toBe(true);
+    expect(statuses).toEqual(["live"]);
+    await value.stop();
+  });
+
+  it("reports Reconnecting only after an established connection was lost (DEV-045)", async () => {
+    const connection = new FakeConnection();
+    const { value, statuses } = controller(connection);
+    await value.start();
+    connection.close(new Error("lost"));
+    await vi.waitFor(() => expect(statuses).toEqual(["live", "reconnecting", "live"]));
+    await value.stop();
+  });
+
+  it("resets the outage counters on a deferred snapshot so repeated closes while hidden never pause (ANALYSIS-780)", async () => {
+    const connection = new FakeConnection();
+    const delays: number[] = [];
+    const { value, statuses } = controller(connection, {
+      onSnapshot: async () => "deferred",
+      proveAuthorization: async () => true,
+      delay: async (ms) => { delays.push(ms); },
+    });
+    await value.start();
+    for (let closes = 1; closes <= 6; closes++) {
+      connection.close(new Error("lost"));
+      await vi.waitFor(() => expect(connection.starts).toBe(closes + 1));
+      await vi.waitFor(() => expect(connection.calls.length).toBe(closes + 1));
+    }
+    expect(statuses).not.toContain("paused");
+    expect(delays).toEqual([]);
+    await value.stop();
+  });
+
+  it("treats work deferred while the tab is hidden as neither Live nor paused (DEV-044)", async () => {
+    const connection = new FakeConnection();
+    const { value, statuses } = controller(connection, { onSnapshot: async () => "deferred" });
+    expect(await value.start()).toBe(true);
+    expect(statuses).toEqual([]);
+    await value.stop();
+  });
+
   it("bounds initial connection attempts and stops after one authorization classification probe", async () => {
     const connection = new FakeConnection();
     connection.startResult = async () => { throw new Error("network unavailable"); };

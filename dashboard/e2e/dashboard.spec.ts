@@ -200,7 +200,7 @@ function trackTimelineReads(page: Page) {
         const readsFinished = [...requiredPaths].every(path => (started.get(path) ?? 0) > 0 &&
           (completed.get(path) ?? 0) === started.get(path));
         if (!readsFinished || pending.size > 0) return false;
-        return page.locator(".live-status").evaluateAll(nodes => nodes.length > 0 && nodes.every(node => {
+        return page.locator(".live-indicator").evaluateAll(nodes => nodes.length > 0 && nodes.every(node => {
           const box = node.getBoundingClientRect();
           return node.getAttribute("data-state") === "live" && box.width > 0 && box.height > 0 &&
             getComputedStyle(node).visibility !== "hidden";

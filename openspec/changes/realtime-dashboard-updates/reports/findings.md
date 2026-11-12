@@ -32,6 +32,13 @@ Orchestrator-owned ledger. Task state follows required behavior and evidence; pl
    - Keep `HANDOFF.md` in the commit as history; it is superseded by this section.
 4. **Done 2026-11-12 (user approved):** local commits `63c89a5` (workflow) and `e5d3ec7` (feature) on `change/realtime-dashboard-updates`; 8.2 checked (29/29). Not pushed, merged, archived or installed. WorkLog `done` awaits the user's completion decision.
 
+### User testing 2026-11-12 (reopened)
+
+- Dev build `0.4.9002 dev 6f462ce` installed for user testing; live journal refresh confirmed by the user.
+- **ORCH-023 (open):** on first launch the Ongoing board stayed empty until navigating away and back; a restart loaded fine. Suspected `activateLiveScope` (`dashboard/src/app.ts:790-793`) returning before the first live revision. Task 9.1.
+- **Group 9 implemented (2026-11-12):** 9.1-9.3 checked; tasks 32/33. Fixed and verified: ORCH-023 (confirmed code gap; user trigger not reproduced, needs user retest), ORCH-021, DEV-044, DEV-045 (qa-029 milestone), ANALYSIS-780/781/782 and QA-650 (analysis-036), ANALYSIS-800/801 option A (user decision) and the retryFailed residual (analysis-037), ANALYSIS-810 (mechanical; orchestrator verified: no `liveStatus.set/update` left, unit 351/351, c06 e2e 9/9). Last full e2e 54/54 before ANALYSIS-810. Deferred suggestions: QA-651, QA-652. Reports analysis-035/036/037 saved as reviewer-refused-write fallbacks. Hygiene scan over all changed files is clean. Remaining: 9.4 commit (awaiting user approval) and new dev build.
+- **User decision:** Live status moves to the header dot with a tooltip; the page bar shows only for Updates paused or Reconnecting beyond ~2 s. This absorbs ORCH-021. Task 9.2. Spec, design and tasks were revised; strict validation passes. Tasks now 29/33.
+
 ### Known limitations (documented, not blocking)
 
 - ORCH-018 `:679`: plausibly fixed by ANALYSIS-702; unconfirmed.
@@ -43,11 +50,14 @@ Orchestrator-owned ledger. Task state follows required behavior and evidence; pl
 - ANALYSIS-704: skip republishing unchanged vectors on idle ticks.
 - ANALYSIS-705: keyboard focus during reader Retry.
 - QA-600..602.
-- ORCH-021: "Reconnecting" flashes during routine reconciles.
+- ORCH-021: moved into task 9.2.
 
 ### Reservations
 
-- Next free IDs: reports `qa-029` and `analysis-035`; findings QA-650+, ANALYSIS-780+, ORCH-023+, DEV-044+.
+- Milestone 9 review (2026-11-12): `qa-029` with QA-650..669; `analysis-035` with ANALYSIS-780..799. DEV-044/045 used (fixed under 9.2).
+- Fix recheck: `analysis-036` with ANALYSIS-800..809 (ANALYSIS-780/781/782, QA-650).
+- Fix recheck 2: `analysis-037` with ANALYSIS-810..819 (ANALYSIS-800/801, retryFailed residual).
+- Next free IDs: reports `qa-030` and `analysis-038`; findings QA-670+, ANALYSIS-820+, ORCH-024+, DEV-046+.
 - QA-026 is retired and must never be reused.
 
 ## Session log: 2026-11-11 (Claude Code)

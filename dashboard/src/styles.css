@@ -313,6 +313,45 @@ a {
   border-radius: 50%;
   background: #5eab8e;
 }
+.live-indicator {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 4px;
+  padding: 2px 3px;
+}
+.live-indicator[data-state="connecting"] .live-dot {
+  background: var(--muted);
+}
+.live-indicator[data-state="reconnecting"] .live-dot {
+  background: var(--warning);
+}
+.live-indicator[data-state="paused"] .live-dot {
+  background: var(--danger);
+}
+.live-indicator:focus-visible {
+  outline: 2px solid var(--success);
+  outline-offset: 2px;
+}
+/* Pointer users get the native title; keyboard users get the same text as a tooltip. */
+.live-indicator:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 32px));
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+}
 .workspace {
   margin-left: 230px;
   min-width: 0;
@@ -1581,6 +1620,9 @@ h1 {
   height: 5px;
   margin-right: 5px;
 }
+.reader-meta .live-dot[data-state="connecting"] {
+  background: var(--muted);
+}
 .reader-meta .live-dot[data-state="reconnecting"] {
   background: var(--warning);
 }
@@ -2385,8 +2427,8 @@ h1 {
     max-width: 50%;
     text-align: right;
   }
-  .topbar-right > span:not(.avatar),
-  .topbar-right .live-dot {
+  .topbar-right > span:not(.avatar):not(.live-indicator),
+  .topbar-right .live-indicator-text {
     display: none;
   }
   .page-heading {
@@ -2437,6 +2479,24 @@ h1 {
   .topbar {
     height: 55px;
     padding: 0 15px;
+  }
+  /* The header indicator stays visible at phone width, so the breadcrumb and controls give up a little room for it. */
+  .breadcrumb {
+    min-width: 0;
+    gap: 8px;
+    white-space: nowrap;
+  }
+  .breadcrumb strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .topbar-right {
+    flex-shrink: 0;
+    gap: 6px;
+  }
+  .topbar-right .icon-button {
+    margin-left: 4px;
   }
   .page-heading {
     flex-wrap: wrap;
