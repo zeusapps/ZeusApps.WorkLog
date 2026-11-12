@@ -13,6 +13,13 @@ Orchestrator-owned ledger.
   - Daily page shows Today and Yesterday side by side, with Today first.
 - **Evidence:** the user's stored digest for 2026-11-09 covered all 7 entries, yet restated only the latest one. The input is complete; the prompt and summaries cause the recency bias.
 
+### Release v0.5.0 (2026-11-13)
+
+- Released https://github.com/zeusapps/ZeusApps.WorkLog/releases/tag/v0.5.0 from `8025ff7` (tag `v0.5.0`, annotated). Not a draft or prerelease.
+- First validation on `fddee13` failed: the packaged Daily e2e teardown hit EPERM on the extracted `e_sqlite3.dll`. This was a harness race; the test body passed, and the same packaged run passed 39/39 locally. Fixed test-only in `8025ff7` (retried fixture removal, 15 s exit wait, retried port check). Validation then passed, and the Release workflow passed validate and publish.
+- Independent verification: the downloaded ZIP's SHA-256 matches the published `.sha256` (`2d16799831fbf5bd…`). The extracted `worklog.exe --version` gives 0.5.0. Isolated-data MCP initialize reports `worklog 0.5.0` with tools `log_work`, `query_work` and `save_digest`, and exits 0. The latest-release endpoint gives v0.5.0. The extracted release's `update --check` is up to date. The installed dev build is offered 0.5.0.
+- Not done: the maintainer's own installation was not updated (it still runs dev 0.4.9005); `worklog update` is the user's choice.
+
 ### Completion and archive (2026-11-12, user request)
 
 - The user marked the change done. 5.2 is checked (8/8). Implementation commit `94303b4`. No REVIEW markers remained. Specs were synced and verified: day-digests (4 modified), daily-preparation (3 modified, 1 added), local-agent-integration (2 modified). Strict spec validation passes. Archived, fast-forward merged into `main`, and shipped as part of v0.5.0.
