@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>
-  <ItemGroup><ProjectReference Include="../../src/WorkLog/WorkLog.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/WorkLog/WorkLog.csproj" />
+    <Compile Include="../../src/WorkLog.Launcher/WindowsChildProcess.cs" Link="Launcher/WindowsChildProcess.cs" />
+  </ItemGroup>
 </Project>

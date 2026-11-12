@@ -22,6 +22,109 @@ The packaged executable was exercised with Node.js and the OpenSpec CLI absent f
 
 Browser screenshots, traces on failure, and the HTML report are generated in dashboard/test-results and dashboard/playwright-report. Fixture data remains in artifacts/dashboard-e2e for inspection; these directories are ignored by Git.
 
+## Realtime dashboard updates (`realtime-dashboard-updates`)
+
+### Current implementation and safe commands
+
+The live path is documented in [architecture](architecture.md#dashboard-live-updates). The realtime harness creates disposable repositories, data directories and browser profiles below ignored `artifacts/realtime-dashboard-updates/`; it stops the WorkLog process it starts and writes raw JSON manifests there. It never uses the user's data directory or dashboard port. Run from the repository root after obtaining the coordinated build/host slot:
+
+```powershell
+npm test --prefix dashboard
+dotnet restore --locked-mode
+dotnet build -c Release --no-restore
+npm run test:e2e --prefix dashboard
+node scripts/c06-host-lifecycle.spec.mjs
+node scripts/c06-acceptance-invariants.mjs
+node scripts/c06-fault-matrix.mjs --startupFailureSmoke --phase startup-cleanup
+node scripts/c06-fault-matrix.mjs --smoke --phase five-category-smoke --deadlineMinutes 10
+node scripts/c06-fault-matrix.mjs --phase final --deadlineMinutes 90
+node scripts/c06-mcp-compat.mjs
+node scripts/c06-dashboard-acceptance.mjs --run --phase after-latency --samples 30 --warmups 3 --idleMinutes 5 --exe src/WorkLog/bin/Release/net10.0/worklog.exe
+```
+
+The previous command measures the final uninstrumented Release executable's browser latency. Capture method-boundary counters and GC allocation in a separate copy-only instrumented build; this does not instrument the shipped executable:
+
+```powershell
+.\scripts\c06-instrument-snapshot.ps1 -Name after-metrics
+dotnet restore artifacts/realtime-dashboard-updates/baseline/instrumented/after-metrics/src/WorkLog/WorkLog.csproj --locked-mode
+dotnet build artifacts/realtime-dashboard-updates/baseline/instrumented/after-metrics/src/WorkLog/WorkLog.csproj -c Release --no-restore -p:C06BuildDashboard=false
+node scripts/c06-dashboard-acceptance.mjs --run --phase after-metrics --samples 30 --warmups 3 --idleMinutes 5 --exe artifacts/realtime-dashboard-updates/baseline/instrumented/after-metrics/src/WorkLog/bin/Release/net10.0/worklog.dll --metrics
+```
+
+The instrumented run is the source for method-boundary/GC counters and their measurement-endpoint overhead. Use its latency fields only as instrumented-run observations; the uninstrumented run above is the acceptance latency result. Both runs keep fixture size, writes, three warmups, 30 measured samples and the two five-minute windows unchanged. The preserved raw baseline remains authoritative for before values; do not overwrite or recapture it.
+
+For each after-run idle window, the harness records 250 ms Live/transport observations, observed status changes and transport close/failure events, user input, and local-minute boundaries. A paused/missing status, missing live transport, transport close/failure, or user interaction makes the window ineligible and fails the run after preserving its raw record. Local clock boundaries are recorded separately so a window crossing a minute or date boundary is visible in the evidence. The historical baseline has no live transport; its eligibility is not applicable, not a zero or a pass. A pure no-host invariant probe covers fault targeting, checkpoint-frame delivery correlation, simultaneous marker and Live predicates, monotonic elapsed-time calculation, and idle eligibility (including empty status observations):
+
+```powershell
+node scripts/c06-acceptance-invariants.mjs
+```
+
+Its bounded output is `C06 no-host acceptance invariants passed.`
+
+The owned-host lifecycle unit check uses fresh fake child processes to cover graceful exit after stop acknowledgement and forced cleanup after an unresponsive stop. It remains a no-host state-machine check. The actual startup-failure smoke is reported separately below.
+
+Create the current 0.4.1 package in a fresh ignored output directory so existing packages and preserved baseline inputs remain unchanged:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -OutputDirectory artifacts/realtime-dashboard-updates/<run>/package
+$env:WORKLOG_DASHBOARD_EXECUTABLE = (Resolve-Path 'artifacts/realtime-dashboard-updates/<run>/package/worklog-0.4.1-win-x64/worklog.exe').Path
+$env:WORKLOG_DASHBOARD_NO_NODE = 'true'
+npm run test:e2e --prefix dashboard
+dotnet run --project tools/WorkLog.Smoke -c Release --no-build -- --updates-only $env:WORKLOG_DASHBOARD_EXECUTABLE
+Remove-Item Env:WORKLOG_DASHBOARD_EXECUTABLE, Env:WORKLOG_DASHBOARD_NO_NODE
+```
+
+The `--startupFailureSmoke` mode deliberately fails the fixture startup readiness after the owned test host is live, then requires proof of wrapper exit, host disposal, an empty connection registry, and fixture-port release. It is a fixture lifecycle probe, not product acceptance. The five-category smoke runs five representative cycles and is diagnostic only; it does not replace all 100 required cycles. The full fault matrix has a bounded 90-minute deadline and runs the exact 25/25/20/15/15 allocation; its 25 Revision-wire cycles comprise 9 lost-generation windows, 8 duplicated targeted Revision frames, and 8 reordered targeted Revision frames. It uses the Release `WorkLog.Smoke` helper. The MCP compatibility command compares the preserved baseline and current Release executable against equivalent Claude Code and Codex stdio protocol fixtures; it does not launch authenticated native clients. Both performance commands retain three warmups, at least 30 samples per freshness workload, and two separate five-minute idle windows. The uninstrumented executable run reports browser request/frame counts and process CPU; the copy-only metrics run reports method-boundary counters, GC and measurement endpoint overhead. Do not interpret method-boundary counters as physical I/O.
+
+The final browser fault matrix has two independent contexts and three tabs/connections: A-reader (retained navigation and draft), A-target (visible authoritative target domain), and B-target (independent visible authoritative target domain). A cycle passes only when both target tabs show the latest changed domain and each target tab observes the expected marker and visible Live status together; the reader tab separately checks its changed document where applicable and verifies draft, focus/caret/selection, source/rendered mode, provenance and navigation context. It records per-page transport re-establishment to visible reconciliation and write acknowledgement to visible state. A companion tab is not evidence that the reader tab's document reconciled.
+
+### Baseline and harness provenance
+
+The preserved instrumented baseline is `artifacts/realtime-dashboard-updates/instrumented-baseline/2026-11-06T17-39-16-472Z-603eea45.json`, captured from source head `0d7768581a0305725454dc33d610924cce9d61ef`. It used harness SHA-256 `5b9d47b2bb93c9924998e9873b97059ecebe955a225bbef58d090e1204f46936`, original instrumenter SHA-256 `f5f0e810b43f786e5f21260e1b9861b808febfc4374a1ce8c3c8afc917ffe10b`, instrumented WorkLog DLL SHA-256 `cc5df0eaff5c7564dde0bdb44bceb35b78a89e2102223d2e7aeee819ba4defb1`, and Smoke DLL SHA-256 `3b3564f65299cd0b4b6f88b336d5c0fda0b01af4de147eb279d84ab70ffd80f8`. Baseline freshness latency exceeded the one-second p95 target:
+
+| Workload | p50 | p95 | Standard deviation | Coefficient of variation |
+| --- | ---: | ---: | ---: | ---: |
+| Document commit to visible | 1,999 ms | 3,062 ms | 492.27 ms | 0.2471 |
+| Journal write to History ticket visible | 3,930 ms | 4,962 ms | 674.02 ms | 0.1830 |
+| Digest save to Daily visible | 3,431 ms | 4,449 ms | 864.64 ms | 0.2601 |
+
+Each freshness workload used three warmups and 30 measured samples. In the five-minute no-reader baseline, 147 periodic catalog reads accompanied 148 ordinary browser API requests; server boundaries recorded 8,580 metadata enumerations, 17,160 entries, 4,446 metadata probes, 234 SQLite commands, 12 Git starts and 16 OpenSpec starts. No document content reads or hashes, journal-entry decodes or digest rows were recorded. Process CPU was 4,171.875 ms and GC allocation 39,056,360 bytes. With a reader open, the five-minute window recorded 147 catalog reads and 147 document reads among 296 ordinary API requests; boundaries recorded 9,130 enumerations, 18,260 entries, 13,339 metadata probes, 249 SQLite commands, 15 Git starts and 20 OpenSpec starts. It recorded no content reads/hashes, journal decodes or digest rows; CPU was 1,875 ms and GC allocation 47,665,808 bytes. These values describe the captured process and instrumented method boundaries, not disk operations.
+
+The preserved baseline used acceptance-parser SHA-256 `5b9d47b2bb93c9924998e9873b97059ecebe955a225bbef58d090e1204f46936`. The current acceptance-parser SHA-256 is `7014a436eceaae4e233d04f0aacfaee54d6faa69ed441c0783d16d0706a1ee82`; the fault-matrix SHA-256 is `d05bf9fb62e9841ccf596753f254e2f42ffdc5b89ae59de82b87977a3b618729`; the no-host invariant probe SHA-256 is `1d5c983dc1ad019a9d382ff3568c85f136986a895236593a6397ba335b7cd915`; the current lifecycle helper/spec hashes are `4b27ee19a227c22e4302d51f0b7294c3d7fe2145ac0c33f5d74254a1df341009` and `c9841c840ca76eb8b43bdb352f2000958a7cf66714b9b990048bb3cedfef56e5`; and the MCP fixture/process-outcome hashes are `dd007a7e664720cd8fcb2f32e0e6717f5c3471ed055b284b81e1e56dc7bc2484` and `491dd832f80ab574dd56c7511ef2337f6dd0702c2abba11bd8c83d4221c87dca`. The parser's only server-counter semantic adjustment remains explicit normalization of the known absent `afterOnlyMetadataProbes` field in the preserved pre-C06 baseline. Missing common counters remain errors. It reports common metadata probes, the after-only detector/watcher probes and their after-run sum separately. This does not change fixture, workload, sampling or baseline raw JSON. The current instrumenter SHA-256 is `17c8f2cca9a2e60bc7a885b7dbee211d2f88df48f5849f73ed2d10e14f4282f3`. Its detector/watcher call sites have a separate `afterOnlyMetadataProbes` counter because those call sites did not exist in the preserved baseline; baseline absence means “component absent,” not an unmeasured zero. Full raw failures and manifests remain preserved under the ignored artifact tree.
+
+The 25 revision-wire cycles use a bounded lost-generation window: one advanced target-domain Revision is dropped, subsequent relevant ordinary vectors are suppressed, and the window closes only on a newer tagged checkpoint Revision carrying the dropped generation. The trace retains each observed, dropped and suppressed frame. The optional `checkpoint` sequence is emitted only on actual periodic checkpoint Revision publications; ordinary revisions and Snapshot results omit it. A same-generation ordinary frame or a server checkpoint counter is not proof that the browser received recovery. The two target tabs require their expected marker and visible Live status at the same accepted reconciliation observation. Empty status-surface mutation records invalidate after-run idle eligibility.
+
+### Acceptance status
+
+The paragraphs up to "Final-target results and limitations" record earlier diagnostics and are kept as history; the final-target results are in that subsection.
+
+The preserved baseline remains the comparison reference; its executable and raw before measurements are unchanged. QA independently passed the current full .NET suite at 454/454 with no skips, including the corrected native archive-move coordinator case. The current Release build passed with zero warnings and errors. The dashboard unit suite passed 307/307. The corrected watcher permits the Windows archive move, and the browser reader now refreshes archive metadata on a Documents-only revision while preserving the unchanged-text fast path when archive metadata is stable. The exact normal browser scenario `keeps links working after archiving and honors repeat no-open launches` passed 1/1 after that correction. QA 013's status-surface evidence remains: all six light/dark and 390/768/1440 combinations passed, light refresh text contrast was at least 12.16:1, and keyboard Tab/Enter Retry returned to one Live connection. These focused results do not establish the complete browser suite.
+
+The corrected real `--startupFailureSmoke` probe passed in `artifacts/realtime-dashboard-updates/fault-matrix/2026-11-09T15-44-51-148Z-34310e02.json`: the injected post-readiness startup failure was cleaned up, the wrapper exited, the host reported source disposal and zero active connections, and the owned fixture port was released on the first probe. The corrected five-category diagnostic did not complete cycle 1. In `artifacts/realtime-dashboard-updates/fault-matrix/2026-11-09T15-54-22-394Z-a8b069ba.json`, the first disconnect injection timed out waiting up to five seconds for a target tab to show Reconnecting or Updates paused; zero completed cycle records were produced, and owned host/port cleanup passed. The finalized read-only [analysis 022](../openspec/changes/realtime-dashboard-updates/reports/analysis-022.md) records that all target Reconnecting/Live observations precede `faultStart`; the runner sets the active cycle before reloading target tabs, and no post-offline A-side close, status transition, reopen, or outage-committed write is recorded. The client has no offline listener, so this trace does not establish that either intended A transport disconnected. Do not count a cycle or call this a product recovery failure. Earlier pre-correction raw attempts remain historical at `2026-11-09T08-39-17-798Z-8fc7f8a8.json` and `2026-11-09T08-43-15-836Z-7b351eac.json`.
+
+The corrected MCP runner passed all four current/preserved × Claude Code/Codex protocol fixtures in `artifacts/realtime-dashboard-updates/mcp-compat/2026-11-09T15-51-32-139Z-57010dca.json`. All 12 owned wrappers exited successfully without signals or timeouts, both dashboard MCP and digest checks passed in every case, and neither executable changed during the run. The current apphost SHA-256 is `1d1316d4af203c7a20feba4e3abebcd9ed1ccc6a8d4e08b051d2bd26c6b47fb9`, paired with managed `worklog.dll` SHA-256 `37dc9e451ec42b94a0a58ef89679566fcc41ebd5ff489852a3f1ca2d57445f84` and `WorkLog.Smoke.dll` SHA-256 `f9650189267bdbd8dfb6d9226d1ed91b4d0db432847536d49e99417531c8b749`. The preserved package hash remains `cf11ef5faae749ca76259ee05745ed8f4e8aa42590bd3a0f4f8c951e5d5e7f46`; the corrected MCP runner hash is `dd007a7e664720cd8fcb2f32e0e6717f5c3471ed055b284b81e1e56dc7bc2484`. These are protocol fixtures, not authenticated Claude Code or Codex sessions.
+
+### Final-target results and limitations
+
+Scope was reduced on 2026-11-11: freshness percentiles, instrumented server-work capture and the 100-cycle matrix moved to the follow-up change `realtime-dashboard-performance-evidence`. The preserved baseline executable, harness and instrumentation approach remain available to it. Reduced REST request counts are not a claim of lower server CPU.
+
+Checks on the final target (Release build, locked restore): .NET suite 461 passed, 0 skipped; dashboard unit suite 329 passed in 22 files; normal browser suite 48 passed on three consecutive final-code runs; the bounded five-category fault smoke passed in five separate runs (25 cycles in total, one per category per run), each with zero incorrect final states, lost observations, discarded drafts, accumulated notices or leaked processes. In the first run the owned host stopped gracefully and the connection registry went from 3 to 0. MCP compatibility passed for current and preserved executables with Claude Code and Codex protocol fixtures (fixtures, not native sessions).
+
+Smoke recovery latencies (five runs, one cycle per category each; raw JSON under `artifacts/realtime-dashboard-updates/fault-matrix/`). Disconnect: transport re-established to visible reconciliation 56-99 ms. All categories: wait from the target tab starting to visible 42-3,171 ms (server restart 1.4-3.2 s, the slowest); write commit to visible in both browsers 0.97-5.0 s, including the outage the fixture holds open (watcher gap/overflow reached 5.0 s once; others at most 4.4 s). Commit-to-visible times include the deliberate outage and are not recovery latency; transport re-establishment time is recorded only for the disconnect category.
+
+Packaged evidence (fresh self-contained 0.4.1 package built by `scripts/package.ps1` into a new ignored directory): file list identical to the preserved pre-C06 package (README, INSTALL, `current.json`, `launcher.json`, `release.json`, `worklog.exe`, versioned `worklog.exe` and `worklog.pdb`; no new output files), top-level launcher byte-identical to the baseline, versioned executable 151,552 bytes larger (embedded client). The embedded assets contain the SignalR client and its MIT notice in `3rdpartylicenses.txt`. Packaged no-Node/offline browser acceptance: 48 passed on two runs; a first run failed ORCH-018 (below) and was rerun. Packaged bootstrap smoke (`--updates-only`) passed: launcher/version, MCP protocol and EOF, offline status.
+
+Idle result (task 7.1) is met. Two earlier attempts of the `--run` harness were aborted after the first window because the harness's own reader-close click produced a revision and a sub-200 ms Reconnecting state. The harness now waits, before each window, until the page is Live and quiet (no ordinary API request, connection event or status change for 2 s, bounded at 30 s) and records the settle start, end and duration; the window keeps its strict eligibility rules, and `--idleOnly` skips the later latency samples. On the same Release build, both five-minute windows were eligible: no reader (300.0 s) and open reader (300.0 s), each with a settle of about 2.4 s, zero ordinary API requests (so zero catalog, document, search and timeline reads), zero status changes away from Live, zero connection events and zero user actions. Each window carried one established WebSocket and about 335 frames (roughly 295 classified by heuristic as checkpoint or keep-alive and about 40 opaque), with no REST traffic; no periodic reads or repeated queries occurred, so no checkpoint, keep-alive or time-boundary work needed separating out. Server CPU and boundary counters were not captured (instrumented endpoint not enabled).
+
+Known limitations:
+
+- ORCH-018 (`dashboard.spec.ts` "keeps links working after archiving and honors repeat no-open launches", near line 679): "document and review reads must finish before the page is reconciled Live" timed out in 3 of 4 runs in one earlier session, 0 of 10 in later pre-fix runs, and once in the first packaged run above. Residual flake, cause unconfirmed. ANALYSIS-702 (a superseded live load left the page falsely paused) is the plausible cause and fix; the packaged failure above preceded that fix, and there have been 0 ORCH-018 failures in the browser runs since (`:679` 5 of 5, final-code full e2e 48/48 x3). No packaged browser run has been repeated since the fix.
+- ORCH-019a (near line 1155): fixed by ANALYSIS-701; no longer a known limitation.
+- ORCH-019b: a rare .NET test flake that was not captured.
+- Deferred: freshness p95 against the one-second target, server-work measurement and the 100-cycle matrix (`realtime-dashboard-performance-evidence`). Baseline freshness exceeded the target (p95 3.1-5.0 s), and current after-latency is unmeasured.
+
+Safe reproduction: the idle command above, `node scripts/c06-fault-matrix.mjs --smoke --phase five-category-smoke --deadlineMinutes 10`, and the packaged commands above. All use disposable fixtures, owned ports and ignored output.
+
 ## Package evidence
 
 | Measure | Existing local v0.2.0 build | Dashboard v0.3.0 build |

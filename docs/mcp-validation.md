@@ -274,6 +274,20 @@ The optional Daily response status is private and additive: missing or null `dig
 
 The final Release build completed with zero warnings and errors, the full .NET suite passed 427/427 without skips, and the dashboard unit suite passed 270/270 across 20 files. The fresh self-contained 0.4.1 review package passed the full no-Node dashboard browser suite, 44/44 in 2.3 minutes, with no declared-store exclusion; the full normal Release browser suite passed 44/44 in 4.8 minutes. Source version 0.4.1 remains unchanged and this review candidate was not published. The packaged `--updates-only` smoke passed `BOOTSTRAP PASSED`, checking launcher/version, MCP protocol/EOF and offline status. QA-020 regression coverage verifies that a document 404 and read-state storage 503 produce neutral refresh/retry guidance while retaining successful marks and drafts. These checks do not turn the paired shared-server protocol fixtures into native-client or live-agent evidence. See this change's review reports and completion ledger for the current integrated QA and code-analyzer disposition.
 
+## Realtime dashboard update MCP parity fixtures (`realtime-dashboard-updates`)
+
+The live-dashboard change does not alter MCP tool schemas. Its compatibility check uses the same two isolated stdio fixtures, labelled Claude Code and Codex, against both the preserved v0.4.1 package and the current Release executable. Run after the Release build and coordinated acceptance slot:
+
+```powershell
+node scripts/c06-mcp-compat.mjs
+```
+
+The script verifies the preserved executable SHA-256 `cf11ef5faae749ca76259ee05745ed8f4e8aa42590bd3a0f4f8c951e5d5e7f46`, runs each fixture against baseline and current executables, enforces a 10-minute default deadline (bounded to 1–20 minutes), and checks that neither executable changed during the run. Raw results are written under ignored `artifacts/realtime-dashboard-updates/mcp-compat/`. These fixtures establish protocol-level parity only; they do not represent authenticated Claude Code or Codex sessions.
+
+A historical four-fixture run on 2026-11-09 passed dashboard and digest operations for baseline/current executables under the Claude Code/Codex fixture labels. Its raw record is `artifacts/realtime-dashboard-updates/mcp-compat/2026-11-09T08-52-11-830Z-839b460f.json`. A later independent review found the recorded per-child signal/error metadata still read from the global Node process in that runner version. Treat that run as historical; the corrected runner has since been executed separately.
+
+The corrected runner passed all four fixtures on 2026-11-09 in `artifacts/realtime-dashboard-updates/mcp-compat/2026-11-09T15-51-32-139Z-57010dca.json`. All 12 owned wrappers exited with code 0, no signal and no timeout; each preserved/current executable passed dashboard MCP and digest checks under both protocol labels. Baseline and current executable hashes matched before and after the run. The current apphost SHA-256 was `1d1316d4af203c7a20feba4e3abebcd9ed1ccc6a8d4e08b051d2bd26c6b47fb9`, paired with managed `worklog.dll` SHA-256 `37dc9e451ec42b94a0a58ef89679566fcc41ebd5ff489852a3f1ca2d57445f84` and `WorkLog.Smoke.dll` SHA-256 `f9650189267bdbd8dfb6d9226d1ed91b4d0db432847536d49e99417531c8b749`. The preserved package SHA-256 remains `cf11ef5faae749ca76259ee05745ed8f4e8aa42590bd3a0f4f8c951e5d5e7f46`, and the corrected runner SHA-256 is `dd007a7e664720cd8fcb2f32e0e6717f5c3471ed055b284b81e1e56dc7bc2484`. The ignored paired identity manifest is `artifacts/realtime-dashboard-updates/mcp-compat/dev027-identities-20261109.json`. These results establish protocol-fixture compatibility only; no authenticated native Claude Code or Codex sessions were run.
+
 ## Sources
 
 - [Official C# SDK: tools, structured content, errors and annotations](https://github.com/modelcontextprotocol/csharp-sdk/blob/main/docs/concepts/tools/tools.md)

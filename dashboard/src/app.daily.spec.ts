@@ -4,6 +4,7 @@ import { Subject } from "rxjs";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { App } from "./app";
 import type { Catalog, Change, ChangeActivity, DailyDigest, DailyItem, Entry, Row, Ticket } from "./models";
+import { primeLiveRevision, sendRevision } from "./app-live-test-helpers";
 
 const repo = "github.com/acme/api";
 const now = new Date("2026-10-28T12:00:00Z");
@@ -297,20 +298,21 @@ describe("Daily view navigation", () => {
     fixture.destroy();
   });
 
-  it("reloads Daily when only the digest revision moved, and not for an unchanged poll", async () => {
+  it("reloads Daily when only the digest revision moved, and not for an unchanged vector", async () => {
     const { app, calls, fixture, served } = setup();
     app.view.set("daily");
     app["evaluate"]();
     app["journalSnapshot"] = 3;
     app["digestRevision"] = 10;
     served.catalog = { ...served.catalog, digestRevision: 10 };
-    await app["poll"]();
+    primeLiveRevision(app, { journal: 3, digests: 10 });
+    await app["receiveRevision"](app["revisionTracker"].desired()!);
     expect(calls.filter((c) => c.path === "/api/daily")).toHaveLength(0);
     served.catalog = { ...served.catalog, digestRevision: 11 };
-    await app["poll"]();
+    await sendRevision(app, { digests: 11, dirty: ["digests"] });
     expect(calls.filter((c) => c.path === "/api/daily")).toHaveLength(1);
     expect(calls.some((c) => c.path === "/api/timeline")).toBe(false);
-    await app["poll"]();
+    await app["receiveRevision"](app["revisionTracker"].desired()!);
     expect(calls.filter((c) => c.path === "/api/daily")).toHaveLength(1);
     fixture.destroy();
   });

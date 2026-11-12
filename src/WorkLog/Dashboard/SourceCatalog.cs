@@ -36,19 +36,47 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
     private string? configStamp;
     private string? configReloadIssue;
     private long repositorySnapshot = -1;
+    private long repositoryCacheVersion;
+    private long repositoryCacheInvalidation;
     private string[] repositoryNames = [];
     private CatalogSnapshot? cached;
     private DateTimeOffset refreshed;
+    private long invalidationVersion;
+    private long cachedVersion;
+
+    /// <summary>Invalidates only the complete projection. Cached Git/OpenSpec command results keep their independent lifetime.</summary>
+    internal void InvalidateSnapshot() => Interlocked.Increment(ref invalidationVersion);
+    /// <summary>Invalidates only journal-derived repository identities after a journal replacement or recovery.</summary>
+    internal void InvalidateJournalRepositories()
+    {
+        Interlocked.Increment(ref repositoryCacheInvalidation);
+        InvalidateSnapshot();
+    }
+    internal CatalogSnapshot? GetCachedSnapshot() => Volatile.Read(ref cached);
+    internal void InvalidateSourceResolutions(IEnumerable<string> checkoutDirectories)
+    {
+        foreach (var checkout in checkoutDirectories)
+            commands.TryRemove("context|" + Path.GetFullPath(checkout), out _);
+    }
 
     public async Task<CatalogSnapshot> GetAsync(CancellationToken cancellationToken = default, bool force = false)
     {
         await gate.WaitAsync(cancellationToken);
         try
         {
-            if (!force && cached is not null && clock.GetUtcNow() - refreshed < TimeSpan.FromSeconds(2)) return cached;
-            cached = await DiscoverAsync(force, cancellationToken);
-            refreshed = clock.GetUtcNow();
-            return cached;
+            while (true)
+            {
+                var version = Volatile.Read(ref invalidationVersion);
+                var snapshot = Volatile.Read(ref cached);
+                if (!force && snapshot is not null && Volatile.Read(ref cachedVersion) == version && clock.GetUtcNow() - refreshed < TimeSpan.FromSeconds(2))
+                    return snapshot;
+                snapshot = await DiscoverAsync(force, cancellationToken);
+                if (version != Volatile.Read(ref invalidationVersion)) continue;
+                Volatile.Write(ref cachedVersion, version);
+                Volatile.Write(ref cached, snapshot);
+                refreshed = clock.GetUtcNow();
+                return snapshot;
+            }
         }
         finally { gate.Release(); }
     }
@@ -90,10 +118,13 @@ internal sealed partial class SourceCatalog(LocalSettings settings, DashboardJou
         {
             // Journal rows are append-only, so the repository list only needs recomputing when the snapshot moves.
             journalSnapshot = journal.Snapshot();
-            if (journalSnapshot != repositorySnapshot)
+            var repositoryVersion = Volatile.Read(ref repositoryCacheInvalidation);
+            if (journalSnapshot != repositorySnapshot || repositoryCacheVersion != repositoryVersion)
             {
-                repositoryNames = journal.Repositories();
+                var names = journal.Repositories();
+                repositoryNames = names;
                 repositorySnapshot = journalSnapshot;
+                repositoryCacheVersion = repositoryVersion;
             }
             foreach (var identity in repositoryNames) AddRepository(identity);
         }

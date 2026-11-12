@@ -129,7 +129,7 @@
         </div>
       </div>
 
-      @if(unauthorized()){
+      @if(unauthorized()&&!ready()){
       <section class="empty-state">
         <div class="empty-symbol">&#9906;</div>
         <h2>Connect this browser to WorkLog</h2>
@@ -155,7 +155,18 @@
         <p>Reading local repositories and recorded activity.</p>
         }
       </section>
-      } @else { @if(error()){
+      } @else {
+      <div class="live-status" [attr.data-state]="liveStatus()" [attr.role]="document()?null:'status'" [attr.aria-live]="document()?null:'polite'">
+        <span class="live-status-indicator" aria-hidden="true"></span>
+        <strong>{{liveStatusLabel()}}</strong>
+        <span class="live-status-refresh">{{lastRefreshLabel()}}</span>
+        @if(liveStatus()==='paused'){
+        <button class="secondary-button" [disabled]="liveRetrying()" (click)="retryLiveUpdates()">
+          {{liveRetrying()?'Retrying…':'Retry updates'}}
+        </button>
+        }
+      </div>
+      @if(error()){
       <div class="message error" role="alert">
         {{error()}}<button aria-label="Dismiss error" (click)="error.set('')">
           &times;
@@ -1016,7 +1027,16 @@
     </div>
   </header>
   <div class="reader-meta">
-    <span><i class="live-dot"></i>Current local file · {{doc.path}}</span
+    <span><i class="live-dot" aria-hidden="true" [attr.data-state]="liveStatus()"></i>Current local file · {{doc.path}}</span
+    ><div class="reader-live" [attr.data-state]="liveStatus()" role="status" aria-live="polite" data-testid="reader-live-status">
+      <strong>{{liveStatusLabel()}}</strong>
+      <span class="reader-live-refresh">{{lastRefreshLabel()}}</span>
+      @if(liveStatus()==='paused'){
+      <button type="button" class="secondary-button" [disabled]="liveRetrying()" (mousedown)="$event.preventDefault()" (click)="retryLiveFromReader($event)">
+        {{liveRetrying()?'Retrying…':'Retry updates'}}
+      </button>
+      }
+    </div
     ><span
       >@if(selectedChange()?.totalTasks!==null&&selectedChange()?.totalTasks!==undefined){OpenSpec
       tasks {{selectedChange()?.completedTasks}} /

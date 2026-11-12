@@ -11,6 +11,7 @@ import { CommonModule } from "@angular/common";
 import { FormsModule } from "@angular/forms";
 import { DomSanitizer, SafeHtml } from "@angular/platform-browser";
 import { NavigationEnd, Router, RouterOutlet } from "@angular/router";
+import { HttpTransportType, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
 import {
   api,
   ApiError,
@@ -20,6 +21,8 @@ import {
   humanize,
   localDate,
 } from "./api";
+import { LiveConnectionController, LiveConnectionStatus } from "./live-connection";
+import { LiveDomain, RefreshQueue, RevisionSnapshot, RevisionTracker, revisionToken } from "./live-updates";
 import { renderMarkdown, Heading, Review } from "./markdown";
 import { activityFor, archiveEntries, editorLabel, editorPresets, firstVisibleLine, sourceLineAfter, validEditor } from "./archive";
 import { branchUrl, repositoryUrl, ticketTitle, ticketUrl } from "./links";
@@ -106,6 +109,28 @@ export const documentLimit = 200;
 export const preferencesByteLimit = 61440;
 const scrollSaveDelay = 1000;
 
+type ReaderFocus = { id?: string; start?: string; reviewLine?: string };
+
+function captureReaderFocus(pane: HTMLElement | null): ReaderFocus | null {
+  const active = document.activeElement;
+  if (!pane || !(active instanceof HTMLElement) || !pane.contains(active)) return null;
+  const review = active.closest<HTMLElement>("[data-review-line]");
+  if (review?.dataset["reviewLine"]) return { reviewLine: review.dataset["reviewLine"] };
+  const block = active.closest<HTMLElement>("[data-start]");
+  if (block?.dataset["start"]) return { start: block.dataset["start"] };
+  return active.id ? { id: active.id } : null;
+}
+
+function restoreReaderFocus(pane: HTMLElement | null, focus: ReaderFocus | null) {
+  if (!pane || !focus) return;
+  const target = focus.id
+    ? Array.from(pane.querySelectorAll<HTMLElement>("[id]")).find((node) => node.id === focus.id) ?? null
+    : focus.reviewLine
+      ? Array.from(pane.querySelectorAll<HTMLElement>("[data-review-line]")).find((node) => node.dataset["reviewLine"] === focus.reviewLine) ?? null
+      : Array.from(pane.querySelectorAll<HTMLElement>("[data-start]")).find((node) => node.dataset["start"] === focus.start) ?? null;
+  target?.focus({ preventScroll: true });
+}
+
 @Component({
   selector: "worklog-app",
   standalone: true,
@@ -120,6 +145,9 @@ export class App implements OnDestroy, AfterViewInit {
   selectedRepos = signal<string[] | null>(null);
   view = signal<ViewName>("ongoing");
   ready = signal(false);
+  liveStatus = signal<LiveConnectionStatus>("reconnecting");
+  liveRetrying = signal(false);
+  lastSuccessfulRefresh = signal<string | null>(null);
   unauthorized = signal(false);
   startupRetrying = signal(false);
   error = signal("");
@@ -262,8 +290,23 @@ export class App implements OnDestroy, AfterViewInit {
   detailDay = signal<string | null>(null);
   detailLoading = signal(false);
   detailQuery: TimelineQuery | null = null;
-  private timer?: ReturnType<typeof setInterval>;
+  private clockTimer?: ReturnType<typeof setTimeout>;
+  private clockRevision = signal(0);
+  private liveConnection?: LiveConnectionController;
+  private readonly revisionTracker = new RevisionTracker();
+  private readonly refreshQueue = new RefreshQueue();
+  private revisionWork: Promise<boolean> | null = null;
+  private pendingRevision: { snapshot: RevisionSnapshot; force: boolean } | null = null;
+  private forceNextSnapshot = false;
+  private selectionEpoch = 0;
+  private foregroundWaiters: (() => void)[] = [];
+  private destroyed = false;
+  private supersessionFollowupEpoch = -1;
+  private authorizationEpoch = 0;
+  private readerScrollEpoch = 0;
   private startupAttempt?: Promise<void>;
+  private autoStartLive = false;
+  private catalogEpoch = 0;
   private pendingConnectToken: string | null = null;
   private documentFilterOwner = "";
   private saveTimer?: ReturnType<typeof setTimeout>;
@@ -271,11 +314,11 @@ export class App implements OnDestroy, AfterViewInit {
   private historyEpoch = 0;
   private searchEpoch = 0;
   private documentEpoch = 0;
+  /** Counts renders made by loadDocument only, so a load that renders nothing cannot cancel the pending post-render work of an earlier render. */
+  private renderEpoch = 0;
   private detailEpoch = 0;
-  private polling = false;
   private reviewEpoch = 0;
   private summaryEpoch = 0;
-  private overviewRevision: string | null = null;
   private changeCursor = -1;
   private marksMemo: { key: string; marks: ReadMarks | null } | null = null;
   private removedReviewsMemo: { key: string; reviews: Review[] } | null = null;
@@ -303,7 +346,7 @@ export class App implements OnDestroy, AfterViewInit {
   );
   /** Every card in priority order, before the filter. Reordering works on this. */
   readonly fullBoard = computed<Board>(() =>
-    buildBoard(
+    (this.clockRevision(), buildBoard(
       {
         changes: this.filteredChanges(),
         activity: this.activityReady() ? this.activity() : null,
@@ -312,7 +355,7 @@ export class App implements OnDestroy, AfterViewInit {
         order: this.boardOrder(),
       },
       this.now(),
-    ),
+    )),
   );
   /** What the Daily view lists under Today: the unfiltered board, the current day's lines, and the saved priority order. */
   readonly dailyTodayView = computed(() => {
@@ -379,13 +422,28 @@ export class App implements OnDestroy, AfterViewInit {
     });
   }
   ngAfterViewInit() {
+    this.autoStartLive = true;
     void this.start();
   }
   ngOnDestroy() {
-    clearInterval(this.timer);
+    this.destroyed = true;
+    this.selectionEpoch++;
+    this.catalogEpoch++;
+    this.documentEpoch++;
+    this.historyEpoch++;
+    this.searchEpoch++;
+    this.reviewEpoch++;
+    this.summaryEpoch++;
+    this.detailEpoch++;
+    this.ongoingEpoch++;
+    this.pendingRevision = null;
+    this.releaseForegroundWaiters();
+    clearTimeout(this.clockTimer);
     clearTimeout(this.saveTimer);
     clearTimeout(this.searchTimer);
     clearTimeout(this.toastTimer);
+    void this.liveConnection?.stop();
+    this.refreshQueue.clear();
   }
   private async start() {
     if (this.ready()) return;
@@ -489,17 +547,416 @@ export class App implements OnDestroy, AfterViewInit {
       // From here on a route change loads the Daily view itself; the first refresh below covers the opening route.
       this.dataLoaded = true;
       await this.refreshData();
-      this.overviewRevision = this.catalog()?.revision ?? null;
       await this.refreshOverview();
-      if (!this.timer) this.timer = setInterval(() => void this.poll(), 2000);
+      if (this.autoStartLive) this.startLiveUpdates();
+      this.armClockTimer();
     } catch (error) {
       this.report(error);
     }
   }
+  private startLiveUpdates() {
+    if (this.liveConnection) return;
+    this.liveConnection = new LiveConnectionController({
+      create: () => new HubConnectionBuilder()
+        .withUrl("/api/live", {
+          transport: HttpTransportType.WebSockets | HttpTransportType.ServerSentEvents,
+          withCredentials: true,
+        })
+        .configureLogging(LogLevel.None)
+        .build(),
+      onRevision: (snapshot) => this.receiveRevision(snapshot),
+      onSnapshot: (snapshot) => {
+        const force = this.forceNextSnapshot;
+        this.forceNextSnapshot = false;
+        return this.applyRevisionSnapshot(snapshot, force);
+      },
+      onStatus: (status) => this.liveStatus.set(status),
+      onUnauthorized: () => {
+        this.invalidateAuthorizationWork();
+        this.notice.set(this.authorizationLostMessage);
+      },
+      onAuthorized: () => {
+        this.authorizationEpoch++;
+        this.pendingRevision = null;
+        this.unauthorized.set(false);
+        this.error.set("");
+        this.notice.set("");
+      },
+    });
+    void this.liveConnection.start();
+  }
+  async retryLiveUpdates() {
+    if (!this.liveConnection) return;
+    this.forceNextSnapshot = true;
+    this.liveRetrying.set(true);
+    try {
+      await this.liveConnection.retry();
+    } finally {
+      this.liveRetrying.set(false);
+    }
+  }
+  async retryLiveFromReader(event: Event) {
+    const reader = (event.currentTarget as HTMLElement | null)?.closest<HTMLElement>(".reader") ?? null;
+    await this.retryLiveUpdates();
+    // The Retry button leaves the DOM once updates resume; keep focus inside the modal.
+    setTimeout(() => {
+      const active = globalThis.document?.activeElement;
+      if (reader?.isConnected && (!active || active === globalThis.document.body)) reader.focus({ preventScroll: true });
+    });
+  }
+  liveStatusLabel() {
+    return this.liveStatus() === "live" ? "Live" : this.liveStatus() === "reconnecting" ? "Reconnecting" : "Updates paused";
+  }
+  lastRefreshLabel() {
+    const value = this.lastSuccessfulRefresh();
+    if (!value) return "No successful live refresh yet";
+    try {
+      return "Last successful refresh " + new Intl.DateTimeFormat(undefined, {
+        timeZone: this.timezone,
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(value));
+    } catch {
+      return "Last successful refresh " + value;
+    }
+  }
+  private receiveRevision(snapshot: RevisionSnapshot): Promise<void> {
+    if (this.destroyed || this.unauthorized()) return Promise.resolve();
+    if (this.liveConnection) this.liveConnection.markReconciling();
+    else this.liveStatus.set("reconnecting");
+    return this.queueRevisionWork(snapshot, false).then((success) => {
+      if (success) this.liveConnection?.markReconciled();
+      else this.liveConnection?.markPaused();
+    });
+  }
+  private applyRevisionSnapshot(snapshot: RevisionSnapshot, forcePending: boolean): Promise<boolean> {
+    return this.queueRevisionWork(snapshot, forcePending);
+  }
+  private queueRevisionWork(snapshot: RevisionSnapshot, forcePending: boolean): Promise<boolean> {
+    if (this.destroyed || this.unauthorized()) return Promise.resolve(false);
+    if (this.revisionWork) {
+      const pending = this.pendingRevision;
+      this.pendingRevision = {
+        snapshot: pending ? this.mergeRevisionSnapshots(pending.snapshot, snapshot) : snapshot,
+        force: forcePending || !!pending?.force,
+      };
+      return this.revisionWork;
+    }
+    const work = this.drainRevisionWork(snapshot, forcePending);
+    this.revisionWork = work;
+    void work.then(() => this.finishRevisionWork(work), () => this.finishRevisionWork(work));
+    return work;
+  }
+  private finishRevisionWork(work: Promise<boolean>) {
+    if (this.revisionWork !== work) return;
+    this.revisionWork = null;
+    const pending = this.pendingRevision;
+    this.pendingRevision = null;
+    if (pending && !this.destroyed) void this.queueRevisionWork(pending.snapshot, pending.force);
+  }
+  private async drainRevisionWork(snapshot: RevisionSnapshot, force: boolean): Promise<boolean> {
+    const authorizationEpoch = this.authorizationEpoch;
+    let success = false;
+    let current: { snapshot: RevisionSnapshot; force: boolean } | null = { snapshot, force };
+    while (current) {
+      if (this.destroyed || this.unauthorized() || authorizationEpoch !== this.authorizationEpoch) return false;
+      success = await this.applyRevisionSnapshotNow(current.snapshot, current.force);
+      if (this.destroyed || this.unauthorized() || authorizationEpoch !== this.authorizationEpoch) return false;
+      current = this.pendingRevision;
+      this.pendingRevision = null;
+    }
+    return success;
+  }
+  private mergeRevisionSnapshots(left: RevisionSnapshot, right: RevisionSnapshot): RevisionSnapshot {
+    if (left.instance !== right.instance) return right;
+    return {
+      instance: right.instance,
+      catalog: Math.max(left.catalog, right.catalog),
+      documents: Math.max(left.documents, right.documents),
+      journal: Math.max(left.journal, right.journal),
+      digests: Math.max(left.digests, right.digests),
+      reads: Math.max(left.reads, right.reads),
+      dirty: [...new Set([...left.dirty, ...right.dirty])],
+    };
+  }
+  private async applyRevisionSnapshotNow(snapshot: RevisionSnapshot, forcePending: boolean): Promise<boolean> {
+    if (this.destroyed || this.unauthorized()) return false;
+    let change;
+    try {
+      change = this.revisionTracker.accept(snapshot);
+    } catch (error) {
+      this.report(error);
+      return false;
+    }
+    const pending = this.revisionTracker.pending();
+    if (!change.changed && pending.length === 0) return true;
+    if (!change.changed && !forcePending) return false;
+    if (document.hidden) return false;
+    const domains = change.changed ? pending : pending;
+    const target = this.revisionTracker.desired();
+    if (!target) return false;
+    this.journalSnapshot = target.journal;
+    this.digestRevision = target.digests;
+    const success = await this.reconcileDomains(target, domains, forcePending);
+    if (this.destroyed) return false;
+    if (!success) return false;
+    this.revisionTracker.markApplied(target.instance, target, domains);
+    if (this.revisionTracker.pending().length !== 0) return false;
+    this.supersessionFollowupEpoch = -1;
+    this.lastSuccessfulRefresh.set(this.now().toISOString());
+    this.liveConnection?.markReconciled();
+    return true;
+  }
+  private async reconcileDomains(target: RevisionSnapshot, domains: readonly LiveDomain[], retryFailed: boolean): Promise<boolean> {
+    if (this.destroyed || this.unauthorized()) return false;
+    const authorizationEpoch = this.authorizationEpoch;
+    const selectedAtStart = this.selectionEpoch;
+    const changes = new Set(domains);
+    const work: Promise<boolean>[] = [];
+    const add = (name: string, depends: readonly LiveDomain[], scope: string, run: () => Promise<boolean>) => {
+      if (!depends.some((domain) => changes.has(domain))) return;
+      const token = revisionToken(target, depends) + ":" + scope;
+      work.push(this.refreshQueue.enqueue(name, token, run, retryFailed));
+    };
+
+    add("catalog-and-reader", ["catalog", "documents"], this.document() ? this.documentKey(this.document()!) : "closed", async () => {
+      if (!await this.refreshCatalog()) return false;
+      if (selectedAtStart !== this.selectionEpoch) return true;
+      await this.waitForForegroundIdle();
+      if (selectedAtStart !== this.selectionEpoch) return true;
+      return this.refreshSelectedDocument(changes.has("catalog"));
+    });
+    add("reviews", ["documents"], JSON.stringify(this.selectedRepos()), () => this.loadReviews());
+    add("read-summary", ["documents", "reads"], JSON.stringify(this.selectedRepos()), () => this.loadReadSummary());
+    add("open-read-baseline", ["reads"], this.document() ? this.documentKey(this.document()!) : "closed", async () => {
+      await this.waitForForegroundIdle();
+      if (this.destroyed || this.unauthorized() || authorizationEpoch !== this.authorizationEpoch) return false;
+      return this.refreshOpenBaseline(this.selectionEpoch);
+    });
+    add("search", ["catalog", "documents"], this.searchText.trim() + ":" + this.searchScope + ":" + JSON.stringify(this.selectedRepos()), () => this.search());
+
+    add("journal-view", ["journal"], this.journalScope(), () => this.loadVisibleJournal());
+    if (this.view() === "daily")
+      add("daily-digest", ["journal", "digests"], this.dailyScope(), () => this.loadDaily());
+    const results = await Promise.all(work);
+    if (this.destroyed || this.unauthorized() || authorizationEpoch !== this.authorizationEpoch) return false;
+    if (selectedAtStart !== this.selectionEpoch) {
+      if (this.supersessionFollowupEpoch !== this.selectionEpoch) {
+        this.supersessionFollowupEpoch = this.selectionEpoch;
+        const pending = this.pendingRevision;
+        this.pendingRevision = {
+          snapshot: pending ? this.mergeRevisionSnapshots(pending.snapshot, target) : target,
+          force: true,
+        };
+      }
+      return false;
+    }
+    return results.every(Boolean);
+  }
+  private rangeKey() {
+    return [this.from, this.to, this.timezone, this.ticket, this.groupBy, this.focusedDay()].join("|");
+  }
+  private journalScope() {
+    return this.view() + ":" + JSON.stringify(this.selectedRepos()) + ":" + this.rangeKey();
+  }
+  private dailyScope() {
+    return (this.dailyDay ?? "latest") + ":" + JSON.stringify(this.selectedRepos()) + ":" + this.timezone + ":" + localDate(this.now(), this.timezone) + ":" + this.selectionEpoch;
+  }
+  private queueDailyRefresh(target: RevisionSnapshot, retryFailed = false) {
+    return this.refreshQueue.enqueue(
+      "daily-digest",
+      revisionToken(target, ["journal", "digests"]) + ":" + this.dailyScope(),
+      () => this.view() === "daily" ? this.loadDaily() : Promise.resolve(true),
+      retryFailed,
+    );
+  }
+  private refreshDaily(retryFailed = false): Promise<boolean> {
+    if (this.view() !== "daily") return Promise.resolve(true);
+    const target = this.revisionTracker.desired();
+    if (!this.liveConnection || !target) return this.loadDaily();
+    return this.queueDailyRefresh(target, retryFailed);
+  }
+  private async loadVisibleJournal(): Promise<boolean> {
+    const journalWork: Promise<boolean>[] = [];
+    if (this.view() === "history") journalWork.push(this.loadHistory());
+    else if (this.view() === "archive") journalWork.push(this.loadActivity());
+    else {
+      journalWork.push(this.loadOngoing(), this.loadActivity());
+    }
+    if (this.detail()) journalWork.push(this.refreshDetail());
+    const results = await Promise.all(journalWork);
+    return results.every(Boolean);
+  }
+  private async activateLiveScope() {
+    if (this.destroyed) return;
+    const target = this.revisionTracker.desired();
+    if (!target || !this.liveConnection || document.hidden) return;
+    const journal = this.refreshQueue.enqueue(
+      "journal-view",
+      revisionToken(target, ["journal"]) + ":" + this.journalScope(),
+      () => this.loadVisibleJournal(),
+    );
+    const daily = this.view() === "daily"
+      ? this.queueDailyRefresh(target)
+      : Promise.resolve(true);
+    const results = await Promise.all([journal, daily]);
+    if (this.destroyed) return;
+    if (results.every(Boolean) && this.revisionTracker.pending().length === 0) this.liveConnection.markReconciled();
+    else this.liveConnection.markPaused();
+  }
+  private newestLoads = new Map<string, Promise<boolean>>();
+  /**
+   * Runs one call of a loader. A call that a newer call of the same loader supersedes publishes nothing and joins the newer call's
+   * result through `newest()`, so a foreground reload during a live reconcile neither fails it nor acknowledges it early.
+   * With no newer call (the epoch was bumped by a clear, a close or a teardown) `newest()` yields `whenAlone`.
+   */
+  private joined(name: string, run: (newest: (error?: unknown) => Promise<boolean>) => Promise<boolean>, whenAlone = false): Promise<boolean> {
+    let call!: Promise<boolean>;
+    const newest = (error?: unknown) => {
+      // A 401 is session-wide: report it even from a superseded call.
+      if (error instanceof ApiError && error.status === 401) {
+        this.report(error);
+        return Promise.resolve(false);
+      }
+      const latest = this.newestLoads.get(name);
+      return this.destroyed || !latest || latest === call ? Promise.resolve(whenAlone) : latest;
+    };
+    call = run(newest);
+    this.newestLoads.set(name, call);
+    return call;
+  }
+  private waitForForegroundIdle(): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
+    if (!this.saving() && !this.documentLoading()) return Promise.resolve();
+    return new Promise((resolve) => this.foregroundWaiters.push(resolve));
+  }
+  private releaseForegroundWaiters() {
+    const waiters = this.foregroundWaiters.splice(0);
+    for (const resolve of waiters) resolve();
+  }
+  private async refreshCatalog(): Promise<boolean> {
+    if (this.destroyed) return false;
+    return this.joined("catalog", (newest) => this.refreshCatalogNow(newest));
+  }
+  private async refreshCatalogNow(newest: (error?: unknown) => Promise<boolean>): Promise<boolean> {
+    const epoch = ++this.catalogEpoch;
+    try {
+      const snapshot = await api<Catalog>("catalog");
+      if (epoch !== this.catalogEpoch) return newest();
+      this.catalog.set(snapshot);
+      return true;
+    } catch (error) {
+      if (epoch !== this.catalogEpoch) return newest(error);
+      this.report(error);
+      return false;
+    }
+  }
+  private async refreshSelectedDocument(catalogChanged: boolean): Promise<boolean> {
+    const selected = this.document();
+    if (!selected) return true;
+    const selection = this.selectionEpoch;
+    const candidates = this.catalog()?.changes.filter((change) =>
+      change.sourceId === selected.sourceId &&
+      (change.name === selected.change || change.directoryName === selected.change) &&
+      (!selected.variant || change.variant === selected.variant),
+    ) ?? [];
+    const matchingChange = candidates.length === 1 ? candidates[0] : null;
+    const archiveStateChanged = matchingChange !== null && matchingChange.archived !== selected.archived;
+    if (matchingChange) this.selectChange(matchingChange);
+    else this.selectChange(null);
+    if (selection !== this.selectionEpoch) return true;
+    // Catalog or matching-change metadata can alter archive permissions without changing Markdown.
+    // Ask for the full response on those transitions; otherwise preserve the unchanged-content fast path.
+    return this.loadDocument(this.readRequest(selected), undefined, true, !(catalogChanged || archiveStateChanged));
+  }
+  private async refreshOpenBaseline(selection: number): Promise<boolean> {
+    if (this.destroyed) return false;
+    const initial = this.document();
+    if (!initial) return true;
+    const key = this.documentKey(initial);
+    const pane = document.querySelector<HTMLElement>(".document-scroll");
+    const readerFocus = captureReaderFocus(pane);
+    const readerFocusedElement = pane?.contains(document.activeElement) ? document.activeElement : null;
+    // A document refresh and a read-index revision can arrive together. If the
+    // document advances while reads/get is in flight, retry once for that same
+    // logical selection before leaving the shared read revision pending.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const selected = this.document();
+      if (!selected) return true;
+      if (selection !== this.selectionEpoch || this.documentKey(selected) !== key) {
+        return false;
+      }
+      try {
+        const baseline = await api<ReadBaseline | null>("reads/get", { document: this.readRequest(selected) });
+        if (this.destroyed) return false;
+        const current = this.document();
+        if (!current) return true;
+        if (selection !== this.selectionEpoch || this.documentKey(current) !== key) {
+          return false;
+        }
+        if (current.revision !== selected.revision) continue;
+        const restoreFocus = !!readerFocus && document.activeElement === readerFocusedElement;
+        const scrollToPreserve = pane?.scrollTop;
+        const scrollEpochForRestore = this.readerScrollEpoch;
+        this.baseline.set(baseline);
+        this.renderDocument(current);
+        if (pane && scrollToPreserve !== undefined) pane.scrollTop = scrollToPreserve;
+        setTimeout(() => {
+          if (this.destroyed) return;
+          const latest = this.document();
+          if (!latest || selection !== this.selectionEpoch || this.documentKey(latest) !== key
+            || latest.revision !== current.revision) return;
+          const currentPane = document.querySelector<HTMLElement>(".document-scroll");
+          if (currentPane && scrollToPreserve !== undefined && this.readerScrollEpoch === scrollEpochForRestore)
+            currentPane.scrollTop = scrollToPreserve;
+          if (restoreFocus) {
+            const active = document.activeElement;
+            const neutralFocus = active === document.body || active === document.documentElement || !active?.isConnected;
+            const originalStillFocused = active === readerFocusedElement;
+            const replacedReaderFocus = !readerFocusedElement?.isConnected && neutralFocus;
+            if (originalStillFocused || replacedReaderFocus) restoreReaderFocus(currentPane, readerFocus);
+          }
+        }, 0);
+        return true;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) this.report(error);
+        return false;
+      }
+    }
+    return false;
+  }
+  private async refreshDetail(): Promise<boolean> {
+    const detail = this.detail();
+    if (!detail) return true;
+    const query = this.view() === "ongoing" || this.view() === "daily" ? this.ongoingQuery : this.historyQuery;
+    if (!query) return true;
+    const epoch = ++this.detailEpoch;
+    try {
+      const page = await api<ObservationPage>("observations", { query, id: detail.id, day: this.detailDay() });
+      if (epoch !== this.detailEpoch || this.detail()?.id !== detail.id) return false;
+      this.detailQuery = query;
+      this.observations.set(page.entries);
+      this.observationNext.set(page.nextOffset);
+      this.observationTotal.set(page.total);
+      return true;
+    } catch (error) {
+      if (epoch === this.detailEpoch) this.report(error);
+      return false;
+    }
+  }
   private report(error: unknown) {
-    if (error instanceof ApiError && error.status === 401)
-      this.unauthorized.set(true);
+    if (error instanceof ApiError && error.status === 401) {
+      this.invalidateAuthorizationWork();
+      this.liveConnection?.authorizationLost();
+    }
     this.error.set(error instanceof Error ? error.message : String(error));
+  }
+  private invalidateAuthorizationWork() {
+    if (!this.unauthorized()) this.authorizationEpoch++;
+    this.unauthorized.set(true);
+    this.pendingRevision = null;
+    this.refreshQueue.clear();
+    this.releaseForegroundWaiters();
   }
   private applyTheme(theme: "dark" | "light") {
     this.theme.set(theme);
@@ -578,6 +1035,9 @@ export class App implements OnDestroy, AfterViewInit {
     await Promise.all([this.loadReviews(), this.loadReadSummary()]);
   }
   async loadReviews() {
+    return this.joined("reviews", (newest) => this.loadReviewsNow(newest));
+  }
+  private async loadReviewsNow(newest: (error?: unknown) => Promise<boolean>) {
     const epoch = ++this.reviewEpoch;
     try {
       // Always every scope: the reader and archived documents need their counts whichever scope the panel shows.
@@ -585,9 +1045,13 @@ export class App implements OnDestroy, AfterViewInit {
         repositories: this.selectedRepos() ?? [],
         scope: "all",
       });
-      if (epoch === this.reviewEpoch) this.inbox.set(list);
+      if (epoch !== this.reviewEpoch) return newest();
+      this.inbox.set(list);
+      return true;
     } catch (error) {
-      if (epoch === this.reviewEpoch) this.report(error);
+      if (epoch !== this.reviewEpoch) return newest(error);
+      this.report(error);
+      return false;
     }
   }
   /**
@@ -595,29 +1059,43 @@ export class App implements OnDestroy, AfterViewInit {
    * Skipped while History is open, and when neither the journal nor the selection moved since the last load.
    */
   async loadActivity() {
-    if (this.view() === "history") return;
+    if (this.view() === "history") return true;
     const repositories = this.selectedRepos() ?? [];
     const key = this.journalSnapshot + "|" + JSON.stringify(repositories);
-    if (key === this.activityKey) return;
+    if (key === this.activityKey) return true;
+    return this.joined("activity", (newest) => this.loadActivityNow(newest, repositories, key));
+  }
+  private async loadActivityNow(newest: (error?: unknown) => Promise<boolean>, repositories: readonly string[], key: string) {
     const epoch = ++this.activityEpoch;
     try {
       const list = await api<ChangeActivity[]>("activity/changes", { repositories });
-      if (epoch !== this.activityEpoch) return;
+      if (epoch !== this.activityEpoch) return newest();
       this.activity.set(list);
       this.activityScope.set(JSON.stringify(repositories));
       this.activityKey = key;
+      this.armClockTimer();
+      return true;
     } catch (error) {
-      if (epoch === this.activityEpoch) this.report(error);
+      if (epoch !== this.activityEpoch) return newest(error);
+      this.report(error);
+      return false;
     }
   }
   async loadReadSummary() {
+    return this.joined("summary", (newest) => this.loadReadSummaryNow(newest));
+  }
+  private async loadReadSummaryNow(newest: (error?: unknown) => Promise<boolean>) {
     const epoch = ++this.summaryEpoch;
     try {
       const summary = await api<ReadSummary>("reads/summary");
-      if (epoch === this.summaryEpoch) this.readSummary.set(summary.entries);
-    } catch {
+      if (epoch !== this.summaryEpoch) return newest();
+      this.readSummary.set(summary.entries);
+      return true;
+    } catch (error) {
       // The baselines are unavailable (for example a locked file): no document is shown as updated, and there is nothing to report on every refresh.
       if (epoch === this.summaryEpoch) this.readSummary.set({});
+      if (error instanceof ApiError && error.status === 401) this.report(error);
+      return epoch !== this.summaryEpoch ? newest() : false;
     }
   }
   commentCount(change: Change) {
@@ -713,6 +1191,7 @@ export class App implements OnDestroy, AfterViewInit {
   }
   /** Whether the card shows the quiet indication (an In-progress change idle for more than 14 days). */
   quiet(card: BoardCard) {
+    this.clockRevision();
     return isQuiet(card, this.now(), this.timezone);
   }
   /** Opens a change card's document; a change present in several sources opens the copy chooser instead. */
@@ -772,11 +1251,14 @@ export class App implements OnDestroy, AfterViewInit {
     await this.router.navigate(["/" + view]);
   }
   async refreshData() {
-    await Promise.all([this.loadHistory(), this.loadOngoing(), this.view() === "daily" ? this.loadDaily() : Promise.resolve()]);
+    await Promise.all([this.loadHistory(), this.loadOngoing(), this.refreshDaily(true)]);
   }
   /** Loads the last recorded day (or the selected one) and today's lines in one request. */
-  async loadDaily() {
+  async loadDaily(): Promise<boolean> {
     const epoch = ++this.dailyEpoch;
+    const selectedAtStart = this.selectionEpoch;
+    const scopeAtStart = this.dailyScope();
+    const scopeIsCurrent = () => selectedAtStart === this.selectionEpoch && scopeAtStart === this.dailyScope();
     this.dailyLoading.set(true);
     try {
       const before = boundary(localDate(this.now(), this.timezone), this.timezone);
@@ -786,20 +1268,29 @@ export class App implements OnDestroy, AfterViewInit {
         repositories: this.selectedRepos() ?? [],
         ...(this.dailyDay ? { day: this.dailyDay } : {}),
       });
-      if (epoch === this.dailyEpoch) this.dailyData.set({ digest, before });
+      if (epoch !== this.dailyEpoch) return false;
+      if (!scopeIsCurrent()) return true;
+      this.dailyData.set({ digest, before });
+      return true;
     } catch (error) {
-      if (epoch !== this.dailyEpoch) return;
+      if (epoch !== this.dailyEpoch) return false;
+      if (error instanceof ApiError && error.status === 401) {
+        this.report(error);
+        return false;
+      }
+      if (!scopeIsCurrent()) return true;
       if (error instanceof ApiError && error.status === 400 && this.dailyDay) {
         // A day the server no longer accepts (for example after the date moved on): fall back to the last recorded day.
         this.dailyDay = null;
         this.notice.set("That day is not available. Showing the last recorded day.");
         await this.router.navigate(["/daily"], { replaceUrl: true });
-        await this.loadDaily();
-        return;
+        return this.loadDaily();
       }
       this.report(error);
+      return false;
     } finally {
-      if (epoch === this.dailyEpoch) this.dailyLoading.set(false);
+      if (epoch === this.dailyEpoch && (scopeIsCurrent() || !this.refreshQueue.dirty("daily-digest")))
+        this.dailyLoading.set(false);
     }
   }
   /** Moves the Daily view to another recorded day through the URL, so back and forward work. */
@@ -853,7 +1344,10 @@ export class App implements OnDestroy, AfterViewInit {
       ...(this.ticket ? { ticket: this.ticket } : {}),
     };
   }
-  async loadHistory(more = false) {
+  async loadHistory(more = false): Promise<boolean> {
+    return this.joined(more ? "history-more" : "history", (newest) => this.loadHistoryNow(newest, more));
+  }
+  private async loadHistoryNow(newest: (error?: unknown) => Promise<boolean>, more: boolean): Promise<boolean> {
     const epoch = ++this.historyEpoch;
     this.loading.set(true);
     this.error.set("");
@@ -867,21 +1361,27 @@ export class App implements OnDestroy, AfterViewInit {
             }
           : this.query();
       const page = await api<Timeline>("timeline", query);
-      if (epoch !== this.historyEpoch) return;
+      if (epoch !== this.historyEpoch) return newest();
       if (more) page.rows = [...(this.timeline()?.rows ?? []), ...page.rows];
       this.historyQuery = { ...query, snapshot: page.snapshot, offset: 0 };
       this.timeline.set(page);
+      return true;
     } catch (error) {
-      if (epoch === this.historyEpoch) this.report(error);
+      if (epoch !== this.historyEpoch) return newest(error);
+      this.report(error);
+      return false;
     } finally {
       if (epoch === this.historyEpoch) this.loading.set(false);
     }
   }
   private ongoingEpoch = 0;
-  async loadOngoing() {
+  async loadOngoing(): Promise<boolean> {
+    return this.joined("ongoing", (newest) => this.loadOngoingNow(newest));
+  }
+  private async loadOngoingNow(newest: (error?: unknown) => Promise<boolean>): Promise<boolean> {
     const epoch = ++this.ongoingEpoch;
     try {
-      const now = new Date();
+      const now = this.now();
       const query: TimelineQuery = {
         from: new Date(now.getTime() - boardWindowDays * 86400000).toISOString(),
         to: now.toISOString(),
@@ -890,16 +1390,19 @@ export class App implements OnDestroy, AfterViewInit {
         repositories: this.selectedRepos() ?? [],
       };
       let page = await api<Timeline>("timeline", query);
+      if (this.destroyed || epoch !== this.ongoingEpoch) return newest();
       const rows = [...page.rows];
       query.snapshot = page.snapshot;
       while (page.nextOffset !== null) {
-        if (epoch !== this.ongoingEpoch) return;
+        if (this.destroyed || epoch !== this.ongoingEpoch) return newest();
         page = await api<Timeline>("timeline", {
           ...query,
           offset: page.nextOffset,
         });
+        if (this.destroyed || epoch !== this.ongoingEpoch) return newest();
         rows.push(...page.rows);
       }
+      if (this.destroyed || epoch !== this.ongoingEpoch) return newest();
       // The same snapshot keeps both reads consistent while agents keep logging.
       const unlinked = await api<UnlinkedPage>("ongoing/unlinked", {
         repositories: query.repositories,
@@ -907,15 +1410,20 @@ export class App implements OnDestroy, AfterViewInit {
         to: query.to,
         snapshot: query.snapshot,
       });
-      if (epoch === this.ongoingEpoch) {
+      if (!this.destroyed && epoch === this.ongoingEpoch) {
         this.ongoing.set(rows);
         this.unlinked.set(unlinked.entries);
         this.unlinkedTruncated.set(unlinked.truncated);
         this.ongoingQuery = query;
         this.ongoingScope.set(JSON.stringify(query.repositories));
+        this.armClockTimer();
+        return true;
       }
+      return newest();
     } catch (error) {
-      if (epoch === this.ongoingEpoch) this.report(error);
+      if (epoch !== this.ongoingEpoch) return newest(error);
+      this.report(error);
+      return false;
     }
   }
   /** Moves a card within its column by a keyboard-accessible action and saves the order. */
@@ -1107,6 +1615,7 @@ export class App implements OnDestroy, AfterViewInit {
     this.timezone = this.timezoneInput = zone;
     this.rememberedTimezone = zone;
     this.evaluate();
+    this.armClockTimer();
     this.remember();
     await this.refreshData();
   }
@@ -1192,10 +1701,13 @@ export class App implements OnDestroy, AfterViewInit {
     this.selectChange(null);
     this.copies.set([]);
     this.copyPath = undefined;
+    this.releaseForegroundWaiters();
     await this.router.navigate(["/" + this.view()]);
   }
   private async routeChanged() {
+    if (this.destroyed) return;
     if (this.navigating) return;
+    this.selectionEpoch++;
     const url = this.router.parseUrl(this.router.url);
     const route = url.root.children["primary"]?.segments[0]?.path;
     const previous = this.view();
@@ -1205,7 +1717,7 @@ export class App implements OnDestroy, AfterViewInit {
       const wanted = validDate(day) ? day : null;
       const changed = previous !== "daily" || wanted !== this.dailyDay;
       this.dailyDay = wanted;
-      if (changed && this.dataLoaded) void this.loadDaily();
+      if (changed && this.dataLoaded && !this.liveConnection) void this.loadDaily();
     }
     if (route !== "history") void this.loadActivity();
     const source = url.queryParams["source"] as string | undefined,
@@ -1260,6 +1772,8 @@ export class App implements OnDestroy, AfterViewInit {
       this.selectChange(null);
     }
     this.remember();
+    if (this.destroyed) return;
+    await this.activateLiveScope();
   }
   private documentKey(d: DocumentRequest) {
     return d.sourceId + ":" + d.change + ":" + d.path + ":" + (d.variant ?? "");
@@ -1278,7 +1792,16 @@ export class App implements OnDestroy, AfterViewInit {
     anchor?: string,
     poll = false,
     skipUnchanged = false,
-  ) {
+  ): Promise<boolean> {
+    return this.joined("document", (newest) => this.loadDocumentNow(newest, request, anchor, poll, skipUnchanged));
+  }
+  private async loadDocumentNow(
+    newest: (error?: unknown) => Promise<boolean>,
+    request: DocumentRequest,
+    anchor: string | undefined,
+    poll: boolean,
+    skipUnchanged: boolean,
+  ): Promise<boolean> {
     const old = this.document();
     const same = old && this.documentKey(old) === this.documentKey(request);
     const navigationFocus = !poll && document.activeElement instanceof HTMLElement
@@ -1309,21 +1832,22 @@ export class App implements OnDestroy, AfterViewInit {
         "document",
         body,
       );
-      if (epoch !== this.documentEpoch) return;
+      if (epoch !== this.documentEpoch) return newest();
       // The open document is current: keep what is rendered and parse nothing.
-      if ("unchanged" in answer && answer.unchanged) return;
+      if ("unchanged" in answer && answer.unchanged) return true;
       const value = answer as DocumentContent;
       if (poll && same && value.revision === old.revision && value.canComment === old.canComment) {
         this.document.set(value);
-        return;
+        return true;
       }
       // A different document starts from its own baseline; the baseline is known before the first render so nothing flashes.
       if (!same) {
         await this.loadBaseline(value);
-        if (epoch !== this.documentEpoch) return;
+        if (epoch !== this.documentEpoch) return newest();
       }
       const pane = document.querySelector<HTMLElement>(".document-scroll");
       const scroll = pane?.scrollTop ?? 0;
+      const readerFocus = captureReaderFocus(pane);
       const currentHeading = same
         ? this.headings()
             .filter(
@@ -1334,7 +1858,10 @@ export class App implements OnDestroy, AfterViewInit {
             .at(-1)?.id
         : undefined;
       this.document.set(value);
+      // Only a load's own render counts: re-renders of the same document (baseline, mark-read) must not cancel its pending post-render work.
+      const render = ++this.renderEpoch;
       this.renderDocument(value);
+      const renderedKey = this.documentKey(value);
       if (!same) {
         const draft = this.drafts.get(this.documentKey(value));
         this.selection.set(draft?.selection ?? null);
@@ -1348,7 +1875,9 @@ export class App implements OnDestroy, AfterViewInit {
         );
       if (!poll) this.useDocument(value);
       setTimeout(() => {
-        if (epoch !== this.documentEpoch) return;
+        // Skip only when this render is no longer the visible one (a newer render, a close or a navigation).
+        const visible = this.document();
+        if (this.destroyed || render !== this.renderEpoch || !visible || this.documentKey(visible) !== renderedKey) return;
         this.attachTaskAnchors();
         this.syncStops();
         if (anchor) this.scrollTo(anchor);
@@ -1360,6 +1889,7 @@ export class App implements OnDestroy, AfterViewInit {
               ? scroll
               : (this.preferences.positions?.[this.documentKey(value)] ?? 0);
         }
+        if (same && poll) restoreReaderFocus(document.querySelector<HTMLElement>(".document-scroll"), readerFocus);
         if (!same && !anchor) {
           const active = document.activeElement;
           const focusMoved = active instanceof HTMLElement && active.isConnected
@@ -1370,15 +1900,19 @@ export class App implements OnDestroy, AfterViewInit {
           }
         }
       }, 0);
+      return true;
     } catch (error) {
       if (epoch === this.documentEpoch) {
         this.commentStatus.set(
           error instanceof Error ? error.message : String(error),
         );
-        if (!poll) this.report(error);
+        if (!poll || (error instanceof ApiError && error.status === 401)) this.report(error);
+        return false;
       }
+      return newest(error);
     } finally {
       if (epoch === this.documentEpoch) this.documentLoading.set(false);
+      if (epoch === this.documentEpoch && !poll) this.releaseForegroundWaiters();
     }
   }
   private renderDocument(value: DocumentContent) {
@@ -1398,6 +1932,8 @@ export class App implements OnDestroy, AfterViewInit {
       this.removedReviewsMemo = null;
       this.removedComments.set([]);
     }
+    // Every re-render replaces the rendered nodes, so the task anchors are attached again to the new ones.
+    setTimeout(() => this.attachTaskAnchors(), 0);
   }
   /** Differences between the baseline and `value`, worked out once per pair of revisions. */
   private marksFor(value: DocumentContent): ReadMarks | null {
@@ -1475,7 +2011,7 @@ export class App implements OnDestroy, AfterViewInit {
       }
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        this.unauthorized.set(true);
+        this.report(error);
         this.notice.set(this.authorizationLostMessage);
         return;
       }
@@ -1515,6 +2051,7 @@ export class App implements OnDestroy, AfterViewInit {
         }
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
+          this.report(error);
           authorizationLost = true;
           break;
         }
@@ -1539,8 +2076,9 @@ export class App implements OnDestroy, AfterViewInit {
       });
       this.noteRead(d, result);
       if (epoch === this.documentEpoch) this.baseline.set({ revision: written.revision, text: written.text });
-    } catch {
+    } catch (error) {
       // The baseline stays, so the write shows as a change rather than being hidden.
+      if (error instanceof ApiError && error.status === 401) this.report(error);
     }
   }
   private stops() {
@@ -1764,6 +2302,7 @@ export class App implements OnDestroy, AfterViewInit {
       this.commentStatus.set("Review comment saved.");
     } catch (error) {
       if (epoch !== this.documentEpoch) return;
+      if (error instanceof ApiError && error.status === 401) this.report(error);
       this.commentStatus.set(
         error instanceof Error ? error.message : String(error),
       );
@@ -1772,6 +2311,7 @@ export class App implements OnDestroy, AfterViewInit {
       this.commentStatus.set(error instanceof Error ? error.message : String(error));
     } finally {
       this.saving.set(false);
+      this.releaseForegroundWaiters();
     }
   }
   editReview(review: Review) {
@@ -1819,11 +2359,13 @@ export class App implements OnDestroy, AfterViewInit {
       this.commentStatus.set("Review comment deleted.");
     } catch (error) {
       if (epoch !== this.documentEpoch) return;
+      if (error instanceof ApiError && error.status === 401) this.report(error);
       this.commentStatus.set(error instanceof Error ? error.message : String(error));
       if (error instanceof ApiError && error.status === 409) await this.loadDocument(d, undefined, true);
       this.commentStatus.set(error instanceof Error ? error.message : String(error));
     } finally {
       this.saving.set(false);
+      this.releaseForegroundWaiters();
     }
   }
   async copyLink(anchor?: string) {
@@ -1847,6 +2389,7 @@ export class App implements OnDestroy, AfterViewInit {
   }
   copyFallback = signal("");
   onScroll(event: Event) {
+    this.readerScrollEpoch++;
     const d = this.document();
     if (!d) return;
     this.rememberPosition(
@@ -1868,9 +2411,13 @@ export class App implements OnDestroy, AfterViewInit {
     }
     this.searchTimer = setTimeout(() => void this.search(), 300);
   }
-  async search() {
+  async search(): Promise<boolean> {
     const query = this.searchText.trim();
-    if (!query) return;
+    if (!query) return true;
+    // A cleared query supersedes with no newer call: that work is complete, not a failed refresh.
+    return this.joined("search", (newest) => this.searchNow(newest, query), true);
+  }
+  private async searchNow(newest: (error?: unknown) => Promise<boolean>, query: string): Promise<boolean> {
     const epoch = ++this.searchEpoch;
     this.searchLoading.set(true);
     this.searchRevision = this.catalog()?.revision ?? null;
@@ -1880,9 +2427,14 @@ export class App implements OnDestroy, AfterViewInit {
         repositories: this.selectedRepos() ?? [],
         scope: this.searchScope,
       });
-      if (epoch === this.searchEpoch) this.searchResults.set(value);
+      // A newer search owns the result; this call joins its outcome.
+      if (epoch !== this.searchEpoch) return newest();
+      this.searchResults.set(value);
+      return true;
     } catch (error) {
-      if (epoch === this.searchEpoch) this.report(error);
+      if (epoch !== this.searchEpoch) return newest(error);
+      this.report(error);
+      return false;
     } finally {
       if (epoch === this.searchEpoch) this.searchLoading.set(false);
     }
@@ -2103,69 +2655,63 @@ export class App implements OnDestroy, AfterViewInit {
         ". Your current view is unaffected.",
     );
   }
-  private dayRolledOver() {
-    return localDate(this.now(), this.timezone) !== this.evaluatedDate;
-  }
-  private async poll() {
-    if (
-      document.hidden ||
-      this.polling ||
-      this.documentLoading() ||
-      this.saving()
-    )
-      return;
-    this.polling = true;
-    const documentEpoch = this.documentEpoch;
-    try {
-      const snapshot = await api<Catalog>("catalog");
-      this.catalog.set(snapshot);
-      // The overview and the read hints follow document contents, so they refresh when the catalog revision moves.
-      if (snapshot.revision !== this.overviewRevision) {
-        this.overviewRevision = snapshot.revision;
-        void this.refreshOverview();
-      }
-      // Navigation or review may start while catalog discovery is in flight.
-      // A background refresh must never supersede that foreground request.
-      if (
-        documentEpoch !== this.documentEpoch ||
-        this.documentLoading() ||
-        this.saving()
-      ) return;
-      const d = this.document();
-      if (d) {
-        const candidates = snapshot.changes.filter(
-          (c) =>
-            c.sourceId === d.sourceId &&
-            (c.name === d.change || c.directoryName === d.change) &&
-            (!d.variant || c.variant === d.variant),
-        );
-        this.selectChange(candidates.length === 1 ? candidates[0] : null);
-        // An archive move changes the document's state without changing its text, so it needs the full response.
-        const moved = candidates.length === 1 && candidates[0].archived !== d.archived;
-        await this.loadDocument(d, undefined, true, !moved);
-      }
-      if (this.searchText.trim() && snapshot.revision !== this.searchRevision)
-        void this.search();
-      const rolled = this.dayRolledOver();
-      let dataRefreshed = false;
-      if (rolled || snapshot.journalSnapshot !== this.journalSnapshot) {
-        dataRefreshed = true;
-        this.journalSnapshot = snapshot.journalSnapshot;
-        if (rolled) this.evaluate();
-        void this.loadActivity();
-        await this.refreshData();
-      }
-      // A saved digest changes only digests.db, so the journal snapshot stays put; only the Daily lines show digests.
-      if (snapshot.digestRevision !== this.digestRevision) {
-        const moved = this.digestRevision !== undefined;
-        this.digestRevision = snapshot.digestRevision;
-        if (moved && !dataRefreshed && this.view() === "daily") await this.loadDaily();
-      }
-    } catch (error) {
-      this.report(error);
-    } finally {
-      this.polling = false;
+  private temporalBoundaries(): number[] {
+    const boundaries: number[] = [];
+    const now = this.now();
+    const dayMs = 86400000;
+    const expiry = (lastAt: string) => {
+      const instant = Date.parse(lastAt);
+      if (Number.isFinite(instant)) boundaries.push(instant + boardWindowDays * dayMs);
+    };
+    for (const row of this.ongoing()) expiry(row.lastAt);
+    for (const entry of this.unlinked()) expiry(entry.occurredAt);
+    for (const item of this.activity()) {
+      const instant = Date.parse(item.lastAt);
+      if (!Number.isFinite(instant)) continue;
+      const date = localDate(new Date(instant), this.timezone);
+      boundaries.push(Date.parse(boundary(addDays(date, quietDays + 1), this.timezone)));
     }
+    const today = localDate(now, this.timezone);
+    boundaries.push(Date.parse(boundary(addDays(today, 1), this.timezone)));
+    return boundaries.filter((instant) => Number.isFinite(instant) && instant > now.getTime());
+  }
+  private armClockTimer() {
+    clearTimeout(this.clockTimer);
+    if (this.destroyed || document.hidden || !this.ready()) return;
+    const next = Math.min(...this.temporalBoundaries(), Infinity);
+    const untilBoundary = Number.isFinite(next) ? Math.max(1, next - this.now().getTime()) : 60_000;
+    this.clockTimer = setTimeout(() => this.timeChanged(), Math.min(60_000, untilBoundary));
+  }
+  private timeChanged() {
+    if (this.destroyed) return;
+    if (document.hidden) {
+      clearTimeout(this.clockTimer);
+      return;
+    }
+    const today = localDate(this.now(), this.timezone);
+    if (today !== this.evaluatedDate) {
+      this.evaluate();
+      if (this.view() === "history" && this.range.kind === "relative" && !this.focusedDay()) void this.loadHistory();
+      if (this.view() === "daily") void this.refreshDaily();
+    }
+    this.clockRevision.update((value) => value + 1);
+    this.armClockTimer();
+  }
+  @HostListener("document:visibilitychange")
+  async visibilityChanged() {
+    if (document.hidden) {
+      clearTimeout(this.clockTimer);
+      return;
+    }
+    this.timeChanged();
+    this.forceNextSnapshot = true;
+    await this.liveConnection?.resume();
+    await this.activateLiveScope();
+  }
+  @HostListener("window:focus")
+  windowFocused() {
+    this.timeChanged();
+    void this.liveConnection?.resume();
   }
   @HostListener("document:keydown", ["$event"])
   keyboard(event: KeyboardEvent) {

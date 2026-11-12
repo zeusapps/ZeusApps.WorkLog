@@ -18,6 +18,40 @@ if (args is ["--dashboard-digest", var digestRoot, var digestRepository, var dig
     DashboardFixture.SaveDigest(digestRoot, digestRepository, digestTicket, digestText);
     return;
 }
+if (args is ["--c06-fixture", var c06Root])
+{
+    C06BaselineFixture.Create(c06Root);
+    return;
+}
+if (args is ["--c06-log", var c06LogRoot, var c06Repository, var c06Change, var c06Ticket, var c06Summary])
+{
+    C06BaselineFixture.Log(c06LogRoot, c06Repository, c06Change, c06Ticket, c06Summary);
+    return;
+}
+if (args is ["--c06-digest-save", var c06DigestRoot, var c06DigestRepository, var c06DigestTicket, var c06DigestSummary])
+{
+    C06BaselineFixture.SaveDigest(c06DigestRoot, c06DigestRepository, c06DigestTicket, c06DigestSummary);
+    return;
+}
+if (args is ["--c06-owned-process", .. var c06OwnedArguments])
+{
+    Environment.ExitCode = C06ProcessTree.RunOwned(c06OwnedArguments);
+    return;
+}
+if (args is ["--c06-hanging-child", var c06ChildMarker])
+{
+    Environment.ExitCode = C06ProcessTree.RunHangingChild(c06ChildMarker);
+    return;
+}
+if (args is ["--c06-live-host", var c06LiveData, var c06LiveRepository, var c06LivePort, var c06LiveControlDirectory, var c06LiveWatcherMode])
+{
+    if (!int.TryParse(c06LivePort, out var parsedPort) || parsedPort is < 1 or > 65535)
+        throw new ArgumentException("C06 live fixture requires a valid isolated port.");
+    if (c06LiveWatcherMode is not ("fake" or "real"))
+        throw new ArgumentException("C06 live fixture watcher mode must be fake or real.");
+    Environment.ExitCode = await C06LiveAcceptanceHost.RunAsync(c06LiveData, c06LiveRepository, parsedPort, c06LiveControlDirectory, c06LiveWatcherMode == "real");
+    return;
+}
 if (args is ["--dashboard-mcp", var dashboardExecutable, var dashboardDirectory])
 {
     await DashboardFixture.ExerciseMcpAsync(dashboardExecutable, dashboardDirectory);

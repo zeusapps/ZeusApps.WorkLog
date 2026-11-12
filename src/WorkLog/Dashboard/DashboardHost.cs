@@ -7,6 +7,8 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
@@ -84,25 +86,45 @@ internal static class DashboardHost
 
     internal static string Address(WebApplication app) => app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
 
-    internal static WebApplication Create(LocalSettings settings, string? repository, int port, string instance, DashboardAuthorization authorization, LocalCommand? commands = null, IEditorLauncher? launcher = null)
+    internal static WebApplication Create(LocalSettings settings, string? repository, int port, string instance, DashboardAuthorization authorization,
+        LocalCommand? commands = null, IEditorLauncher? launcher = null, IDashboardChangeSource? changeSource = null, TimeProvider? timeProvider = null)
     {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ApplicationName = typeof(DashboardHost).Assembly.FullName });
         builder.Logging.ClearProviders();
+        builder.Services.AddSignalR();
+        var clock = timeProvider ?? TimeProvider.System;
+        var source = changeSource ?? new FileSystemDashboardChangeSource();
+        var journal = new DashboardJournal(settings.DataDirectory);
+        var digests = new DigestStore(settings.DataDirectory);
+        var daily = new DailyService(journal, digests);
+        var catalog = new SourceCatalog(settings, journal, commands ?? new LocalCommand(), repository ?? Environment.CurrentDirectory, digests: digests);
+        var documents = new DocumentService(catalog);
+        var state = new DashboardState(settings.DataDirectory);
+        var reads = new ReadBaselineService(catalog, documents, new ReadBaselineStore(settings.DataDirectory));
+        builder.Services.AddSingleton(settings);
+        builder.Services.AddSingleton(authorization);
+        builder.Services.AddSingleton(journal);
+        builder.Services.AddSingleton(digests);
+        builder.Services.AddSingleton(catalog);
+        builder.Services.AddSingleton(documents);
+        builder.Services.AddSingleton(state);
+        builder.Services.AddSingleton(reads);
+        builder.Services.AddSingleton(clock);
+        builder.Services.AddSingleton(new DashboardLiveOptions(instance));
+        builder.Services.AddSingleton<IDashboardChangeSource>(source);
+        builder.Services.AddSingleton<DashboardLiveConnections>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<DashboardLiveConnections>());
+        builder.Services.AddSingleton<DashboardLiveCoordinator>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<DashboardLiveCoordinator>());
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Listen(IPAddress.Loopback, port);
             options.Limits.MaxRequestBodySize = DocumentService.MaximumBytes + 131_072;
         });
         var app = builder.Build();
-        var journal = new DashboardJournal(settings.DataDirectory);
         var timeline = new TimelineService(journal);
-        var digests = new DigestStore(settings.DataDirectory);
-        var daily = new DailyService(journal, digests);
-        var catalog = new SourceCatalog(settings, journal, commands ?? new LocalCommand(), repository ?? Environment.CurrentDirectory, digests: digests);
-        var documents = new DocumentService(catalog);
-        var state = new DashboardState(settings.DataDirectory);
         var opener = new EditorOpener(documents, launcher ?? RecordingEditorLauncher.FromEnvironment());
-        var reads = new ReadBaselineService(catalog, documents, new ReadBaselineStore(settings.DataDirectory));
+        var liveConnections = app.Services.GetRequiredService<DashboardLiveConnections>();
         app.Use(async (context, next) =>
         {
             var host = context.Request.Host;
@@ -115,8 +137,10 @@ internal static class DashboardHost
             context.Response.Headers["X-Content-Type-Options"] = "nosniff";
             context.Response.Headers["Referrer-Policy"] = "no-referrer";
             context.Response.Headers["Cache-Control"] = "no-store";
-            context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+            context.Response.Headers["Content-Security-Policy"] = $"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:{context.Connection.LocalPort}; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
             var path = context.Request.Path.Value ?? "/";
+            if (liveConnections.StopRequested && path.StartsWith("/api/live", StringComparison.Ordinal))
+            { context.Response.StatusCode = 503; return; }
             if (path.StartsWith("/api/", StringComparison.Ordinal) && path is not ("/api/bootstrap" or "/api/launch")
                 && !authorization.Valid(context.Request.Cookies[authorization.CookieName]))
             { context.Response.StatusCode = 401; await context.Response.WriteAsJsonAsync(new { error = "Launch worklog dashboard to authorize this browser." }, context.RequestAborted); return; }
@@ -139,6 +163,10 @@ internal static class DashboardHost
             context.Response.Cookies.Append(authorization.CookieName, authorization.Cookie, new CookieOptions
             { HttpOnly = true, SameSite = SameSiteMode.Strict, IsEssential = true, Path = "/", MaxAge = TimeSpan.FromDays(365) });
             return Results.Ok();
+        });
+        app.MapHub<DashboardLiveHub>("/api/live", options =>
+        {
+            options.Transports = HttpTransportType.WebSockets | HttpTransportType.ServerSentEvents;
         });
         app.MapGet("/api/info", () => new { timezone = TimeZoneInfo.TryConvertWindowsIdToIanaId(TimeZoneInfo.Local.Id, out var iana) ? iana : TimeZoneInfo.Local.Id,
             version = Cli.ApplicationInfo.DisplayVersion });

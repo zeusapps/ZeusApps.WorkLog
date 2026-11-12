@@ -77,6 +77,63 @@ public sealed class SourceCatalogTests
     }
 
     [Fact]
+    public async Task SnapshotInvalidationDoesNotForceExpensiveOpenSpecCommands()
+    {
+        using var box = new TestWorkspace();
+        Directory.CreateDirectory(Path.Combine(box.Repo, ".git"));
+        DashboardTests.Write(box, "openspec/changes/demo/design.md", "# Design");
+        var settings = new LocalSettings(box.Data);
+        settings.Configuration.RepositoryContexts[Path.Combine(box.Repo, ".git")] = new(new("repo"));
+        var command = new CountingCommand(box.Repo);
+        var catalog = new SourceCatalog(settings, new DashboardJournal(box.Data), command, box.Repo);
+        var first = await catalog.GetAsync();
+        var commandCalls = command.CallCount;
+        var contextCalls = command.ContextCalls;
+        var listCalls = command.ListCalls;
+
+        catalog.InvalidateSnapshot();
+        var second = await catalog.GetAsync();
+
+        Assert.NotSame(first, second);
+        Assert.Equal(commandCalls, command.CallCount);
+        Assert.Same(second, catalog.GetCachedSnapshot());
+
+        catalog.InvalidateSourceResolutions([box.Repo]);
+        catalog.InvalidateSnapshot();
+        await catalog.GetAsync();
+        Assert.Equal(contextCalls + 1, command.ContextCalls);
+        Assert.Equal(listCalls, command.ListCalls);
+    }
+
+    [Fact]
+    public async Task JournalReplacementInvalidatesOnlyTheDerivedRepositoryIdentityCache()
+    {
+        using var box = new TestWorkspace();
+        var settings = new LocalSettings(box.Data);
+        var journal = new WorkLog.Journaling.Journal(settings, new("repo-a"));
+        journal.Log(new("in_progress", "demo", Summary: "same row", OccurredAt: "2026-11-06T10:00:00Z"));
+        var command = new CountingCommand(box.Repo);
+        var catalog = new SourceCatalog(settings, new DashboardJournal(box.Data), command, box.Repo);
+        var first = await catalog.GetAsync();
+        var commandCalls = command.CallCount;
+        Assert.Contains(first.Repositories, repository => repository.Id == "repo-a");
+
+        var replacementData = Path.Combine(box.Root, "replacement-data");
+        var replacementSettings = new LocalSettings(replacementData);
+        new WorkLog.Journaling.Journal(replacementSettings, new("repo-b"))
+            .Log(new("in_progress", "demo", Summary: "same row", OccurredAt: "2026-11-06T10:00:00Z"));
+        File.Copy(Path.Combine(replacementData, "journal.db"), Path.Combine(box.Data, "journal.db.replacement"));
+        File.Move(Path.Combine(box.Data, "journal.db.replacement"), Path.Combine(box.Data, "journal.db"), overwrite: true);
+
+        catalog.InvalidateJournalRepositories();
+        var replaced = await catalog.GetAsync();
+
+        Assert.Contains(replaced.Repositories, repository => repository.Id == "repo-b");
+        Assert.DoesNotContain(replaced.Repositories, repository => repository.Id == "repo-a");
+        Assert.Equal(commandCalls, command.CallCount);
+    }
+
+    [Fact]
     public async Task DuplicateArchivesRequireChoiceAndDatedNamesStillResolve()
     {
         using var box = new TestWorkspace(); var setup = DashboardTests.Setup(box);
@@ -115,6 +172,49 @@ public sealed class SourceCatalogTests
         finally { File.Delete(link); }
     }
 
+    [Fact]
+    public async Task AllCacheRevalidationEvictsAReplacedParentLinkWithoutReadingItsTarget()
+    {
+        using var box = new TestWorkspace(); var setup = DashboardTests.Setup(box);
+        DashboardTests.Write(box, "openspec/changes/demo/design.md", "Contained source text");
+        var snapshot = await setup.Catalog.GetAsync();
+        var sourceId = Assert.Single(snapshot.Sources).Id;
+        var request = new DocumentRequest(sourceId, "demo", "design.md");
+        _ = await setup.Documents.GetAsync(request);
+        var readsBeforeRevalidation = setup.Documents.HashReads;
+
+        var original = Path.Combine(box.Repo, "openspec/changes/demo");
+        Directory.Move(original, original + ".saved");
+        var outside = Path.Combine(box.Root, "outside-change");
+        Directory.CreateDirectory(outside);
+        await File.WriteAllTextAsync(Path.Combine(outside, "design.md"), "External target must not be read");
+        var linked = false;
+        try
+        {
+            Directory.CreateSymbolicLink(original, outside);
+            linked = true;
+        }
+        catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows())
+        {
+            var result = await new LocalCommand().RunAsync("cmd.exe", box.Repo,
+                ["/d", "/c", "mklink", "/J", original, outside], CancellationToken.None);
+            Assert.Equal(0, result.ExitCode);
+            linked = true;
+        }
+
+        try
+        {
+            Assert.True(linked);
+            Assert.True(await setup.Documents.RevalidateSuspectAsync(null));
+            Assert.Equal(readsBeforeRevalidation, setup.Documents.HashReads);
+            await Assert.ThrowsAsync<ArgumentException>(() => setup.Documents.GetAsync(request));
+        }
+        finally
+        {
+            if (Directory.Exists(original)) Directory.Delete(original);
+        }
+    }
+
     private sealed class StoreCommand(string repo, string store) : LocalCommand
     {
         public bool UsedStoreSelection { get; private set; }
@@ -131,5 +231,19 @@ public sealed class SourceCatalogTests
         public override Task<CommandOutput> RunAsync(string executable, string directory, string[] arguments, CancellationToken cancellationToken)
             => executable == "git" ? new DashboardTests.FixtureCommand(repo).RunAsync(executable, directory, arguments, cancellationToken)
                 : Task.FromResult(new CommandOutput(false, -1, "", "Not installed"));
+    }
+
+    private sealed class CountingCommand(string repo) : LocalCommand
+    {
+        public int CallCount { get; private set; }
+        public int ContextCalls { get; private set; }
+        public int ListCalls { get; private set; }
+        public override Task<CommandOutput> RunAsync(string executable, string directory, string[] arguments, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            if (executable == "openspec" && arguments[0] == "context") ContextCalls++;
+            if (executable == "openspec" && arguments[0] == "list") ListCalls++;
+            return new DashboardTests.FixtureCommand(repo).RunAsync(executable, directory, arguments, cancellationToken);
+        }
     }
 }

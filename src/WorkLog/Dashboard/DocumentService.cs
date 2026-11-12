@@ -22,7 +22,7 @@ internal sealed record LinkTarget(string SourceId, string Change, string Path, s
 internal sealed partial class DocumentService(SourceCatalog catalog)
 {
     public const int MaximumBytes = 2 * 1024 * 1024;
-    private sealed record Cached(long Length, DateTime LastWrite, string Text, string Revision, Encoding Encoding, bool Bom, long Order);
+    private sealed record Cached(long Length, DateTime LastWrite, string Text, string Revision, Encoding Encoding, bool Bom, long Order, DocumentRequest? Request);
     private const int CacheEntries = 256;
     private long order;
     private readonly ConcurrentDictionary<string, Cached> cache = new(StringComparer.Ordinal);
@@ -57,7 +57,7 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
         return resolved.File;
     }
 
-    private Cached Read(string path, bool fresh = false, bool cacheResult = true)
+    private Cached Read(string path, bool fresh = false, bool cacheResult = true, DocumentRequest? request = null)
     {
         for (var attempt = 0; attempt < 3; attempt++)
         {
@@ -74,9 +74,9 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
             var text = encoding.GetString(bytes, bomLength, bytes.Length - bomLength);
             // A read that is not cached is for parsing only: it needs neither the revision nor the hash.
             if (!cacheResult)
-                return new Cached(after.Length, after.LastWriteTimeUtc, text, "", encoding, bomLength > 0, 0);
+                return new Cached(after.Length, after.LastWriteTimeUtc, text, "", encoding, bomLength > 0, 0, null);
             var value = new Cached(after.Length, after.LastWriteTimeUtc, text,
-                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)), encoding, bomLength > 0, Interlocked.Increment(ref order));
+                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)), encoding, bomLength > 0, Interlocked.Increment(ref order), request);
             HashReads++;
             // Evict the oldest entry rather than dropping the whole cache.
             if (cache.Count >= CacheEntries && !cache.ContainsKey(path))
@@ -101,7 +101,7 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
     {
         var snapshot = await catalog.GetAsync(cancellationToken);
         var resolved = Resolve(snapshot, request);
-        return Content(request, resolved, Read(resolved.File));
+        return Content(request, resolved, Read(resolved.File, request: request));
     }
 
     /// <summary>
@@ -111,10 +111,51 @@ internal sealed partial class DocumentService(SourceCatalog catalog)
     {
         var snapshot = await catalog.GetAsync(cancellationToken);
         var resolved = Resolve(snapshot, request);
-        var value = Read(resolved.File);
+        var value = Read(resolved.File, request: request);
         return request.KnownRevision is not null && request.KnownRevision == value.Revision
             ? new DocumentUnchanged(value.Revision) : Content(request, resolved, value);
     }
+
+    /// <summary>
+    /// Revalidates cached documents made suspect by a server-side filesystem hint. A null path means all bounded cache entries;
+    /// ordinary reconciliation never calls this method, so idle work does not read or hash document bodies.
+    /// </summary>
+    internal async Task<bool> RevalidateSuspectAsync(IEnumerable<string>? paths, CancellationToken cancellationToken = default)
+    {
+        (string Path, Cached Value)[] candidates;
+        if (paths is null) candidates = cache.Take(CacheEntries).Select(pair => (pair.Key, pair.Value)).ToArray();
+        else
+        {
+            var selected = new List<(string Path, Cached Value)>();
+            foreach (var path in paths.Select(Path.GetFullPath).Distinct(PathComparer))
+                if (cache.TryGetValue(path, out var value)) selected.Add((path, value));
+            candidates = selected.Take(CacheEntries).ToArray();
+        }
+        var snapshot = candidates.Length == 0 ? null : await catalog.GetAsync(cancellationToken);
+        var changed = false;
+        foreach (var (path, prior) in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!cache.TryRemove(path, out _)) continue;
+            try
+            {
+                if (prior.Request is null || snapshot is null) { changed = true; continue; }
+                // A cache key is only a former resolution. Re-resolve its request against live path containment before
+                // reading any suspect bytes, so a replaced file or parent link cannot grant stale access.
+                var resolved = Resolve(snapshot, prior.Request);
+                var currentPath = Path.GetFullPath(resolved.File);
+                if (!PathComparer.Equals(currentPath, Path.GetFullPath(path))) changed = true;
+                var current = Read(currentPath, fresh: true, request: prior.Request);
+                changed |= current.Revision != prior.Revision;
+            }
+            catch (FileNotFoundException) { changed = true; }
+            catch (ArgumentException) { changed = true; } // Oversized or no longer a contained readable Markdown file.
+            catch (IOException) { changed = true; }
+        }
+        return changed;
+    }
+
+    private static StringComparer PathComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     private static DocumentContent Content(DocumentRequest request, (string File, bool Archived, string Location) resolved, Cached value)
     {

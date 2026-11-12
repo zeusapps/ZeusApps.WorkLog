@@ -6,6 +6,7 @@ import { App } from "./app";
 import { Catalog, Change } from "./models";
 import { DocumentContent } from "./models";
 import { renderMarkdown } from "./markdown";
+import { primeLiveRevision, sendRevision } from "./app-live-test-helpers";
 const change: Change = {
   sourceId: "s",
   name: "demo",
@@ -93,7 +94,7 @@ describe("Angular workspace behavior", () => {
     expect(app.editingReview()).toBeNull();
     fixture.destroy();
   });
-  it("keeps a document switch when an earlier catalog poll finishes during loading", async () => {
+  it("keeps a document switch when an earlier catalog notification finishes during loading", async () => {
     const { app, fixture } = setup();
     const design: DocumentContent = {
       sourceId: "s", change: "demo", path: "design.md", location: "project",
@@ -113,10 +114,12 @@ describe("Angular workspace behavior", () => {
           ? documentRequest : Promise.resolve(Response.json(design));
       throw new Error("Unexpected request: " + path);
     });
-    const poll = app["poll"]();
+    primeLiveRevision(app);
+    const refresh = sendRevision(app, { catalog: 2, dirty: ["catalog"] });
+    app["selectionEpoch"]++;
     const navigation = app["loadDocument"](proposal);
     finishCatalog(Response.json(app.catalog()!));
-    await poll;
+    await refresh;
     finishProposal(Response.json(proposal));
     await navigation;
     expect(app.document()?.path).toBe("proposal.md");

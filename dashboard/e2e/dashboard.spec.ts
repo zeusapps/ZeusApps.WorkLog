@@ -1,4 +1,4 @@
-import { test, expect, Page, BrowserContext, Route } from "@playwright/test";
+import { test, expect, Page, BrowserContext, Route, Request, TestInfo } from "@playwright/test";
 import { readFile, writeFile, mkdir, rename, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
@@ -157,6 +157,105 @@ async function openTimeline(page: Page, useDefaultDocument = false) {
     page.getByRole("dialog", { name: "OpenSpec document reader" }),
   ).toBeVisible();
   await expect(page.locator(".markdown h1")).toHaveText("Activity timeline");
+}
+function trackTimelineReads(page: Page) {
+  const requiredPaths = new Set(["/api/document", "/api/reviews"]);
+  const started = new Map<string, number>();
+  const completed = new Map<string, number>();
+  const pending = new Set<string>();
+  const requestIds = new Map<Request, string>();
+  const failures: string[] = [];
+  const pathFor = (request: Request) => {
+    const path = new URL(request.url()).pathname;
+    return request.method() === "POST" && requiredPaths.has(path) ? path : null;
+  };
+  const onRequest = (request: Request) => {
+    const path = pathFor(request);
+    if (!path) return;
+    const id = `${path}:${started.get(path) ?? 0}`;
+    started.set(path, (started.get(path) ?? 0) + 1);
+    pending.add(id);
+    requestIds.set(request, id);
+  };
+  const onFinished = (request: Request) => {
+    const id = requestIds.get(request);
+    if (!id) return;
+    pending.delete(id);
+    const path = pathFor(request);
+    if (path) completed.set(path, (completed.get(path) ?? 0) + 1);
+  };
+  const onFailed = (request: Request) => {
+    const id = requestIds.get(request);
+    if (!id) return;
+    pending.delete(id);
+    failures.push(`${pathFor(request) ?? "relevant read"}: ${request.failure()?.errorText ?? "request failed"}`);
+  };
+  page.on("request", onRequest);
+  page.on("requestfinished", onFinished);
+  page.on("requestfailed", onFailed);
+  return {
+    async waitForReadsAndLive() {
+      await expect.poll(async () => {
+        if (failures.length) throw new Error(`Timeline read failed before archive: ${failures.join("; ")}`);
+        const readsFinished = [...requiredPaths].every(path => (started.get(path) ?? 0) > 0 &&
+          (completed.get(path) ?? 0) === started.get(path));
+        if (!readsFinished || pending.size > 0) return false;
+        return page.locator(".live-status").evaluateAll(nodes => nodes.length > 0 && nodes.every(node => {
+          const box = node.getBoundingClientRect();
+          return node.getAttribute("data-state") === "live" && box.width > 0 && box.height > 0 &&
+            getComputedStyle(node).visibility !== "hidden";
+        }));
+      }, { timeout: 15_000, message: "document and review reads must finish before the page is reconciled Live" }).toBe(true);
+      if (failures.length || pending.size > 0) throw new Error("Timeline API reads changed after the Live readiness check.");
+    },
+    dispose() {
+      page.off("request", onRequest);
+      page.off("requestfinished", onFinished);
+      page.off("requestfailed", onFailed);
+    },
+  };
+}
+async function captureArchiveLockProbe(info: Awaited<ReturnType<typeof fixture>>, testInfo: TestInfo) {
+  const configuredPath = process.env["WORKLOG_C06_ARCHIVE_LOCK_PROBE"];
+  if (!configuredPath) return;
+  const expectedPaths = [
+    resolve("artifacts/realtime-dashboard-updates/archive-lock-probe.ps1"),
+    resolve("../artifacts/realtime-dashboard-updates/archive-lock-probe.ps1"),
+  ];
+  const candidates = [resolve(configuredPath), resolve("..", configuredPath)];
+  const probePath = candidates.find(candidate => expectedPaths.includes(candidate) && existsSync(candidate));
+  const evidencePath = testInfo.outputPath("archive-lock-probe.json");
+  const evidence: Record<string, unknown> = { probe: "archive-lock-probe.ps1", state: "not-run" };
+  try {
+    if (!probePath) throw new Error("WORKLOG_C06_ARCHIVE_LOCK_PROBE must identify the ignored archive-lock-probe.ps1 script.");
+    const healthResponse = await fetch(base + "/health");
+    if (!healthResponse.ok) throw new Error("Dashboard health returned " + healthResponse.status + " during the archive failure probe.");
+    const health = await healthResponse.json() as { pid?: number };
+    if (!Number.isInteger(health.pid) || health.pid! < 1)
+      throw new Error("Dashboard health did not provide a valid pid for the lock probe.");
+    const targetDirectory = join(info.repo, "openspec/changes/activity-timeline");
+    const probe = spawnSync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", probePath,
+      "-WorkspaceRoot", info.repo, "-TargetDirectory", targetDirectory, "-DashboardPid", String(health.pid),
+    ], { encoding: "utf8", windowsHide: true, timeout: 10_000 });
+    evidence.state = probe.error ? "probe-process-error" : probe.status === 0 ? "completed" : "probe-failed";
+    evidence.exitCode = probe.status;
+    evidence.errorCode = (probe.error as NodeJS.ErrnoException | undefined)?.code ?? null;
+    evidence.stdout = probe.stdout?.trim() ?? "";
+    evidence.stderr = probe.stderr?.trim() ?? "";
+    if (probe.status === 0) {
+      try { evidence.result = JSON.parse(probe.stdout); } catch { /* Preserve non-JSON output as raw ignored evidence. */ }
+    }
+  } catch (error) {
+    evidence.state = "probe-invocation-error";
+    evidence.error = error instanceof Error ? error.message : String(error);
+  }
+  try {
+    await mkdir(dirname(evidencePath), { recursive: true });
+    await writeFile(evidencePath, JSON.stringify(evidence, null, 2) + "\n");
+  } catch (error) {
+    console.error("Could not persist archive lock probe evidence:", error);
+  }
 }
 async function renderPaletteAndMeasure(page: Page, theme: "dark" | "light") {
   return page.evaluate((activeTheme) => {
@@ -330,11 +429,32 @@ test("defaults to dark, serves a favicon, and remembers the light theme", async 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
-test("switches documents during polling and ignores slower earlier selections", async ({ page }, testInfo) => {
+test("shows the connection status inside the open reader without overflow at phone, tablet and desktop widths", async ({ page }) => {
+  await authorize(page);
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(value => document.documentElement.setAttribute("data-theme", value), theme);
+    for (const width of [390, 768, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      if (!(await readerDialog(page).count())) await openTimeline(page);
+      const status = page.getByTestId("reader-live-status");
+      await expect(status).toBeVisible();
+      await expect(status).toContainText(/Live|Reconnecting|Updates paused/);
+      const overflow = await page.locator(".reader-meta").evaluate(el => el.scrollWidth - el.clientWidth);
+      expect(overflow, `${theme} ${width}px reader-meta overflow`).toBeLessThanOrEqual(0);
+      await expect(page.locator("[role=status][data-state]")).toHaveCount(1);
+    }
+    await closeReader(page);
+  }
+});
+
+test("switches documents during a live catalog refresh and ignores slower earlier selections", async ({ page }, testInfo) => {
   await authorize(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByRole("button", { name: "All repositories", exact: true }).click();
   await openTimeline(page);
+  const info = await fixture();
+  const externalFile = join(info.repo, "openspec/changes/activity-timeline/tasks.md");
+  const externalOriginal = await readFile(externalFile, "utf8");
   let releaseCatalog!: () => void, catalogStarted!: () => void;
   const catalogHeld = new Promise<void>(resolve => releaseCatalog = resolve);
   const catalogReady = new Promise<void>(resolve => catalogStarted = resolve);
@@ -358,6 +478,8 @@ test("switches documents during polling and ignores slower earlier selections", 
     await route.fulfill({ response });
   });
   try {
+    // An external file change makes the host publish a revision, and the open page refreshes its catalog without polling.
+    await writeFile(externalFile, externalOriginal + "\nExternal live-refresh note.\n");
     await catalogReady;
     await page.getByRole("button", { name: "proposal.md", exact: true }).click();
     await documentReady;
@@ -387,6 +509,7 @@ test("switches documents during polling and ignores slower earlier selections", 
     releaseCatalog();
     releaseDocument();
     await page.unroute("**/api/document");
+    await writeFile(externalFile, externalOriginal);
   }
 });
 
@@ -527,8 +650,7 @@ test("shows factual history, continuation and observation details", async ({
   await page
     .getByRole("button", { name: "All repositories", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Work history", exact: false })
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Work history" })
     .click();
   await expect(
     page.getByRole("heading", { name: "Work over time" }),
@@ -555,7 +677,7 @@ test("shows factual history, continuation and observation details", async ({
 
 test("keeps links working after archiving and honors repeat no-open launches", async ({
   page,
-}) => {
+}, testInfo) => {
   await authorize(page);
   await page
     .getByRole("button", { name: "All repositories", exact: true })
@@ -563,15 +685,26 @@ test("keeps links working after archiving and honors repeat no-open launches", a
   const info = await fixture();
   const designFile = join(info.repo, "openspec/changes/activity-timeline/design.md");
   await writeFile(designFile, (await readFile(designFile, "utf8")) + "\n<!-- REVIEW: Archive-safe note -->\n");
-  await openTimeline(page);
-  await expect(page.getByRole("button", { name: "Edit review comment", exact: true })).toHaveCount(1);
+  const timelineReads = trackTimelineReads(page);
+  try {
+    await openTimeline(page);
+    await expect(page.getByRole("button", { name: "Edit review comment", exact: true })).toHaveCount(1);
+    await timelineReads.waitForReadsAndLive();
+  } finally {
+    timelineReads.dispose();
+  }
   const original = page.url();
   const archive = join(info.repo, "openspec/changes/archive");
   await mkdir(archive, { recursive: true });
-  await rename(
-    join(info.repo, "openspec/changes/activity-timeline"),
-    join(archive, "2026-10-26-activity-timeline"),
-  );
+  try {
+    await rename(
+      join(info.repo, "openspec/changes/activity-timeline"),
+      join(archive, "2026-10-26-activity-timeline"),
+    );
+  } catch (renameError) {
+    await captureArchiveLockProbe(info, testInfo);
+    throw renameError;
+  }
   await expect(page.locator(".reader-provenance .badge")).toHaveText(
     "Archived",
   );
@@ -605,7 +738,7 @@ test("keeps links working after archiving and honors repeat no-open launches", a
     "dashboard",
     "--no-open",
     "--port",
-    "47942",
+    String(testPort),
     "--data-dir",
     info.data,
   ];
@@ -617,7 +750,7 @@ test("keeps links working after archiving and honors repeat no-open launches", a
   );
   expect(repeat.status, repeat.stderr).toBe(0);
   expect(repeat.stdout).toContain(base);
-  expect((await (await fetch(base + "/health")).json()).port).toBe(47942);
+  expect((await (await fetch(base + "/health")).json()).port).toBe(testPort);
 });
 
 test("remains usable while a separate MCP process logs and queries", async ({
@@ -751,7 +884,7 @@ test("Escape leaves the comment field first and closes the reader second", async
 test("a focused history day is temporary and a reload restores the remembered range", async ({ page }) => {
   await authorize(page);
   await page.getByRole("button", { name: "All repositories", exact: true }).click();
-  await page.getByRole("button", { name: "Work history", exact: false }).click();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Work history" }).click();
   await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible();
   const saved = page.waitForResponse(
     (r) => r.url().endsWith("/api/state") && r.request().method() === "PUT" && r.request().postDataJSON().history?.range?.days === 7,
@@ -791,7 +924,7 @@ test("a relative history range rolls forward when the dashboard stays open for t
       queries.push(r.postDataJSON());
   });
   await authorize(page);
-  await page.getByRole("button", { name: "Work history", exact: false }).click();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Work history" }).click();
   await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible();
   const from = page.getByLabel("From", { exact: true });
   const through = page.getByLabel("Through", { exact: true });
@@ -858,7 +991,7 @@ test("keeps history available when a declared store cannot be resolved",async({p
   await expect(sources).toContainText(/store.*(resolved|registered|unavailable)|not registered/i);
   if (process.env["WORKLOG_DASHBOARD_NO_NODE"] !== "true")
     await expect(page.locator('.change-card').filter({hasText:'Real root precedence'})).toHaveCount(1);
-  await page.getByRole('button',{name:'Work history',exact:false}).click();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Work history" }).click();
   await expect(page.locator('.timeline-row').first()).toBeVisible();
 });
 
@@ -1257,7 +1390,7 @@ test("Open in editor records the expected document and line for a heading, the r
 
 async function openHistory(page: Page) {
   await page.getByRole("button", { name: "All repositories", exact: true }).click();
-  await page.getByRole("button", { name: "Work history", exact: false }).click();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Work history" }).click();
   await expect(page.getByRole("heading", { name: "Work over time" })).toBeVisible();
   // A filter remembered by an earlier scenario must not leak into this one.
   if (await page.getByRole("textbox", { name: "Ticket filter" }).inputValue()) await page.getByRole("button", { name: "Clear ticket filter" }).click();

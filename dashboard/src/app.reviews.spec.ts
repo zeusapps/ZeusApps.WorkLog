@@ -5,6 +5,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { App } from "./app";
 import { baselineKey } from "./reviews";
 import { Catalog, Change, DocumentContent, ReviewItem } from "./models";
+import { primeLiveRevision, sendRevision } from "./app-live-test-helpers";
 
 const change: Change = {
   sourceId: "s",
@@ -187,10 +188,10 @@ describe("read baselines in the reader", () => {
     const { app, server, open, fixture } = setup();
     const first = server.seed("design.md", design);
     await open("design.md");
+    primeLiveRevision(app);
     server.edit("design.md", design.replace("Third paragraph.", "Third paragraph, edited live."));
     server.calls.length = 0;
-    await app["poll"]();
-    await app["poll"]();
+    await sendRevision(app, { documents: 2, dirty: ["documents"] });
     expect(changedStarts(html(app))).toEqual(["6"]);
     expect(server.marks()).toEqual([]);
     expect(app.baseline()).toEqual(first);
@@ -227,8 +228,9 @@ describe("read baselines in the reader", () => {
     const { app, server, open, fixture } = setup();
     const first = server.seed("design.md", design);
     await open("design.md");
+    primeLiveRevision(app);
     server.edit("design.md", design.replace("Second paragraph.", "Second paragraph, rewritten by the agent."));
-    await app["poll"]();
+    await sendRevision(app, { documents: 2, dirty: ["documents"] });
     expect(changedStarts(html(app))).toEqual(["4"]);
     server.calls.length = 0;
     app.selection.set({ start: 2, end: 3, text: "Intro paragraph." });
@@ -450,17 +452,18 @@ describe("removed since last read", () => {
     server.seed("design.md", withComment);
     server.seed("tasks.md", "# Tasks\n");
     await open("design.md");
+    primeLiveRevision(app);
     expect(app.removedComments()).toEqual([]);
     // The agent addresses the comment: the marker is removed and the paragraph rewritten.
     server.edit("design.md", design.replace("Third paragraph.", "Third paragraph, now much longer."));
-    await app["poll"]();
+    await sendRevision(app, { documents: 2, dirty: ["documents"] });
     expect(app.removedComments().map((r) => [r.id, r.quote, r.text])).toEqual([[idA, "Third paragraph.", "Say more about the third."]]);
     expect(changedStarts(html(app))).toEqual(["6"]);
     const cached = app["removedReviewsMemo"];
     app["renderDocument"](app.document()!);
     expect(app["removedReviewsMemo"]).toBe(cached);
     server.edit("design.md", server.docs.get("design.md")!.text + "\nAn additional current paragraph.\n");
-    await app["poll"]();
+    await sendRevision(app, { documents: 3, dirty: ["documents"] });
     expect(app["removedReviewsMemo"]).not.toBe(cached);
     await open("tasks.md");
     expect(app["removedReviewsMemo"]).toBeNull();
@@ -471,8 +474,9 @@ describe("removed since last read", () => {
     const { app, server, open, fixture } = setup();
     server.seed("design.md", design + "\n" + marker(idA, "Third paragraph.", "Original") + "\n");
     await open("design.md");
+    primeLiveRevision(app);
     server.edit("design.md", design + "\n" + marker(idA, "Third paragraph.", "Reworded") + "\n");
-    await app["poll"]();
+    await sendRevision(app, { documents: 2, dirty: ["documents"] });
     expect(app.readMarks()).not.toBeNull();
     expect(app.removedComments()).toEqual([]);
     fixture.destroy();
@@ -609,18 +613,16 @@ describe("open review comments panel", () => {
     fixture.destroy();
   });
 
-  it("refreshes the overview only when the catalog revision moves", async () => {
+  it("refreshes the overview only when the document revision moves", async () => {
     const { app, server, fixture } = setup();
     app.ready.set(true);
-    app["overviewRevision"] = server.catalog.revision;
-    app["journalSnapshot"] = server.catalog.journalSnapshot;
-    for (let i = 0; i < 5; i++) await app["poll"]();
+    primeLiveRevision(app);
+    for (let i = 0; i < 5; i++) await app["receiveRevision"](app["revisionTracker"].desired()!);
     expect(server.count("/api/reviews")).toBe(0);
     expect(server.count("/api/reads/summary")).toBe(0);
     server.catalog = { ...server.catalog, revision: "2" };
-    await app["poll"]();
-    await vi.waitFor(() => expect(server.count("/api/reviews")).toBe(1));
-    await app["poll"]();
+    await sendRevision(app, { documents: 2, dirty: ["documents"] });
+    await app["receiveRevision"](app["revisionTracker"].desired()!);
     expect(server.count("/api/reviews")).toBe(1);
     expect(server.count("/api/reads/summary")).toBe(1);
     server.reviews = { items: [], unavailable: [] };
@@ -631,14 +633,12 @@ describe("open review comments panel", () => {
     const { app, server, fixture } = setup();
     server.reviews = { items: [item(change, "design.md", 4, "One"), item(change, "design.md", 9, "Two")], unavailable: [] };
     app.ready.set(true);
-    app["overviewRevision"] = server.catalog.revision;
-    app["journalSnapshot"] = server.catalog.journalSnapshot;
     await app.loadReviews();
+    primeLiveRevision(app);
     expect(app.commentCount(change)).toBe(2);
     server.reviews = { items: [item(change, "design.md", 9, "Two")], unavailable: [] };
     server.catalog = { ...server.catalog, revision: "2" };
-    await app["poll"]();
-    await vi.waitFor(() => expect(app.commentCount(change)).toBe(1));
+    await sendRevision(app, { documents: 2, dirty: ["documents"] });
     expect(app.reviewTotal()).toBe(1);
     fixture.destroy();
   });
@@ -732,15 +732,72 @@ describe("navigating between changes", () => {
     fixture.destroy();
   });
 
+  it("keeps the post-render work of an explicit load when a live poll that renders nothing starts right after it (ANALYSIS-701)", async () => {
+    const { app, server, open, content, fixture } = setup();
+    server.seed("design.md", design);
+    await open("design.md");
+    primeLiveRevision(app);
+    app["liveConnection"] = {
+      stop: async () => {},
+      markReconciling: () => app.liveStatus.set("reconnecting"),
+      markReconciled: () => app.liveStatus.set("live"),
+      markPaused: () => app.liveStatus.set("paused"),
+      authorizationLost: () => {},
+    } as any;
+    const edited = server.edit("design.md", design.replace("Intro paragraph.", "Intro, rewritten."));
+
+    // Hold the explicit load, then queue a Documents revision behind it.
+    const realFetch = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let finishExplicit!: (response: Response) => void;
+    let held = false;
+    vi.mocked(globalThis.fetch).mockImplementation((input, options) => {
+      if (String(input) !== "/api/document" || held) return realFetch(input, options);
+      held = true;
+      return new Promise<Response>((resolve) => { finishExplicit = resolve; });
+    });
+    const scrolled = vi.spyOn(app, "scrollTo").mockImplementation(() => {});
+    const explicit = app["loadDocument"]({ sourceId: "s", change: "demo", path: "design.md", variant: "v" }, "line-3");
+    await vi.waitFor(() => expect(held).toBe(true));
+    const live = sendRevision(app, { documents: 2, dirty: ["documents"] });
+    await vi.waitFor(() => expect(app["foregroundWaiters"].length).toBe(1));
+
+    // The poll starts in a microtask of the release and is served `unchanged`, so it renders nothing.
+    finishExplicit(Response.json(content("design.md")));
+    await explicit;
+    await live;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    fixture.detectChanges();
+
+    expect(app.document()?.revision).toBe(edited.revision);
+    expect(server.calls.filter((c) => c.path === "/api/document" && c.body.knownRevision === edited.revision).length).toBeGreaterThan(0);
+    expect(app.changeCount()).toBeGreaterThan(0);
+    expect(scrolled).toHaveBeenCalledWith("line-3");
+    fixture.destroy();
+  });
+
+  it("still cancels the post-render work when the document is closed before the timer runs", async () => {
+    const { app, server, open, fixture } = setup();
+    server.seed("design.md", design);
+    await open("design.md");
+    server.edit("design.md", design.replace("Intro paragraph.", "Intro, rewritten."));
+    const scrolled = vi.spyOn(app, "scrollTo").mockImplementation(() => {});
+    await app["loadDocument"]({ sourceId: "s", change: "demo", path: "design.md", variant: "v" }, "line-3");
+    app.document.set(null);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(scrolled).not.toHaveBeenCalled();
+    fixture.destroy();
+  });
+
   it("uses a focusable document-level stop when a large comparison is incomplete, including an empty current document", async () => {
     const { app, server, open, fixture } = setup();
     const before = Array.from({ length: 2100 }, (_, index) => `baseline unique line ${index}`).join("\n") + "\n";
     const after = Array.from({ length: 2100 }, (_, index) => `replacement unique line ${index}`).join("\n") + "\n";
     server.seed("design.md", before);
     await open("design.md");
+    primeLiveRevision(app);
 
     server.edit("design.md", after);
-    await app["poll"]();
+    await sendRevision(app, { documents: 2, dirty: ["documents"] });
     fixture.detectChanges();
     app["syncStops"]();
     expect(app.readMarks()?.incomplete).toBe(true);
@@ -760,7 +817,7 @@ describe("navigating between changes", () => {
     expect(document.activeElement).toBe(source);
 
     server.edit("design.md", "");
-    await app["poll"]();
+    await sendRevision(app, { documents: 3, dirty: ["documents"] });
     app.setSourceView(false);
     fixture.detectChanges();
     app["syncStops"]();
