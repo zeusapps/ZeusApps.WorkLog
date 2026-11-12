@@ -9,6 +9,10 @@ Orchestrator-owned ledger.
 - **Origin:** archived change `2026-11-12-realtime-dashboard-updates` (reports `analysis-032.md`, `qa-029.md`).
 - **Design:** skipped (optional artifact; small single-concern fixes with no architectural decision).
 
+### Completion and archive (2026-11-12, user request "do all")
+
+- 3.2 checked (4/4). Implementation commit `f74c1ac`. No REVIEW markers. The two ADDED requirements were synced into `openspec/specs/work-dashboard` and verified, and strict spec validation passes. Archived to `openspec/changes/archive/2026-11-12-dashboard-live-polish`, fast-forward merged into local `main`, and a dev build installed for the user. Not pushed.
+
 ### Results (2026-11-12)
 
 - Tasks 1.1, 2.1, 3.1 checked (3/4); 3.2 awaits the user-approved commit.
