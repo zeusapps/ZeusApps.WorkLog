@@ -26,6 +26,12 @@ public sealed class InstructionOptionsTests
         Assert.Contains(LoggingGuidance.ContentRule, codex);
         Assert.Contains(LoggingGuidance.Digest, claude);
         Assert.Contains(LoggingGuidance.DigestSaving, codex);
+        Assert.Contains(LoggingGuidance.DigestSessionKnowledge, claude);
+        Assert.Contains(LoggingGuidance.DigestSessionKnowledge, codex);
+        Assert.Contains("never restates only the latest", claude);
+        Assert.Contains("never restates only the latest", codex);
+        Assert.Contains("bug-hunter", claude);
+        Assert.Contains("OpenSpec", codex);
         Assert.DoesNotContain("Do not narrate process", claude);
         // Apart from the agent name, the blocks are identical, so the guidance cannot diverge per client.
         Assert.Equal(claude.Replace("Agent: claude.", "Agent: <agent>."), codex.Replace("Agent: codex.", "Agent: <agent>."));
@@ -259,8 +265,11 @@ public sealed class InstructionOptionsTests
         Assert.Contains("Do not retry a digest rejected as stale", paragraph);
         Assert.Contains(LoggingGuidance.Digest, paragraph);
         Assert.Contains(LoggingGuidance.DigestSaving, paragraph);
-        Assert.Contains("your own knowledge of the session", paragraph);
-        Assert.Contains($"at most {LoggingGuidance.DigestLimit} characters", paragraph);
+        Assert.Contains(LoggingGuidance.DigestSessionKnowledge, paragraph);
+        Assert.DoesNotContain("your own knowledge of the session", paragraph);
+        Assert.Contains($"at most {LoggingGuidance.BulletLimit} characters", paragraph);
+        Assert.Contains(LoggingGuidance.ContentRule, paragraph);
+        Assert.Contains("never restates only the latest", paragraph);
         Assert.Contains("unavailable, skip the digest without reporting an error", paragraph);
         // The blocks differ only in the agent name, so digest policy cannot diverge per client.
         Assert.Equal(claude.Replace("Agent: claude.", "Agent: <agent>."), codex.Replace("Agent: codex.", "Agent: <agent>."));

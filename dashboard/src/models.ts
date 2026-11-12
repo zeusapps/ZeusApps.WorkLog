@@ -124,10 +124,16 @@ export interface DailyItem {
   primary: Entry;
   others: Entry[];
 }
-/** A stored agent digest: the sorted IDs of the observations it covers and its text. */
+/**
+ * A stored agent digest: the sorted IDs of the observations it covers, its readable flattened text, and, for a structured digest,
+ * its Done / Next / Blockers bullets. The lists are omitted by the server when there are no valid parts (and by an older server).
+ */
 export interface DayDigest {
   covers: string[];
   text: string;
+  done?: string[];
+  next?: string[];
+  blockers?: string[];
 }
 export interface DailyDigestIssue {
   category: string;

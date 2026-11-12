@@ -510,66 +510,33 @@
       </section>
       }@else if(view()==='daily'){
       <section class="panel daily-panel" aria-labelledby="daily-title">
-        <div class="section-heading">
+        <div class="section-heading daily-heading">
           <div>
             <h2 id="daily-title">Daily</h2>
             <p>Built only from recorded observations and the Ongoing board. Nothing is inferred.</p>
           </div>
-          <div class="daily-controls">
-            <select class="editor-select" aria-label="Copy format" [ngModel]="dailyFormat()" (ngModelChange)="setDailyFormat($event)">
-              <option value="text">Plain text</option>
-              <option value="markdown">Markdown</option>
-            </select>
-            <label class="daily-links-toggle"><input type="checkbox" [ngModel]="dailyLinks()" (ngModelChange)="setDailyLinks($event)" aria-label="Include ticket links" /> Ticket links</label>
-            <button type="button" class="primary-button" data-testid="copy-daily" [disabled]="!dailyTodayView()" (click)="copyDaily()">Copy for daily</button>
+          <div class="daily-header-tools">
+            @if(dailyData();as nav){
+            <span class="daily-days" role="group" aria-label="Recorded days">
+              <button type="button" class="secondary-button" data-testid="daily-previous" [disabled]="!nav.digest.previousDay" (click)="stepDaily(nav.digest.previousDay)">&#8592; Previous recorded day</button>
+              <button type="button" class="secondary-button" data-testid="daily-next" [disabled]="!nav.digest.nextDay" (click)="stepDaily(nav.digest.nextDay)">Next recorded day &#8594;</button>
+            </span>
+            }
+            <div class="daily-controls">
+              <select class="editor-select" aria-label="Copy format" [ngModel]="dailyFormat()" (ngModelChange)="setDailyFormat($event)">
+                <option value="text">Plain text</option>
+                <option value="markdown">Markdown</option>
+              </select>
+              <label class="daily-links-toggle"><input type="checkbox" [ngModel]="dailyLinks()" (ngModelChange)="setDailyLinks($event)" aria-label="Include ticket links" /> Ticket links</label>
+              <button type="button" class="primary-button" data-testid="copy-daily" [disabled]="!dailyTodayView()" (click)="copyDaily()">Copy for daily</button>
+            </div>
           </div>
         </div>
         @if(dailyData();as data){
         @if(data.digest.digestIssue;as digestIssue){
         <p class="message" role="status" data-testid="daily-digest-issue">{{digestIssue.message}}</p>
         }
-        <section class="daily-section" aria-labelledby="daily-yesterday-title" data-testid="daily-yesterday">
-          <header class="daily-section-heading">
-            <h3 id="daily-yesterday-title">Yesterday</h3>
-            @if(data.digest.day;as day){
-            <span class="badge" data-testid="daily-day">{{dayLabel(day)}}</span>
-            <span class="muted small" data-testid="daily-day-kind">{{data.digest.nextDay===null?'Last recorded day':'Recorded day'}}</span>
-            }
-            <span class="daily-days" role="group" aria-label="Recorded days">
-              <button type="button" class="secondary-button" data-testid="daily-previous" [disabled]="!data.digest.previousDay" (click)="stepDaily(data.digest.previousDay)">&#8592; Previous recorded day</button>
-              <button type="button" class="secondary-button" data-testid="daily-next" [disabled]="!data.digest.nextDay" (click)="stepDaily(data.digest.nextDay)">Next recorded day &#8594;</button>
-            </span>
-          </header>
-          @if(data.digest.day===null){
-          <div class="compact-empty" data-testid="daily-empty">No earlier recorded work exists in the selected repositories.</div>
-          }@else{
-          <ul class="daily-list">
-            @for(item of data.digest.items;track item.id){
-            <li class="daily-line" data-testid="daily-line" [attr.data-item-id]="item.id">
-              <div class="daily-line-head">
-                <strong class="daily-title">{{dailyTitle(item)}}</strong>
-                <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:item.tickets}"></ng-container>
-                <span class="status-dot" [class.done]="item.status==='done'"></span><span class="daily-status">{{statusLabel(item.status)}}</span>
-                <span class="muted small">{{repositoryLabel(item.repository)}}</span>
-              </div>
-              @if(item.changes.length){<div class="daily-changes muted small">{{item.changes.map(humanize).join(' · ')}}</div>}
-              @if(!item.id.startsWith('adhoc:')){
-              @if(dailyDigest(item);as digest){<p class="daily-summary" data-testid="daily-summary">{{digest}} <span class="daily-digest-mark" data-testid="daily-digest-mark">agent digest</span></p>}
-              @else{<p class="daily-summary" data-testid="daily-summary">{{item.primary.summary||noSummary}}</p>}
-              }
-              @if(item.others.length){
-              <details class="daily-others">
-                <summary>{{item.others.length}} other {{item.others.length===1?'observation':'observations'}}</summary>
-                <ul>
-                  @for(other of item.others;track other.id){<li>{{formatTime(other.occurredAt)}} &middot; {{statusLabel(other.status)}} &middot; {{other.summary||noSummary}}</li>}
-                </ul>
-              </details>
-              }
-            </li>
-            }
-          </ul>
-          }
-        </section>
+        <div class="daily-columns">
         <section class="daily-section" aria-labelledby="daily-today-title" data-testid="daily-today">
           <header class="daily-section-heading">
             <h3 id="daily-today-title">Today</h3>
@@ -581,12 +548,11 @@
               <div class="daily-line-head">
                 <strong class="daily-title">{{entry.card.kind==='adhoc'?entry.card.title:humanize(entry.card.title)}}</strong>
                 <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:entry.line?.tickets??entry.card.tickets}"></ng-container>
-                @if(entry.line;as line){<span class="status-dot" [class.done]="line.status==='done'"></span><span class="daily-status">{{statusLabel(line.status)}}</span>}
                 <span class="muted small">{{entry.card.repositories.map(repositoryLabel.bind(this)).join(' · ')}}</span>
+                @if(entry.line;as line){<span class="status-dot" [class.done]="line.status==='done'"></span><span class="daily-status">{{statusLabel(line.status)}}</span>}
               </div>
               @if(entry.line;as line){
-              @if(dailyDigest(line);as digest){<p class="daily-summary" data-testid="daily-today-summary">{{digest}} <span class="daily-digest-mark" data-testid="daily-digest-mark">agent digest</span></p>}
-              @else{<p class="daily-summary" data-testid="daily-today-summary">{{line.primary.summary||noSummary}}</p>}
+              @if(dailyParts(line);as parts){<ng-container *ngTemplateOutlet="dailyBullets;context:{$implicit:parts,testid:'daily-today-summary'}"></ng-container>}
               @if(line.others.length){
               <details class="daily-others">
                 <summary>{{line.others.length}} other {{line.others.length===1?'observation':'observations'}} today</summary>
@@ -606,11 +572,68 @@
           <div class="compact-empty" role="status">Reading today's work&hellip;</div>
           }
         </section>
-        <section class="daily-section" aria-labelledby="daily-blockers-title" data-testid="daily-blockers">
+        <section class="daily-section" aria-labelledby="daily-yesterday-title" data-testid="daily-yesterday">
+          <header class="daily-section-heading">
+            <h3 id="daily-yesterday-title">Yesterday</h3>
+            @if(data.digest.day;as day){
+            <span class="badge" data-testid="daily-day">{{dayLabel(day)}}</span>
+            <span class="muted small" data-testid="daily-day-kind">{{data.digest.nextDay===null?'Last recorded day':'Recorded day'}}</span>
+            }
+          </header>
+          @if(data.digest.day===null){
+          <div class="compact-empty" data-testid="daily-empty">No earlier recorded work exists in the selected repositories.</div>
+          }@else{
+          <ul class="daily-list">
+            @for(item of data.digest.items;track item.id){
+            <li class="daily-line" data-testid="daily-line" [attr.data-item-id]="item.id">
+              <div class="daily-line-head">
+                <strong class="daily-title">{{dailyTitle(item)}}</strong>
+                <ng-container *ngTemplateOutlet="ticketList;context:{$implicit:item.tickets}"></ng-container>
+                <span class="muted small">{{repositoryLabel(item.repository)}}</span>
+                <span class="status-dot" [class.done]="item.status==='done'"></span><span class="daily-status">{{statusLabel(item.status)}}</span>
+              </div>
+              @if(item.changes.length){<div class="daily-changes muted small">{{item.changes.map(humanize).join(' · ')}}</div>}
+              @if(!item.id.startsWith('adhoc:')){
+              @if(dailyParts(item);as parts){<ng-container *ngTemplateOutlet="dailyBullets;context:{$implicit:parts,testid:'daily-summary'}"></ng-container>}
+              }
+              @if(item.others.length){
+              <details class="daily-others">
+                <summary>{{item.others.length}} other {{item.others.length===1?'observation':'observations'}}</summary>
+                <ul>
+                  @for(other of item.others;track other.id){<li>{{formatTime(other.occurredAt)}} &middot; {{statusLabel(other.status)}} &middot; {{other.summary||noSummary}}</li>}
+                </ul>
+              </details>
+              }
+            </li>
+            }
+          </ul>
+          }
+        </section>
+        </div>
+        <section class="daily-section daily-blockers" aria-labelledby="daily-blockers-title" data-testid="daily-blockers">
           <header class="daily-section-heading">
             <h3 id="daily-blockers-title">Blockers</h3>
           </header>
-          <p class="muted">Nothing is recorded about blockers. Add yours when you share the daily.</p>
+          @if(dailyBlockerGroups();as groups){
+          @if(groups.length){
+          <ul class="daily-blocker-list">
+            @for(group of groups;track $index){
+            <li data-testid="daily-blocker">
+              <div class="daily-line-head">
+                @if(group.tickets.length){<ng-container *ngTemplateOutlet="ticketList;context:{$implicit:group.tickets}"></ng-container>}@else{<strong class="daily-title">{{humanize(group.title)}}</strong>}
+              </div>
+              <ul class="daily-bullets">
+                @for(text of group.bullets;track $index){<li>{{text}}</li>}
+              </ul>
+            </li>
+            }
+          </ul>
+          }@else{
+          <p class="muted" data-testid="daily-no-blockers">{{noBlockers}}</p>
+          }
+          }@else{
+          <div class="compact-empty" role="status">Reading today's work&hellip;</div>
+          }
         </section>
         }@else{
         <div class="compact-empty" role="status">Reading recorded work&hellip;</div>
@@ -1420,6 +1443,30 @@
   </button>
 </div>
 }
+<ng-template #dailyBullets let-parts let-testid="testid">
+  <div class="daily-summary" [attr.data-testid]="testid">
+    @if(parts.done.length){
+    <div class="daily-part" data-testid="daily-part-done">
+      <strong class="daily-part-label">Done</strong>
+      <ul class="daily-bullets">@for(text of parts.done;track $index){<li>{{text}}</li>}</ul>
+    </div>
+    }
+    @if(parts.next.length){
+    <div class="daily-part" data-testid="daily-part-next">
+      <strong class="daily-part-label">Next</strong>
+      <ul class="daily-bullets">@for(text of parts.next;track $index){<li>{{text}}</li>}</ul>
+    </div>
+    }
+    @if(parts.blockers.length){
+    <div class="daily-part" data-testid="daily-part-blockers">
+      <strong class="daily-part-label">Blockers</strong>
+      <ul class="daily-bullets">@for(text of parts.blockers;track $index){<li>{{text}}</li>}</ul>
+    </div>
+    }
+    @if(parts.agent){<span class="daily-digest-mark" data-testid="daily-digest-mark">agent digest</span>}
+  </div>
+</ng-template>
+
 <ng-template #ticketList let-tickets let-extracted="extracted">
   @if(tickets?.length||extracted){
   <span class="ticket-links">

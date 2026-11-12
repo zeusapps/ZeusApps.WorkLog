@@ -4,8 +4,30 @@ using WorkLog.Infrastructure;
 
 namespace WorkLog.Persistence;
 
-/// <summary>A stored day digest: the item (work identity hash), the local day, the exact covered entry IDs, and the agent-written text.</summary>
-public sealed record StoredDigest(string Item, string Day, string[] Covers, string Text, DateTimeOffset Saved);
+/// <summary>The structured bullets of a digest. Every digest also keeps a readable single text, derived with <see cref="Flatten"/>.</summary>
+public sealed record DigestParts(string[] Done, string[] Next, string[] Blockers)
+{
+    /// <summary>The single-text form older readers display, for example <c>Done: a; b. Next: c. Blockers: d.</c>; empty sections are left out.</summary>
+    public string Flatten()
+    {
+        var sections = new List<string>();
+        void Add(string label, string[] bullets)
+        {
+            if (bullets.Length > 0)
+                sections.Add(label + ": " + string.Join("; ", bullets.Select(b => b.TrimEnd('.', ' '))) + ".");
+        }
+        Add("Done", Done);
+        Add("Next", Next);
+        Add("Blockers", Blockers);
+        return string.Join(' ', sections);
+    }
+}
+
+/// <summary>
+/// A stored day digest: the item (work identity hash), the local day, the exact covered entry IDs, and the agent-written text.
+/// <paramref name="Parts"/> carries the structured bullets; a read returns them only while their covers and save stamp still equal those of the stored digest.
+/// </summary>
+public sealed record StoredDigest(string Item, string Day, string[] Covers, string Text, DateTimeOffset Saved, DigestParts? Parts = null);
 
 /// <summary>Digest storage cannot be used by this process (for example a newer store version); logging and querying are unaffected.</summary>
 public sealed class DigestStoreUnavailableException(string message, Exception? inner = null) : InvalidOperationException(message, inner);
@@ -31,6 +53,14 @@ public sealed class DigestStore(string dataDirectory, TimeSpan? lockTimeout = nu
         PRAGMA user_version=1;
         """
     ];
+
+    /// <summary>Additive structured parts. Created if absent by every writer, so version 1 stays readable and writable by older processes.</summary>
+    private const string PartsTable = """
+        CREATE TABLE IF NOT EXISTS digest_parts (
+            item TEXT NOT NULL, day TEXT NOT NULL, covers TEXT NOT NULL, saved INTEGER NOT NULL, done TEXT NOT NULL, next TEXT NOT NULL, blockers TEXT NOT NULL,
+            PRIMARY KEY (item, day)
+        );
+        """;
 
     private readonly string path = Path.Combine(dataDirectory, "digests.db");
     private readonly object gate = new();
@@ -71,6 +101,10 @@ public sealed class DigestStore(string dataDirectory, TimeSpan? lockTimeout = nu
                         SqliteCommands.Execute(connection, migration, transaction);
                     transaction.Commit();
                 }
+                // Parts are derived data: a table without the save stamp (an unreleased shape) is rebuilt empty.
+                if (SqliteCommands.Scalar(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='digest_parts'") is long existing && existing > 0 && !HasPartsStamp(connection))
+                    SqliteCommands.Execute(connection, "DROP TABLE digest_parts");
+                SqliteCommands.Execute(connection, PartsTable);
                 SqliteCommands.Execute(connection, "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=15000;");
                 initialized = true;
             }
@@ -93,6 +127,15 @@ public sealed class DigestStore(string dataDirectory, TimeSpan? lockTimeout = nu
             + "ON CONFLICT(item,day) DO UPDATE SET covers=excluded.covers, text=excluded.text, saved=excluded.saved",
             transaction, ("$item", digest.Item), ("$day", digest.Day), ("$covers", Json.Encode(digest.Covers)),
             ("$text", digest.Text), ("$saved", digest.Saved.UtcTicks));
+        if (digest.Parts is { } parts)
+            SqliteCommands.Execute(connection,
+                "INSERT INTO digest_parts(item,day,covers,saved,done,next,blockers) VALUES($item,$day,$covers,$saved,$done,$next,$blockers) "
+                + "ON CONFLICT(item,day) DO UPDATE SET covers=excluded.covers, saved=excluded.saved, done=excluded.done, next=excluded.next, blockers=excluded.blockers",
+                transaction, ("$item", digest.Item), ("$day", digest.Day), ("$covers", Json.Encode(digest.Covers)), ("$saved", digest.Saved.UtcTicks),
+                ("$done", Json.Encode(parts.Done)), ("$next", Json.Encode(parts.Next)), ("$blockers", Json.Encode(parts.Blockers)));
+        else
+            SqliteCommands.Execute(connection, "DELETE FROM digest_parts WHERE item=$item AND day=$day",
+                transaction, ("$item", digest.Item), ("$day", digest.Day));
         transaction.Commit();
     }
 
@@ -121,19 +164,32 @@ public sealed class DigestStore(string dataDirectory, TimeSpan? lockTimeout = nu
         if (version == 0)
             return [];
         using var command = connection.CreateCommand();
-        var names = items.Distinct(StringComparer.Ordinal).Select((item, i) =>
+        var names = string.Join(',', items.Distinct(StringComparer.Ordinal).Select((item, i) =>
         {
             command.Parameters.AddWithValue("$i" + i, item);
             return "$i" + i;
-        });
-        command.CommandText = $"SELECT item,day,covers,text,saved FROM digests WHERE item IN ({string.Join(',', names)}) ORDER BY item,day";
-        using var reader = command.ExecuteReader();
+        }));
+        // Parts count only while they carry the same covers and save stamp as the digest: an older process that rewrites the digest
+        // changes both, so its text wins. A store only older processes wrote has no parts table.
+        var withParts = HasPartsStamp(connection);
+        command.CommandText = withParts
+            ? "SELECT d.item,d.day,d.covers,d.text,d.saved,p.done,p.next,p.blockers FROM digests d "
+              + "LEFT JOIN digest_parts p ON p.item=d.item AND p.day=d.day AND p.covers=d.covers AND p.saved=d.saved "
+              + $"WHERE d.item IN ({names}) ORDER BY d.item,d.day"
+            : $"SELECT item,day,covers,text,saved FROM digests WHERE item IN ({names}) ORDER BY item,day";
         var result = new List<StoredDigest>();
+        using var reader = command.ExecuteReader();
         while (reader.Read())
             result.Add(new(reader.GetString(0), reader.GetString(1), Json.Decode<string[]>(reader.GetString(2)),
-                reader.GetString(3), new DateTimeOffset(reader.GetInt64(4), TimeSpan.Zero)));
+                reader.GetString(3), new DateTimeOffset(reader.GetInt64(4), TimeSpan.Zero),
+                withParts && !reader.IsDBNull(5)
+                    ? new DigestParts(Json.Decode<string[]>(reader.GetString(5)), Json.Decode<string[]>(reader.GetString(6)), Json.Decode<string[]>(reader.GetString(7)))
+                    : null));
         return result.ToArray();
     }
+
+    private static bool HasPartsStamp(SqliteConnection connection) =>
+        Convert.ToInt32(SqliteCommands.Scalar(connection, "SELECT COUNT(*) FROM pragma_table_info('digest_parts') WHERE name='saved'"), CultureInfo.InvariantCulture) > 0;
 
     /// <summary>
     /// A cheap change marker: the latest save time (UTC ticks), or 0 without a store. One read-only SELECT; a store that cannot be read

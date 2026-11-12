@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
 using WorkLog.Journaling;
 using WorkLog.Persistence;
 using WorkLog.Reporting;
@@ -10,7 +11,12 @@ namespace WorkLog.Dashboard;
 internal sealed record DailyRequest(string Before, string Timezone, string[]? Repositories = null, string? Day = null);
 internal sealed record DailyItem(string Id, string Title, string Repository, Ticket[] Tickets, string[] Changes, string Status, Entry Primary, Entry[] Others);
 /// <param name="Covers">The sorted IDs of the observations a stored agent digest covers.</param>
-internal sealed record DayDigest(string[] Covers, string Text);
+/// <param name="Text">The single readable text; for a structured digest, the flattened form.</param>
+/// <param name="Done">The structured bullets, present only while they still belong to the stored digest (otherwise omitted).</param>
+internal sealed record DayDigest(string[] Covers, string Text,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? Done = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? Next = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? Blockers = null);
 internal sealed record DailyDigestIssue(string Category, string Message);
 internal sealed record DailyDigest(string? Day, string? PreviousDay, string? NextDay, DailyItem[] Items, DailyItem[] Today, DayDigest[] Digests, DailyDigestIssue? DigestIssue = null);
 
@@ -65,7 +71,7 @@ internal sealed class DailyService(DashboardJournal journal, DigestStore? digest
         try
         {
             var ids = sections.SelectMany(s => s).Where(i => !i.Id.StartsWith("adhoc:", StringComparison.Ordinal)).Select(i => i.Id).ToHashSet(StringComparer.Ordinal);
-            return (digests.Read(ids).Select(d => new DayDigest(d.Covers, d.Text)).ToArray(), null);
+            return (digests.Read(ids).Select(d => new DayDigest(d.Covers, d.Text, d.Parts?.Done, d.Parts?.Next, d.Parts?.Blockers)).ToArray(), null);
         }
         catch
         {

@@ -439,3 +439,28 @@ In one run on 2026-11-02, on the current tree with a fresh package: the locked r
 - The fixture's `DigestService` uses UTC, so fixture creation does not depend on the machine's timezone. The smoke tool's `--dashboard-digest` mode saves a digest through the real save path for the scenario that saves one while Daily is open.
 - The staleness scenario logs into the fixture journal, so it runs after the display scenario in the serial file; repeating the scenarios against the same fixture (`--repeat-each`) sees that observation.
 - Live observation on the maintainer's installation was not performed.
+
+## Stand-up-ready Daily view (standup-ready-digests)
+
+Recorded on 2026-11-12 on Windows 11, using headless Microsoft Edge and isolated synthetic fixtures under ignored artifacts directories. The Daily page now shows structured digests (Done / Next / Blockers) in a two-column layout, and Copy for daily produces labelled bullet lists. The server side (structured `save_digest`, the additive `digest_parts` table, `DailyService`) is covered in [MCP validation](mcp-validation.md).
+
+### Validation results
+
+| Check | Result |
+| --- | --- |
+| `npm test --prefix dashboard` | passed, 377 of 377 in 23 files |
+| `dotnet build -c Release --no-restore` | passed, 0 warnings, 0 errors (builds the embedded dashboard assets) |
+| `npm run test:e2e --prefix dashboard` against the Release build | passed, 60 of 60 |
+| `dotnet test -c Release --no-build --no-restore` | passed, 500 of 500 |
+
+### What the checks cover
+
+- Client (`daily.spec.ts`): line presentation for a matched structured digest, a text-only digest (with or without lists) as one Done bullet, no digest (latest summary or the no-summary label), a digest made stale by a later observation and a differing timezone; Blockers derived only from digests shown on Today lines, in Today's order, with none recorded and with a Yesterday-only blocker; Copy for daily as labelled bullets in plain text and Markdown (nested `-` lists, links on and off), a line with exactly one Done bullet copied inline whatever its source (no digest, text-only digest, structured single bullet), the derived Blockers section and the no-blockers statement.
+- Angular (`app.daily.spec.ts`): the rendered Done / Next / Blockers lists with omitted empty labels and the "agent digest" mark, status and collapsed observations unchanged; Today before Yesterday before Blockers in the document; the Blockers section for blockers, none and Yesterday-only blockers, and its loading state (it makes no claim while Today is loading); the copied text in both formats.
+- Browser (fake clock on Monday 12 January 2026): at 1440 px (both themes) Today and Yesterday are side by side with Today first, each column under about 70 characters, the first Today item is fully visible without scrolling, Blockers spans both below them and the day navigation and copy controls sit in the header; at 390 px (both themes) there is no horizontal scroll and Today is above Yesterday in one column; at 768 px the columns stack, in both themes, with bullet text contrast of at least 4.5; the keyboard reaches the previous-day control and each row's collapsed observations (Enter opens them) and Enter on the previous-day control moves the day.
+
+### Notes
+
+- The e2e fixture's digests are single-text digests saved through the real save path, so those browser scenarios show them under Done and copy them inline. A further browser scenario saves a structured digest with a blocker through the real save path and checks its Done, Next and Blockers lists, the derived Blockers entry and the labelled copy. The client and Angular tests cover the same wire format `DailyService` returns.
+- Copy for daily writes a line with exactly one Done bullet as one inline line (title, status, text), whatever its source, and a line with Next or Blockers bullets or several Done bullets as labelled lists.
+- Live observation on the maintainer's installation was not performed.

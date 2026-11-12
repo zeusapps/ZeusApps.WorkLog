@@ -125,6 +125,9 @@ describe("Daily view rendering and loading", () => {
     fixture.detectChanges();
     expect(app.dailyTodayView()).toBeNull();
     expect(element.querySelector('[data-testid="daily-today"]')!.textContent).toContain("Reading today's work");
+    const blockers = element.querySelector('[data-testid="daily-blockers"]')!;
+    expect(blockers.textContent).toContain("Reading today's work");
+    expect(blockers.textContent).not.toContain("No blockers recorded");
     expect(element.querySelector<HTMLButtonElement>('[data-testid="copy-daily"]')!.disabled).toBe(true);
     await app.loadOngoing();
     fixture.detectChanges();
@@ -146,7 +149,7 @@ describe("Daily view rendering and loading", () => {
     fixture.destroy();
   });
 
-  it("renders Yesterday in the server order, then Today from the board, then Blockers", async () => {
+  it("renders Today from the board first, then Yesterday in the server order, then Blockers", async () => {
     const { app, fixture, element } = setup();
     app.view.set("daily");
     await app.loadDaily();
@@ -154,9 +157,9 @@ describe("Daily view rendering and loading", () => {
     expect(lines(element, "daily-yesterday")).toEqual(["DEP-1232", "Add work dashboard", "Tried a spike"]);
     // The In-progress change with ticked tasks and the ticket card both belong to Today; the quiet change and the proposal do not.
     expect(lines(element, "daily-today").sort()).toEqual(["Add work dashboard", "DEP-1240"]);
-    expect(element.querySelector('[data-testid="daily-blockers"]')!.textContent).toContain("Nothing is recorded about blockers");
+    expect(element.querySelector('[data-testid="daily-blockers"]')!.textContent).toContain("No blockers recorded");
     const order = Array.from(element.querySelectorAll("[data-testid='daily-yesterday'], [data-testid='daily-today'], [data-testid='daily-blockers']")).map((s) => s.getAttribute("data-testid"));
-    expect(order).toEqual(["daily-yesterday", "daily-today", "daily-blockers"]);
+    expect(order).toEqual(["daily-today", "daily-yesterday", "daily-blockers"]);
     expect(element.querySelector('[data-testid="daily-day"]')!.textContent).toContain("Thu 22 Oct");
     expect(element.querySelector('[data-testid="daily-day-kind"]')!.textContent).toContain("Last recorded day");
     expect(element.querySelector('[data-testid="daily-proposed"]')!.textContent).toContain("2 proposed changes");
@@ -380,7 +383,7 @@ describe("Copy for daily", () => {
     "- DEP-1240 — in progress — Export retries wired to the job scheduler; load test remains",
     "- add-work-dashboard",
     "Blockers:",
-    "-",
+    "- No blockers recorded",
   ].join("\n");
 
   async function copied(configure: (app: App) => void = () => {}) {
@@ -423,7 +426,7 @@ describe("Copy for daily", () => {
         "",
         "**Blockers**",
         "",
-        "-",
+        "- No blockers recorded",
       ].join("\n"),
     );
     fixture.destroy();
@@ -459,7 +462,8 @@ describe("Copy for daily", () => {
 });
 
 describe("Daily agent digests", () => {
-  const withDigests = (digests: { covers: string[]; text: string }[], base: DailyDigest = digest()) => ({ ...base, digests });
+  type Stored = { covers: string[]; text: string; done?: string[]; next?: string[]; blockers?: string[] };
+  const withDigests = (digests: Stored[], base: DailyDigest = digest()) => ({ ...base, digests });
   const shown = async (daily: DailyDigest) => {
     const harness = setup({ daily });
     harness.app.view.set("daily");
@@ -468,18 +472,47 @@ describe("Daily agent digests", () => {
     harness.fixture.detectChanges();
     return harness;
   };
+  const part = (scope: Element, name: string) => scope.querySelector(`[data-testid="daily-part-${name}"]`);
+  const bullets = (scope: Element, name: string) => Array.from(part(scope, name)?.querySelectorAll("li") ?? []).map((li) => li.textContent!.trim());
+  const labels = (scope: Element) => Array.from(scope.querySelectorAll(".daily-part-label")).map((l) => l.textContent!.trim());
+  const todayLine = (element: HTMLElement) => element.querySelector('[data-testid="daily-today-line"][data-card-key^="ticket:"]')!;
+  const retry = { covers: ["r0", "r1"], text: "Done: Merged. Next: Roll out.", done: ["Merged the retry policy", "Tuned the backoff"], next: ["Roll out to staging"], blockers: [] as string[] };
 
-  it("shows a matching digest with the mark on a Yesterday line, with status and collapsed observations unchanged", async () => {
-    const { fixture, element } = await shown(withDigests([{ covers: ["r0", "r1"], text: "Merged the retry policy." }]));
+  it("shows a matching structured digest as Done and Next lists with the mark, status and collapsed observations unchanged", async () => {
+    const { fixture, element } = await shown(withDigests([retry]));
     const first = element.querySelector('[data-testid="daily-yesterday"] .daily-line')!;
     const summary = first.querySelector('[data-testid="daily-summary"]')!;
-    expect(summary.textContent).toContain("Merged the retry policy.");
+    expect(bullets(first, "done")).toEqual(["Merged the retry policy", "Tuned the backoff"]);
+    expect(bullets(first, "next")).toEqual(["Roll out to staging"]);
+    expect(part(first, "blockers")).toBeNull();
+    expect(labels(first)).toEqual(["Done", "Next"]);
     expect(summary.textContent).not.toContain("Retry policy for export jobs merged");
     expect(summary.querySelector('[data-testid="daily-digest-mark"]')!.textContent).toBe("agent digest");
     expect(first.querySelector(".daily-status")!.textContent).toBe("Recorded done");
     expect(first.querySelector("details summary")!.textContent).toContain("1 other observation");
     expect(first.querySelector("details li")!.textContent).toContain("Started the retry work");
     expect(element.querySelectorAll('[data-testid="daily-digest-mark"]')).toHaveLength(1);
+    fixture.destroy();
+  });
+
+  it.each([
+    ["without lists", { covers: ["r0", "r1"], text: "Merged the retry policy." }],
+    ["with the server's single Done bullet", { covers: ["r0", "r1"], text: "Merged the retry policy.", done: ["Merged the retry policy."], next: [], blockers: [] }],
+  ])("shows an earlier single-text digest %s under Done with the mark", async (_name, stored) => {
+    const { fixture, element } = await shown(withDigests([stored]));
+    const first = element.querySelector('[data-testid="daily-yesterday"] .daily-line')!;
+    expect(bullets(first, "done")).toEqual(["Merged the retry policy."]);
+    expect(labels(first)).toEqual(["Done"]);
+    expect(first.querySelector('[data-testid="daily-digest-mark"]')).not.toBeNull();
+    fixture.destroy();
+  });
+
+  it("shows the latest summary as one Done bullet when no digest matches, with no mark", async () => {
+    const { fixture, element } = await shown(digest());
+    const first = element.querySelector('[data-testid="daily-yesterday"] .daily-line')!;
+    expect(bullets(first, "done")).toEqual(["Retry policy for export jobs merged"]);
+    expect(labels(first)).toEqual(["Done"]);
+    expect(first.querySelector('[data-testid="daily-digest-mark"]')).toBeNull();
     fixture.destroy();
   });
 
@@ -520,8 +553,8 @@ describe("Daily agent digests", () => {
 
   it("shows a matching digest on a Today line", async () => {
     const { fixture, element } = await shown(withDigests([{ covers: ["x0", "x1"], text: "Scheduler hook is in." }]));
-    const line = element.querySelector('[data-testid="daily-today-line"][data-card-key^="ticket:"]')!;
-    expect(line.querySelector('[data-testid="daily-today-summary"]')!.textContent).toContain("Scheduler hook is in.");
+    const line = todayLine(element);
+    expect(bullets(line, "done")).toEqual(["Scheduler hook is in."]);
     expect(line.querySelector('[data-testid="daily-digest-mark"]')).not.toBeNull();
     expect(line.querySelector("details summary")!.textContent).toContain("1 other observation today");
     fixture.destroy();
@@ -534,35 +567,111 @@ describe("Daily agent digests", () => {
         others: [entry("x1", hoursAgo(2), "Export retries wired to the job scheduler; load test remains"), entry("x0", hoursAgo(5), "Wrote the scheduler hook")],
       })],
     }));
-    const line = element.querySelector('[data-testid="daily-today-line"][data-card-key^="ticket:"]')!;
-    expect(line.querySelector('[data-testid="daily-today-summary"]')!.textContent).toBe("Load test passed");
+    const line = todayLine(element);
+    expect(bullets(line, "done")).toEqual(["Load test passed"]);
+    expect(labels(line)).toEqual(["Done"]);
     expect(line.querySelector('[data-testid="daily-digest-mark"]')).toBeNull();
     fixture.destroy();
   });
 
-  it("copies the digest text without the mark in both formats", async () => {
-    const harness = await shown(withDigests([{ covers: ["r0", "r1"], text: "Merged the retry policy." }, { covers: ["x0", "x1"], text: "Scheduler hook is in." }]));
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    await harness.app.copyDaily();
-    expect(writeText).toHaveBeenLastCalledWith([
-      "Yesterday (Thu 22 Oct):",
-      "- DEP-1232 — done — Merged the retry policy.",
-      "- add-work-dashboard — in progress — Review comments edit/delete",
-      "- Tried a spike — in progress",
-      "Today:",
-      "- DEP-1240 — in progress — Scheduler hook is in.",
-      "- add-work-dashboard",
-      "Blockers:",
-      "-",
-    ].join("\n"));
-    harness.app.dailyFormat.set("markdown");
-    harness.app.dailyLinks.set(true);
-    await harness.app.copyDaily();
-    const markdown = writeText.mock.lastCall![0] as string;
-    expect(markdown).toContain("- [DEP-1232](https://acme.atlassian.net/browse/DEP-1232) — done — Merged the retry policy.");
-    expect(markdown).toContain("— in progress — Scheduler hook is in.");
-    expect(markdown).not.toContain("agent digest");
-    harness.fixture.destroy();
+  it("shows the latest summary when the digest covers observations of another day split", async () => {
+    const { fixture, element } = await shown(withDigests([{ covers: ["r1"], text: "Only one of the two.", done: ["Only one of the two."] }]));
+    const first = element.querySelector('[data-testid="daily-yesterday"] .daily-line')!;
+    expect(bullets(first, "done")).toEqual(["Retry policy for export jobs merged"]);
+    fixture.destroy();
+  });
+
+  it("uses the no-summary label when a line has neither digest nor summary", async () => {
+    const { fixture, element } = await shown({
+      ...digest(),
+      today: [item("exp-identity", "DEP-1240", [dep1240], "in_progress", entry("x1", hoursAgo(2), null))],
+    });
+    expect(bullets(todayLine(element), "done")).toEqual(["No summary recorded"]);
+    fixture.destroy();
+  });
+
+  describe("blockers", () => {
+    const blocked = { covers: ["x0", "x1"], text: "t", done: ["Hook added"], next: ["Load test"], blockers: ["API access from the platform team"] };
+    const section = (element: HTMLElement) => element.querySelector('[data-testid="daily-blockers"]')!;
+
+    it("lists the blockers of a Today digest with the line's ticket", async () => {
+      const { fixture, element } = await shown(withDigests([blocked]));
+      const text = section(element).textContent!;
+      expect(text).toContain("DEP-1240");
+      expect(text).toContain("API access from the platform team");
+      expect(text).not.toContain("No blockers recorded");
+      expect(bullets(todayLine(element), "blockers")).toEqual(["API access from the platform team"]);
+      fixture.destroy();
+    });
+
+    it("says that no blockers are recorded when no Today line has blocker bullets", async () => {
+      const { fixture, element } = await shown(withDigests([{ ...blocked, blockers: [] }]));
+      expect(section(element).textContent).toContain("No blockers recorded");
+      expect(section(element).querySelectorAll("li")).toHaveLength(0);
+      fixture.destroy();
+    });
+
+    it("does not list a Yesterday digest's blockers", async () => {
+      const { fixture, element } = await shown(withDigests([
+        { covers: ["r0", "r1"], text: "t", done: ["Merged"], blockers: ["Old blocker from Friday"] },
+        { ...blocked, blockers: [] },
+      ]));
+      expect(section(element).textContent).toContain("No blockers recorded");
+      expect(section(element).textContent).not.toContain("Old blocker from Friday");
+      // The Yesterday line itself still shows its own blockers.
+      const first = element.querySelector('[data-testid="daily-yesterday"] .daily-line')!;
+      expect(bullets(first, "blockers")).toEqual(["Old blocker from Friday"]);
+      fixture.destroy();
+    });
+  });
+
+  describe("copy", () => {
+    const copyAll = async (harness: Awaited<ReturnType<typeof shown>>) => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+      await harness.app.copyDaily();
+      return writeText;
+    };
+    const stored = [
+      { covers: ["r0", "r1"], text: "t", done: ["Merged the retry policy"], next: ["Roll out to staging"], blockers: [] as string[] },
+      { covers: ["x0", "x1"], text: "t", done: ["Scheduler hook is in"], next: [], blockers: ["API access from the platform team"] },
+    ];
+
+    it("copies labelled bullets in plain text, with the derived Blockers and no mark", async () => {
+      const harness = await shown(withDigests(stored));
+      const writeText = await copyAll(harness);
+      expect(writeText).toHaveBeenLastCalledWith([
+        "Yesterday (Thu 22 Oct):",
+        "- DEP-1232 — done",
+        "  Done:",
+        "  - Merged the retry policy",
+        "  Next:",
+        "  - Roll out to staging",
+        "- add-work-dashboard — in progress — Review comments edit/delete",
+        "- Tried a spike — in progress",
+        "Today:",
+        "- DEP-1240 — in progress",
+        "  Done:",
+        "  - Scheduler hook is in",
+        "  Blockers:",
+        "  - API access from the platform team",
+        "- add-work-dashboard",
+        "Blockers:",
+        "- DEP-1240 — API access from the platform team",
+      ].join("\n"));
+      harness.fixture.destroy();
+    });
+
+    it("copies Markdown with links as - lists", async () => {
+      const harness = await shown(withDigests(stored));
+      harness.app.dailyFormat.set("markdown");
+      harness.app.dailyLinks.set(true);
+      const writeText = await copyAll(harness);
+      const markdown = writeText.mock.lastCall![0] as string;
+      expect(markdown).toContain("- [DEP-1232](https://acme.atlassian.net/browse/DEP-1232) — done\n  - Done:\n    - Merged the retry policy\n  - Next:\n    - Roll out to staging");
+      expect(markdown).toContain("**Blockers**\n\n- [DEP-1240](https://acme.atlassian.net/browse/DEP-1240) — API access from the platform team");
+      expect(markdown).not.toContain("agent digest");
+      harness.fixture.destroy();
+    });
   });
 });

@@ -169,7 +169,17 @@ internal static class DashboardFixture
     }
 
     /// <summary>Saves a digest through the real save path for the ticket's observations on the day of its latest one, as an agent would while the dashboard is open.</summary>
-    public static void SaveDigest(string directory, string repository, string ticket, string text)
+    public static void SaveDigest(string directory, string repository, string ticket, string text) =>
+        SaveDigest(directory, repository, ticket, (service, ids) => service.Save(ids, text));
+
+    /// <summary>Like <see cref="SaveDigest(string,string,string,string)"/> but through the structured save; each list is bullets separated by <c>|</c> (empty for none).</summary>
+    public static void SaveStructuredDigest(string directory, string repository, string ticket, string done, string next, string blockers)
+    {
+        static string[] Split(string list) => list.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        SaveDigest(directory, repository, ticket, (service, ids) => service.Save(ids, Split(done), Split(next), Split(blockers)));
+    }
+
+    private static void SaveDigest(string directory, string repository, string ticket, Action<DigestService, string[]> save)
     {
         var settings = new LocalSettings(Path.Combine(Path.GetFullPath(directory), "data"));
         var journal = new Journal(settings, new(repository));
@@ -177,7 +187,7 @@ internal static class DashboardFixture
         var latest = journal.Query(new("2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z", "UTC", repository, Ticket: ticket, PageSize: 100, View: "flat"))
             .Entries.OrderBy(e => e.OccurredAt).ThenBy(e => e.Id, StringComparer.Ordinal).Last();
         var request = service.Request(latest) ?? throw new InvalidOperationException("No digest request for " + ticket + ".");
-        service.Save(request.Entries.Select(e => e.Id).ToArray(), text);
+        save(service, request.Entries.Select(e => e.Id).ToArray());
     }
 
     private static string Repository(string root, string name)

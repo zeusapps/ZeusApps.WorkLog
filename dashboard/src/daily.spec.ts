@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { BoardInput, buildBoard } from "./board";
-import { dailyText, dailyToday, dayLabel, digestFor, digestIndex, TodayEntry } from "./daily";
+import { dailyBlockers, dailyText, dailyToday, dayLabel, digestFor, digestIndex, linePresentation, noBlockers, TodayEntry } from "./daily";
 import type { Change, ChangeActivity, DailyItem, Entry, Row, Ticket } from "./models";
 
 const now = new Date("2026-10-28T12:00:00Z");
@@ -229,7 +229,7 @@ describe("dailyText", () => {
         "- DEP-1240 — in progress — Export retries wired to the job scheduler; load test remains",
         "- add-work-dashboard",
         "Blockers:",
-        "-",
+        "- No blockers recorded",
       ].join("\n"),
     );
   });
@@ -250,7 +250,7 @@ describe("dailyText", () => {
         "",
         "**Blockers**",
         "",
-        "-",
+        "- No blockers recorded",
       ].join("\n"),
     );
   });
@@ -277,7 +277,7 @@ describe("dailyText", () => {
 
   it("states what was not recorded without inventing work", () => {
     expect(dailyText({ day: null, yesterday: [], today: [], format: "text", links: false })).toBe(
-      "Yesterday:\n- Nothing recorded\nToday:\n- Nothing recorded\nBlockers:\n-",
+      "Yesterday:\n- Nothing recorded\nToday:\n- Nothing recorded\nBlockers:\n- No blockers recorded",
     );
   });
 });
@@ -288,18 +288,22 @@ describe("agent digests", () => {
     primary: entry("r2", "2026-10-22T15:00:00Z", { summary: "Latest summary", status: "done" }),
     others: [entry("r1", "2026-10-22T10:00:00Z", { summary: "Older summary" })],
   });
-  const digests = [{ covers: ["r1", "r2"], text: "Shipped the retry policy.\nTwo steps." }];
+  const legacy = { covers: ["r1", "r2"], text: "Shipped the retry policy.\nTwo steps." };
+  const structured = {
+    covers: ["r1", "r2"], text: "Done: a; b. Next: c.",
+    done: ["Retry policy merged", "Backoff tuned"], next: ["Roll out to staging"], blockers: [] as string[],
+  };
 
   it("matches a line whose primary and others are exactly the covered observations, in any order", () => {
-    expect(digestFor(digestIndex(digests), two)).toBe("Shipped the retry policy.\nTwo steps.");
-    expect(digestFor(digestIndex([{ covers: ["r2", "r1"], text: "x" }]), two)).toBe("x");
+    expect(digestFor(digestIndex([legacy]), two)?.text).toBe("Shipped the retry policy.\nTwo steps.");
+    expect(digestFor(digestIndex([{ covers: ["r2", "r1"], text: "x" }]), two)?.text).toBe("x");
   });
 
   it("does not match a stale digest after a later entry, or a subset or superset", () => {
     const later = { ...two, primary: entry("r3", "2026-10-22T16:00:00Z"), others: [two.primary, ...two.others] };
-    expect(digestFor(digestIndex(digests), later)).toBeNull();
+    expect(digestFor(digestIndex([legacy]), later)).toBeNull();
     expect(digestFor(digestIndex([{ covers: ["r1"], text: "x" }]), two)).toBeNull();
-    expect(digestFor(digestIndex(digests), null)).toBeNull();
+    expect(digestFor(digestIndex([legacy]), null)).toBeNull();
     expect(digestFor(digestIndex(undefined), two)).toBeNull();
   });
 
@@ -312,20 +316,141 @@ describe("agent digests", () => {
     const changeOnly = item("change-alpha", hoursAgo(2), { tickets: [], primary: entry("c1", hoursAgo(2), { change: "alpha" }) });
     const line = today(board, [changeOnly, ticketItem]).items[0].line;
     const index = digestIndex([{ covers: ["c1", "t0", "t1"], text: "Alpha moved forward." }]);
-    expect(digestFor(index, line)).toBe("Alpha moved forward.");
+    expect(digestFor(index, line)?.text).toBe("Alpha moved forward.");
     expect(digestFor(digestIndex([{ covers: ["t0", "t1"], text: "partial" }]), line)).toBeNull();
   });
 
-  it("copies the digest text on one line without a mark in both formats, and the summary where none matches", () => {
+  describe("line presentation", () => {
+    it("uses the lists of a matched structured digest, keeping empty lists empty", () => {
+      expect(linePresentation(structured, "Latest summary")).toEqual({
+        done: ["Retry policy merged", "Backoff tuned"], next: ["Roll out to staging"], blockers: [], agent: true,
+      });
+    });
+
+    it("shows an earlier single-text digest, with or without lists, as one Done bullet", () => {
+      const expected = { done: ["Shipped the retry policy. Two steps."], next: [], blockers: [], agent: true };
+      expect(linePresentation(legacy, "Latest summary")).toEqual(expected);
+      expect(linePresentation({ ...legacy, done: ["Shipped the retry policy. Two steps."], next: [], blockers: [] }, "Latest summary")).toEqual(expected);
+    });
+
+    it("falls back to the latest summary as one Done bullet, or the no-summary label, without the agent mark", () => {
+      expect(linePresentation(null, "Latest summary")).toEqual({ done: ["Latest summary"], next: [], blockers: [], agent: false });
+      expect(linePresentation(null, null)).toEqual({ done: ["No summary recorded"], next: [], blockers: [], agent: false });
+      expect(linePresentation(null, "  ")).toEqual({ done: ["No summary recorded"], next: [], blockers: [], agent: false });
+    });
+
+    it("falls back when a later observation made the digest stale, or a different timezone splits the day differently", () => {
+      const later = { ...two, primary: entry("r3", "2026-10-22T16:00:00Z", { summary: "Third step" }), others: [two.primary, ...two.others] };
+      expect(linePresentation(digestFor(digestIndex([structured]), later), later.primary.summary ?? null).done).toEqual(["Third step"]);
+      const split = { ...two, others: [] };
+      expect(linePresentation(digestFor(digestIndex([structured]), split), "Latest summary")).toMatchObject({ done: ["Latest summary"], agent: false });
+    });
+  });
+
+  describe("blockers", () => {
+    const dep9: Ticket = { provider: "jira", scope: "company", id: "DEP-9" };
+    const blocked = { covers: ["x1"], text: "t", done: ["Hook added"], next: [], blockers: ["API access from the platform team"] };
+    const todayEntries = (lines: Record<string, DailyItem>): TodayEntry[] => {
+      const board = buildBoard(input({
+        rows: [
+          row("dep9", { title: "DEP-9", tickets: [dep9], lastAt: hoursAgo(1) }),
+          row("dep12", { title: "DEP-12", tickets: [dep12], lastAt: hoursAgo(2) }),
+        ],
+      }), now);
+      return board.in_progress.map((card) => ({ card, line: lines[card.row!.id] ?? null }));
+    };
+    const lineOf = (id: string, entryId: string, tickets: Ticket[]) =>
+      item(id, hoursAgo(1), { title: id, tickets, primary: entry(entryId, hoursAgo(1)) });
+
+    it("lists a Today line's blockers with its ticket", () => {
+      const groups = dailyBlockers(todayEntries({ dep9: lineOf("dep9", "x1", [dep9]) }), digestIndex([blocked]));
+      expect(groups).toHaveLength(1);
+      expect(groups[0].tickets.map((t) => t.id)).toEqual(["DEP-9"]);
+      expect(groups[0].bullets).toEqual(["API access from the platform team"]);
+    });
+
+    it("finds no blockers when no Today line shows blocker bullets", () => {
+      const lines = todayEntries({ dep9: lineOf("dep9", "x1", [dep9]) });
+      expect(dailyBlockers(lines, digestIndex([{ ...blocked, blockers: [] }]))).toEqual([]);
+      expect(dailyBlockers(lines, digestIndex([{ covers: ["x1"], text: "legacy" }]))).toEqual([]);
+      expect(dailyBlockers(lines, digestIndex(undefined))).toEqual([]);
+      expect(noBlockers).toBe("No blockers recorded");
+    });
+
+    it("follows Today order, and ignores a Yesterday digest the Today line does not show", () => {
+      const lines = todayEntries({ dep9: lineOf("dep9", "x1", [dep9]), dep12: lineOf("dep12", "x2", [dep12]) });
+      const both = digestIndex([blocked, { covers: ["x2"], text: "t", done: ["d"], blockers: ["Waiting on review"] }]);
+      const expected = lines.map((e) => (e.line!.primary.id === "x1" ? "API access from the platform team" : "Waiting on review"));
+      expect(dailyBlockers(lines, both).map((g) => g.bullets[0])).toEqual(expected);
+      const yesterdayOnly = digestIndex([
+        { covers: ["y1"], text: "t", done: ["d"], blockers: ["Old blocker"] },
+        { covers: ["x1"], text: "t", done: ["d"], blockers: [] },
+      ]);
+      expect(dailyBlockers(lines, yesterdayOnly)).toEqual([]);
+    });
+  });
+
+  describe("copy", () => {
     const loose = item("w", "2026-10-22T12:00:00Z", { title: "add-work-dashboard", tickets: [], primary: entry("w1", "2026-10-22T12:00:00Z", { summary: "Review comments" }) });
-    const base = { day: "2026-10-22", yesterday: [two, loose], today: [] as TodayEntry[], digests };
-    expect(dailyText({ ...base, format: "text", links: false })).toBe(
-      ["Yesterday (Thu 22 Oct):", "- DEP-1232 — done — Shipped the retry policy. Two steps.", "- add-work-dashboard — in progress — Review comments",
-        "Today:", "- Nothing recorded", "Blockers:", "-"].join("\n"),
-    );
-    expect(dailyText({ ...base, format: "markdown", links: false })).toBe(
-      ["**Yesterday (Thu 22 Oct)**", "", "- DEP-1232 — done — Shipped the retry policy. Two steps.", "- add-work-dashboard — in progress — Review comments", "",
-        "**Today**", "", "- Nothing recorded", "", "**Blockers**", "", "-"].join("\n"),
-    );
+    const full = { ...structured, blockers: ["Waiting on API access"] };
+    const base = { day: "2026-10-22", yesterday: [two, loose], today: [] as TodayEntry[], digests: [full] };
+
+    it("copies a structured digest as labelled bullet lists in plain text, omitting empty lists, and the summary inline where none matches", () => {
+      expect(dailyText({ ...base, digests: [structured], format: "text", links: false })).toBe([
+        "Yesterday (Thu 22 Oct):",
+        "- DEP-1232 — done",
+        "  Done:",
+        "  - Retry policy merged",
+        "  - Backoff tuned",
+        "  Next:",
+        "  - Roll out to staging",
+        "- add-work-dashboard — in progress — Review comments",
+        "Today:", "- Nothing recorded", "Blockers:", "- No blockers recorded",
+      ].join("\n"));
+    });
+
+    it("copies Markdown with links as nested - lists", () => {
+      const withLink = { ...base, yesterday: [{ ...two, tickets: [dep13] }], digests: [full] };
+      expect(dailyText({ ...withLink, format: "markdown", links: true })).toBe([
+        "**Yesterday (Thu 22 Oct)**", "",
+        "- [DEP-13](https://tracker.example/DEP-13) — done",
+        "  - Done:",
+        "    - Retry policy merged",
+        "    - Backoff tuned",
+        "  - Next:",
+        "    - Roll out to staging",
+        "  - Blockers:",
+        "    - Waiting on API access",
+        "",
+        "**Today**", "", "- Nothing recorded", "", "**Blockers**", "", "- No blockers recorded",
+      ].join("\n"));
+    });
+
+    it("copies an earlier single-text digest under Done without the mark", () => {
+      const text = dailyText({ ...base, digests: [legacy], format: "text", links: false });
+      expect(text).toContain("- DEP-1232 — done — Shipped the retry policy. Two steps.\n- add-work-dashboard");
+      expect(text).not.toContain("agent digest");
+    });
+
+    it.each([
+      ["no digest", [] as (typeof structured)[], "Latest summary"],
+      ["a text-only digest", [legacy], "Shipped the retry policy. Two steps."],
+      ["a structured digest with one Done bullet", [{ covers: ["r1", "r2"], text: "t", done: ["One bullet"], next: [], blockers: [] }], "One bullet"],
+    ])("copies one Done bullet inline in both formats (%s)", (_name, digests, text) => {
+      const one = { day: "2026-10-22", yesterday: [two], today: [] as TodayEntry[], digests };
+      expect(dailyText({ ...one, format: "text", links: false })).toContain("- DEP-1232 — done — " + text + "\nToday:");
+      expect(dailyText({ ...one, format: "markdown", links: false })).toContain("- DEP-1232 — done — " + text + "\n\n**Today**");
+    });
+
+    it("copies the derived blockers with the line's tickets", () => {
+      const board = buildBoard(input({ rows: [row("dep9", { title: "DEP-9", tickets: [dep13], lastAt: hoursAgo(1) })] }), now);
+      const todayEntry: TodayEntry = { card: board.in_progress[0], line: item("dep9", hoursAgo(1), { tickets: [dep13], primary: entry("x1", hoursAgo(1)) }) };
+      const digests = [{ covers: ["x1"], text: "t", done: ["Hook added"], blockers: ["API access from the platform team"] }];
+      const text = dailyText({ day: null, yesterday: [], today: [todayEntry], digests, format: "text", links: false });
+      expect(text).toContain("Blockers:\n- DEP-13 — API access from the platform team");
+      expect(text).not.toContain("No blockers recorded");
+      const md = dailyText({ day: null, yesterday: [], today: [todayEntry], digests, format: "markdown", links: true });
+      expect(md).toContain("**Blockers**\n\n- [DEP-13](https://tracker.example/DEP-13) — API access from the platform team");
+    });
   });
 });

@@ -23,13 +23,16 @@ public sealed class JournalTools(Journal journal, UpdateDiscovery? updates = nul
 
     [McpServerTool(Name = "save_digest", UseStructuredContent = true, ReadOnly = false,
         Destructive = false, Idempotent = true, OpenWorld = false)]
-    [Description("Store a one-to-two sentence digest of one work item's observations for one local day, after a log_work result included digestRequest. Pass exactly the IDs listed in the request. A stale or invalid set is rejected without writing; do not retry a stale digest.")]
+    [Description("Store the digest (done, next and blockers bullets) of one work item's observations for one local day, after a log_work result included digestRequest. Pass exactly the IDs listed in the request. Supply done, next and blockers, or only the legacy text, not both. A stale or invalid set is rejected without writing; do not retry a stale digest.")]
     public SavedDigest SaveDigest(
-        [Description("Exactly the observation IDs listed in the digestRequest (2 to 30).")] string[] entryIds,
-        [Description(LoggingGuidance.DigestTextDescription)] string text) => Invoke(() =>
+        [Description("Exactly the observation IDs listed in the digestRequest (1 to 30).")] string[] entryIds,
+        [Description(LoggingGuidance.DigestDoneDescription)] string[]? done = null,
+        [Description(LoggingGuidance.DigestNextDescription)] string[]? next = null,
+        [Description(LoggingGuidance.DigestBlockersDescription)] string[]? blockers = null,
+        [Description(LoggingGuidance.DigestTextDescription)] string? text = null) => Invoke(() =>
     {
         if (digests is null) throw new InvalidOperationException("Digests are not available in this server.");
-        return digests.Save(entryIds, text);
+        return digests.Save(entryIds, done, next, blockers, text);
     });
 
     [McpServerTool(Name = "query_work", UseStructuredContent = true, ReadOnly = true,

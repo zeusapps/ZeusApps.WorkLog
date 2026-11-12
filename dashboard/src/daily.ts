@@ -89,14 +89,64 @@ export function dailyToday(
 const coverKey = (ids: readonly string[]) => [...ids].sort().join("|");
 
 /** The digests indexed by their covered observations, for exact-set lookup. */
-export function digestIndex(digests: readonly DayDigest[] | undefined): ReadonlyMap<string, string> {
-  return new Map((digests ?? []).map((d) => [coverKey(d.covers), d.text]));
+export function digestIndex(digests: readonly DayDigest[] | undefined): ReadonlyMap<string, DayDigest> {
+  return new Map((digests ?? []).map((d) => [coverKey(d.covers), d]));
 }
 
-/** The text of the digest covering exactly the observations the line represents (its primary plus its others); null when none does. */
-export function digestFor(index: ReadonlyMap<string, string>, line: DailyItem | null): string | null {
+/** The digest covering exactly the observations the line represents (its primary plus its others); null when none does. */
+export function digestFor(index: ReadonlyMap<string, DayDigest>, line: DailyItem | null): DayDigest | null {
   if (!line || index.size === 0) return null;
   return index.get(coverKey([line.primary.id, ...line.others.map((e) => e.id)])) ?? null;
+}
+
+export const noBlockers = "No blockers recorded";
+
+/** What a line shows: Done / Next / Blockers bullets, and whether they come from a stored agent digest. */
+export interface LinePresentation {
+  done: string[];
+  next: string[];
+  blockers: string[];
+  agent: boolean;
+}
+
+function oneLine(value: string | null | undefined): string | null {
+  const text = value?.replace(/\s+/g, " ").trim();
+  return text ? text : null;
+}
+
+const bulletsOf = (values: readonly string[] | undefined) => (values ?? []).map(oneLine).filter((v): v is string => v !== null);
+
+/**
+ * The bullets of a line: the lists of a matched structured digest; a matched digest without lists (a single text, as saved by an earlier
+ * release) as one Done bullet; and with no match the line's latest summary, or the no-summary label, as one Done bullet.
+ */
+export function linePresentation(digest: DayDigest | null, summary: string | null | undefined): LinePresentation {
+  if (digest) {
+    const done = bulletsOf(digest.done);
+    const next = bulletsOf(digest.next);
+    const blockers = bulletsOf(digest.blockers);
+    if (done.length || next.length || blockers.length) return { done, next, blockers, agent: true };
+    return { done: [oneLine(digest.text) ?? noSummary], next: [], blockers: [], agent: true };
+  }
+  return { done: [oneLine(summary) ?? noSummary], next: [], blockers: [], agent: false };
+}
+
+/** The blockers of one Today line, with the line's tickets and title. */
+export interface BlockerGroup {
+  tickets: Ticket[];
+  title: string;
+  bullets: string[];
+}
+
+/** The blocker bullets of the digests shown on Today lines, in Today's order. Nothing else contributes. */
+export function dailyBlockers(today: readonly TodayEntry[], index: ReadonlyMap<string, DayDigest>): BlockerGroup[] {
+  const groups: BlockerGroup[] = [];
+  for (const { card, line } of today) {
+    const digest = digestFor(index, line);
+    const bullets = digest ? linePresentation(digest, null).blockers : [];
+    if (line && bullets.length) groups.push({ tickets: line.tickets, title: card.title, bullets });
+  }
+  return groups;
 }
 
 /** "Thu 22 Oct" for a yyyy-MM-dd date. */
@@ -118,29 +168,34 @@ interface CopyLine {
   title: string;
   /** Null for a line with nothing recorded: only the title or ticket IDs are copied. */
   status: string | null;
+  /** The latest summary, copied on the line itself when no digest is shown. */
   summary: string | null;
+  /** The shown digest's bullets, copied under their labels instead of a summary. */
+  parts: LinePresentation | null;
 }
 
-function oneLine(value: string | null | undefined): string | null {
-  const text = value?.replace(/\s+/g, " ").trim();
-  return text ? text : null;
-}
-
-function yesterdayLine(item: DailyItem, digest: string | null): CopyLine {
+function yesterdayLine(item: DailyItem, digest: DayDigest | null): CopyLine {
   const adhoc = item.id.startsWith("adhoc:");
   // An unlinked observation is titled by its own summary, which is not repeated.
   return {
     tickets: item.tickets,
     title: adhoc ? (oneLine(item.primary.summary) ?? noSummary) : item.title,
     status: item.status,
-    summary: adhoc ? null : (oneLine(digest) ?? oneLine(item.primary.summary)),
+    summary: adhoc || digest ? null : oneLine(item.primary.summary),
+    parts: adhoc || !digest ? null : linePresentation(digest, null),
   };
 }
 
-function todayLine(entry: TodayEntry, digest: string | null): CopyLine {
+function todayLine(entry: TodayEntry, digest: DayDigest | null): CopyLine {
   const { card, line } = entry;
-  if (!line) return { tickets: card.tickets, title: card.title, status: null, summary: null };
-  return { tickets: line.tickets, title: card.title, status: line.status, summary: oneLine(digest) ?? oneLine(line.primary.summary) };
+  if (!line) return { tickets: card.tickets, title: card.title, status: null, summary: null, parts: null };
+  return {
+    tickets: line.tickets,
+    title: card.title,
+    status: line.status,
+    summary: digest ? null : oneLine(line.primary.summary),
+    parts: digest ? linePresentation(digest, null) : null,
+  };
 }
 
 function ticketIds(tickets: readonly Ticket[]): Ticket[] {
@@ -162,11 +217,24 @@ function label(line: CopyLine, format: DailyFormat, links: boolean): string {
     .join(" + ");
 }
 
-function bullet(line: CopyLine, format: DailyFormat, links: boolean): string {
+/** A line as a bullet; a shown digest follows as labelled lists, nested one level in Markdown and indented in plain text. */
+function bullet(line: CopyLine, format: DailyFormat, links: boolean): string[] {
+  // Exactly one Done bullet is copied inline, whatever its source; anything more is copied as labelled lists.
+  const single = line.parts && line.parts.done.length === 1 && line.parts.next.length === 0 && line.parts.blockers.length === 0;
+  const summary = single ? line.parts!.done[0] : line.summary;
+  const listed = single ? null : line.parts;
   const parts = [label(line, format, links)];
   if (line.status) parts.push(statusWord(line.status));
-  if (line.summary) parts.push(line.summary);
-  return "- " + parts.join(" — ");
+  if (summary) parts.push(summary);
+  const lines = ["- " + parts.join(" — ")];
+  if (!listed) return lines;
+  const markdown = format === "markdown";
+  for (const [name, bullets] of [["Done", listed.done], ["Next", listed.next], ["Blockers", listed.blockers]] as const) {
+    if (bullets.length === 0) continue;
+    lines.push(markdown ? "  - " + name + ":" : "  " + name + ":");
+    for (const text of bullets) lines.push((markdown ? "    - " : "  - ") + text);
+  }
+  return lines;
 }
 
 export interface DailyCopyInput {
@@ -176,11 +244,11 @@ export interface DailyCopyInput {
   today: readonly TodayEntry[];
   format: DailyFormat;
   links: boolean;
-  /** The stored agent digests; a line they cover exactly is copied with the digest text in place of its latest summary. */
+  /** The stored agent digests; a line they cover exactly is copied with its digest bullets in place of its latest summary; the Blockers section is derived from the Today lines. */
   digests?: readonly DayDigest[];
 }
 
-/** The Yesterday, Today, and Blockers sections as copyable text: only recorded facts, and an empty Blockers placeholder. */
+/** The Yesterday, Today, and Blockers sections as copyable text: only recorded facts, and the Blockers derived from Today's digests. */
 export function dailyText(input: DailyCopyInput): string {
   const { format, links } = input;
   const heading = (name: string) => (format === "markdown" ? "**" + name + "**" : name + ":");
@@ -189,12 +257,16 @@ export function dailyText(input: DailyCopyInput): string {
       ? [heading(name), "", ...bullets, ""]
       : [heading(name), ...bullets];
   const index = digestIndex(input.digests);
-  const yesterday = input.yesterday.map((item) => bullet(yesterdayLine(item, digestFor(index, item)), format, links));
-  const today = input.today.map((entry) => bullet(todayLine(entry, digestFor(index, entry.line)), format, links));
+  const yesterday = input.yesterday.flatMap((item) => bullet(yesterdayLine(item, digestFor(index, item)), format, links));
+  const today = input.today.flatMap((entry) => bullet(todayLine(entry, digestFor(index, entry.line)), format, links));
+  const blockers = dailyBlockers(input.today, index).flatMap((group) => {
+    const name = label({ tickets: group.tickets, title: group.title, status: null, summary: null, parts: null }, format, links);
+    return group.bullets.map((text) => "- " + name + " — " + text);
+  });
   const lines = [
     ...section("Yesterday" + (input.day ? " (" + dayLabel(input.day) + ")" : ""), yesterday.length ? yesterday : ["- Nothing recorded"]),
     ...section("Today", today.length ? today : ["- Nothing recorded"]),
-    ...section("Blockers", ["-"]),
+    ...section("Blockers", blockers.length ? blockers : ["- " + noBlockers]),
   ];
   if (format === "markdown") lines.pop();
   return lines.join("\n");

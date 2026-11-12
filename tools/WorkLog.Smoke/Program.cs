@@ -18,6 +18,11 @@ if (args is ["--dashboard-digest", var digestRoot, var digestRepository, var dig
     DashboardFixture.SaveDigest(digestRoot, digestRepository, digestTicket, digestText);
     return;
 }
+if (args is ["--dashboard-digest-structured", var structuredRoot, var structuredRepository, var structuredTicket, var structuredDone, var structuredNext, var structuredBlockers])
+{
+    DashboardFixture.SaveStructuredDigest(structuredRoot, structuredRepository, structuredTicket, structuredDone, structuredNext, structuredBlockers);
+    return;
+}
 if (args is ["--c06-fixture", var c06Root])
 {
     C06BaselineFixture.Create(c06Root);

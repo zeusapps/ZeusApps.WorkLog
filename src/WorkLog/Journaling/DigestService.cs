@@ -12,9 +12,14 @@ namespace WorkLog.Journaling;
 public sealed partial class DigestService(Journal journal, DigestStore store, TimeZoneInfo? zone = null,
     Action<string>? diagnosticSink = null, TimeProvider? timeProvider = null)
 {
-    internal const int MinimumEntries = 2;
+    internal const int MinimumEntries = 1;
     internal const int MaximumEntries = 30;
     internal const int MaximumTextLength = 280;
+    internal const int MaximumBulletLength = 120;
+    internal const int MaximumDone = 4;
+    internal const int MaximumNext = 3;
+    internal const int MaximumBlockers = 2;
+    internal const int MinimumDone = 1;
     internal const string Instruction = LoggingGuidance.DigestInstruction;
 
     private readonly TimeZoneInfo zone = zone ?? TimeZoneInfo.Local;
@@ -64,10 +69,21 @@ public sealed partial class DigestService(Journal journal, DigestStore store, Ti
         catch { /* Diagnostics must never change the result of a saved observation. */ }
     }
 
+    /// <summary>Saves a legacy single-text digest as the only Done bullet (the form earlier clients and fixtures use).</summary>
     public SavedDigest Save(string[] entryIds, string text)
     {
-        ArgumentNullException.ThrowIfNull(entryIds);
         ArgumentNullException.ThrowIfNull(text);
+        return Save(entryIds, null, null, null, text);
+    }
+
+    /// <summary>
+    /// Saves a digest. Exactly one form is accepted: the <paramref name="done"/>, <paramref name="next"/> and <paramref name="blockers"/> lists,
+    /// or the legacy <paramref name="text"/>, which is stored as the only Done bullet.
+    /// </summary>
+    public SavedDigest Save(string[] entryIds, string[]? done = null, string[]? next = null, string[]? blockers = null, string? text = null)
+    {
+        ArgumentNullException.ThrowIfNull(entryIds);
+        var (parts, flat) = Normalize(done, next, blockers, text);
         try
         {
             store.EnsureAvailable();
@@ -81,9 +97,6 @@ public sealed partial class DigestService(Journal journal, DigestStore store, Ti
             throw new InvalidOperationException("Digest storage is unavailable: " + exception.Message, exception);
         }
 
-        var normalized = Whitespace().Replace(text.Trim(), " ");
-        if (normalized.Length == 0 || normalized.Length > MaximumTextLength)
-            throw new ArgumentException($"Digest text must be 1 to {MaximumTextLength} characters after trimming and replacing line breaks with spaces.");
         var ids = entryIds.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         if (ids.Length is < MinimumEntries or > MaximumEntries)
             throw new ArgumentException($"A digest covers {MinimumEntries} to {MaximumEntries} distinct observation IDs.");
@@ -105,17 +118,53 @@ public sealed partial class DigestService(Journal journal, DigestStore store, Ti
 
             var current = EntriesOf(items[0], days[0]).Select(e => e.Id).Order(StringComparer.Ordinal).ToArray();
             if (!current.SequenceEqual(ids, StringComparer.Ordinal))
-                throw new ArgumentException("Stale: the item's observations for that day changed (a later observation exists). The digest was not stored; do not retry.");
+                throw new ArgumentException("Stale: the IDs are not exactly the item's observations for that day (one is missing or a later one exists). The digest was not stored; do not retry.");
 
             var day = days[0].ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            store.Save(new StoredDigest(items[0], day, ids, normalized, DateTimeOffset.UtcNow));
-            return new SavedDigest(items[0], day, ids, normalized);
+            store.Save(new StoredDigest(items[0], day, ids, flat, DateTimeOffset.UtcNow, parts));
+            return new SavedDigest(items[0], day, ids, flat);
         }
         catch (Exception exception) when (exception is not (ArgumentException or DigestStoreUnavailableException))
         {
             throw new InvalidOperationException("Digest could not be saved: " + exception.Message, exception);
         }
     }
+
+    /// <summary>Validates one input form and returns the parts and the single text stored beside them.</summary>
+    private static (DigestParts? Parts, string Text) Normalize(string[]? done, string[]? next, string[]? blockers, string? text)
+    {
+        var lists = done is not null || next is not null || blockers is not null;
+        if (lists == (text is not null))
+            throw new ArgumentException("Provide either done (with optional next and blockers) or the legacy text, not both and not neither.");
+        if (text is not null)
+        {
+            var single = Clean(text);
+            if (single.Length == 0 || single.Length > MaximumTextLength)
+                throw new ArgumentException($"Digest text must be 1 to {MaximumTextLength} characters after trimming and replacing line breaks with spaces.");
+            // Exactly what a v0.4.1 save writes: the plain text and no parts row. Readers show it as the only Done bullet.
+            return (null, single);
+        }
+        var parts = new DigestParts(Bullets("done", done, MinimumDone, MaximumDone), Bullets("next", next, 0, MaximumNext), Bullets("blockers", blockers, 0, MaximumBlockers));
+        return (parts, parts.Flatten());
+    }
+
+    private static string[] Bullets(string name, string[]? bullets, int minimum, int maximum)
+    {
+        bullets ??= [];
+        if (bullets.Length < minimum || bullets.Length > maximum)
+            throw new ArgumentException($"{name} takes {minimum} to {maximum} bullets but got {bullets.Length}.");
+        return bullets.Select((bullet, index) =>
+        {
+            var cleaned = Clean(bullet ?? "");
+            if (cleaned.Length == 0)
+                throw new ArgumentException($"{name}[{index}] is empty; each bullet must have text.");
+            if (cleaned.Length > MaximumBulletLength)
+                throw new ArgumentException($"{name}[{index}] is {cleaned.Length} characters; at most {MaximumBulletLength} after trimming and replacing line breaks with spaces.");
+            return cleaned;
+        }).ToArray();
+    }
+
+    private static string Clean(string value) => Whitespace().Replace(value.Trim(), " ");
 
     private static bool Unlinked(Entry entry) => entry.Change is null && entry.Tickets.Length == 0;
 

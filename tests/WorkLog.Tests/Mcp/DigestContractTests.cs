@@ -44,12 +44,19 @@ public sealed class DigestContractTests
         Assert.False(save.Annotations.DestructiveHint);
         Assert.True(save.Annotations.IdempotentHint);
         Assert.False(save.Annotations.OpenWorldHint);
-        Assert.Equal(["entryIds", "text"], Properties(save.InputSchema));
-        Assert.Equal(["entryIds", "text"], save.InputSchema.GetProperty("required").EnumerateArray().Select(e => e.GetString()!).Order());
+        Assert.Equal(["blockers", "done", "entryIds", "next", "text"], Properties(save.InputSchema));
+        Assert.Equal(["entryIds"], save.InputSchema.GetProperty("required").EnumerateArray().Select(e => e.GetString()!).Order());
+        foreach (var list in new[] { "done", "next", "blockers" })
+        {
+            // Optional lists are nullable arrays: the type is "array" or ["array", "null"].
+            var type = save.InputSchema.GetProperty("properties").GetProperty(list).GetProperty("type");
+            Assert.Contains("array", type.ValueKind == JsonValueKind.Array ? type.EnumerateArray().Select(e => e.GetString()) : [type.GetString()]);
+        }
         var ids = save.InputSchema.GetProperty("properties").GetProperty("entryIds");
         Assert.Equal("array", ids.GetProperty("type").GetString());
         Assert.Equal("string", ids.GetProperty("items").GetProperty("type").GetString());
-        Assert.Equal("string", save.InputSchema.GetProperty("properties").GetProperty("text").GetProperty("type").GetString());
+        var textType = save.InputSchema.GetProperty("properties").GetProperty("text").GetProperty("type");
+        Assert.Contains("string", textType.ValueKind == JsonValueKind.Array ? textType.EnumerateArray().Select(e => e.GetString()) : [textType.GetString()]);
         Assert.Equal(["covers", "day", "item", "text"], Properties(save.OutputSchema!.Value));
 
         var log = Assert.Single(tools, t => t.Name == "log_work").ProtocolTool;
@@ -71,7 +78,7 @@ public sealed class DigestContractTests
         }, cancellationToken: timeout.Token);
         var first = await Log("2026-10-20T10:07:00Z");
         AssertValid(output, first);
-        Assert.False(first.StructuredContent!.Value.TryGetProperty("digestRequest", out _));
+        Assert.Single(first.StructuredContent!.Value.GetProperty("digestRequest").GetProperty("entries").EnumerateArray());
         var second = await Log("2026-10-20T10:11:00Z");
         AssertValid(output, second);
         var request = second.StructuredContent!.Value.GetProperty("digestRequest");
@@ -93,6 +100,23 @@ public sealed class DigestContractTests
         }, cancellationToken: timeout.Token);
         Assert.True(stale.IsError);
         Assert.Contains("Stale", Assert.IsType<TextContentBlock>(Assert.Single(stale.Content)).Text);
+        var thirdIds = third.StructuredContent!.Value.GetProperty("digestRequest").GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("id").GetString()!).ToArray();
+        var structured = await client.CallToolAsync("save_digest", new Dictionary<string, object?>
+        {
+            ["entryIds"] = thirdIds,
+            ["done"] = new[] { "Contract fixed", "Second step" },
+            ["next"] = new[] { "Ship it" },
+            ["blockers"] = Array.Empty<string>()
+        }, cancellationToken: timeout.Token);
+        AssertValid(save.OutputSchema!.Value, structured);
+        Assert.Equal("Done: Contract fixed; Second step. Next: Ship it.", structured.StructuredContent!.Value.GetProperty("text").GetString());
+        var bothForms = await client.CallToolAsync("save_digest", new Dictionary<string, object?>
+        {
+            ["entryIds"] = thirdIds,
+            ["done"] = new[] { "x" },
+            ["text"] = "y"
+        }, cancellationToken: timeout.Token);
+        Assert.True(bothForms.IsError);
         var unknown = await client.CallToolAsync("save_digest", new Dictionary<string, object?>
         {
             ["entryIds"] = entryIds,

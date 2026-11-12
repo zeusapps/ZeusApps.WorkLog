@@ -105,4 +105,67 @@ public sealed class DailyDigestResponseTests
         }
         finally { await app.StopAsync(); await app.DisposeAsync(); }
     }
+
+    [Fact]
+    public async Task StructuredPartsAreReturnedOnlyWhileTheyMatchTheStoredDigest()
+    {
+        using var box = new TestWorkspace();
+        var journal = Open(box);
+        var f1 = journal.Log(new("in_progress", "c", Tickets: [Retry], Summary: "a", OccurredAt: "2026-10-23T08:00:00Z")).Entry;
+        var f2 = journal.Log(new("done", "c", Tickets: [Retry], Summary: "b", OccurredAt: "2026-10-23T10:00:00Z")).Entry;
+        var t1 = journal.Log(new("in_progress", "d", Tickets: [Export], Summary: "c", OccurredAt: "2026-10-26T08:00:00Z")).Entry;
+        var covers = new[] { f1.Id, f2.Id }.Order(StringComparer.Ordinal).ToArray();
+        var store = new DigestStore(box.Data);
+        store.Save(new(Item(f1), "2026-10-23", covers, "Done: Retry fixed; Export fixed. Next: Deploy. Blockers: Key.", DateTimeOffset.UtcNow,
+            new DigestParts(["Retry fixed", "Export fixed"], ["Deploy"], ["Key"])));
+        store.Save(new(Item(t1), "2026-10-26", [t1.Id], "Plain text from an older process.", DateTimeOffset.UtcNow));
+
+        var service = new DailyService(new DashboardJournal(box.Data), store);
+        var result = service.Query(Monday());
+        var structured = Assert.Single(result.Digests, d => d.Covers.SequenceEqual(covers));
+        Assert.Equal(["Retry fixed", "Export fixed"], structured.Done!);
+        Assert.Equal(["Deploy"], structured.Next!);
+        Assert.Equal(["Key"], structured.Blockers!);
+        Assert.Equal("Done: Retry fixed; Export fixed. Next: Deploy. Blockers: Key.", structured.Text);
+        var legacy = Assert.Single(result.Digests, d => d.Text == "Plain text from an older process.");
+        Assert.Null(legacy.Done);
+        Assert.Null(legacy.Next);
+        Assert.Null(legacy.Blockers);
+
+        // An older process replaces the structured digest: its text is shown and the earlier parts are not.
+        var path = Path.Combine(box.Data, "digests.db");
+        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE digests SET covers='[\"zzz\"]', text='Replaced by v0.4.1.' WHERE item=$item";
+            command.Parameters.AddWithValue("$item", Item(f1));
+            command.ExecuteNonQuery();
+        }
+        var replaced = Assert.Single(service.Query(Monday()).Digests, d => d.Text == "Replaced by v0.4.1.");
+        Assert.Null(replaced.Done);
+
+        // Wire format: camelCase lists, omitted when absent.
+        store.Save(new(Item(f1), "2026-10-23", covers, "Done: Retry fixed. Next: Deploy.", DateTimeOffset.UtcNow,
+            new DigestParts(["Retry fixed"], ["Deploy"], [])));
+        var authorization = new DashboardAuthorization(box.Data);
+        var app = DashboardHost.Create(new LocalSettings(box.Data), box.Repo, 0, "open", authorization, new DashboardTests.FixtureCommand(box.Repo));
+        await app.StartAsync();
+        try
+        {
+            using var client = new HttpClient(new HttpClientHandler { CookieContainer = new CookieContainer() }) { BaseAddress = new Uri(DashboardHost.Address(app)) };
+            Assert.True((await client.PostAsJsonAsync("/api/bootstrap", new { token = authorization.Bootstrap() })).IsSuccessStatusCode);
+            using var response = JsonDocument.Parse(await (await client.PostAsJsonAsync("/api/daily", new { before = "2026-10-25T23:00:00Z", timezone = Zone })).Content.ReadAsStringAsync());
+            var digests = response.RootElement.GetProperty("digests").EnumerateArray().ToArray();
+            var friday = Assert.Single(digests, d => d.GetProperty("text").GetString()!.StartsWith("Done: Retry fixed.", StringComparison.Ordinal));
+            Assert.Equal(["Retry fixed"], friday.GetProperty("done").EnumerateArray().Select(e => e.GetString()));
+            Assert.Equal(["Deploy"], friday.GetProperty("next").EnumerateArray().Select(e => e.GetString()));
+            Assert.Equal(0, friday.GetProperty("blockers").GetArrayLength());
+            var today = Assert.Single(digests, d => d.GetProperty("text").GetString() == "Plain text from an older process.");
+            Assert.False(today.TryGetProperty("done", out _));
+            Assert.False(today.TryGetProperty("next", out _));
+            Assert.False(today.TryGetProperty("blockers", out _));
+        }
+        finally { await app.StopAsync(); await app.DisposeAsync(); }
+    }
 }

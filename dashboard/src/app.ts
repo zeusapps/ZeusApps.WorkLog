@@ -46,7 +46,7 @@ import {
   rankColumn,
   stages,
 } from "./board";
-import { DailyFormat, dailyText, dailyToday, dayLabel, digestFor, digestIndex, noSummary } from "./daily";
+import { DailyFormat, dailyBlockers, dailyText, dailyToday, dayLabel, digestFor, digestIndex, LinePresentation, linePresentation, noBlockers, noSummary } from "./daily";
 import { markdownObservationLimit, workItemMarkdown } from "./workitem-markdown";
 import { changeStops, readMarks, ReadMarks, sourceSegments } from "./diff";
 import { repositoryColorKey } from "./repository-colors";
@@ -390,6 +390,18 @@ export class App implements OnDestroy, AfterViewInit {
   });
   /** The agent digests of the loaded Daily view, indexed by the observations they cover. */
   readonly dailyDigests = computed(() => digestIndex(this.dailyData()?.digest.digests));
+  /** The bullets each Daily line shows, by line object: its matched digest's lists, or its latest summary as one Done bullet. */
+  readonly dailyPresentations = computed(() => {
+    const index = this.dailyDigests();
+    const data = this.dailyData();
+    const lines = [...(data?.digest.items ?? []), ...(this.dailyTodayView()?.items.flatMap((entry) => (entry.line ? [entry.line] : [])) ?? [])];
+    return new Map<DailyItem, LinePresentation>(lines.map((line) => [line, linePresentation(digestFor(index, line), line.primary.summary)]));
+  });
+  /** The blockers recorded in the digests shown on Today lines, in Today's order. */
+  readonly dailyBlockerGroups = computed(() => {
+    const today = this.dailyTodayView();
+    return today ? dailyBlockers(today.items, this.dailyDigests()) : null;
+  });
   readonly board = computed<Board>(() => filterBoard(this.fullBoard(), this.boardFilter()));
   readonly boardTotal = computed(() => stages.reduce((total, stage) => total + this.fullBoard()[stage].length, 0));
   readonly boardShown = computed(() => stages.reduce((total, stage) => total + this.board()[stage].length, 0));
@@ -1413,9 +1425,10 @@ export class App implements OnDestroy, AfterViewInit {
     return item.tickets.length ? item.title : humanize(item.title);
   }
   readonly noSummary = noSummary;
-  /** The agent digest shown in place of a Daily line's latest summary, or null. */
-  dailyDigest(line: DailyItem | null) {
-    return digestFor(this.dailyDigests(), line);
+  readonly noBlockers = noBlockers;
+  /** The bullets shown for a Daily line (its digest's lists, or its latest summary as one Done bullet). */
+  dailyParts(line: DailyItem | null) {
+    return line ? (this.dailyPresentations().get(line) ?? null) : null;
   }
   private query(): TimelineQuery {
     return {

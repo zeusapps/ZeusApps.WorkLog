@@ -3131,6 +3131,18 @@ tr.changed-since-read {
 }
 
 /* Daily view */
+.daily-heading {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.daily-header-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 16px;
+  min-width: 0;
+}
 .daily-controls {
   display: flex;
   flex-wrap: wrap;
@@ -3144,15 +3156,22 @@ tr.changed-since-read {
   color: var(--text-secondary);
   font-size: 13px;
 }
+.daily-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 40px;
+  align-items: start;
+}
 .daily-section {
-  margin-top: 18px;
+  margin-top: 14px;
+  min-width: 0;
 }
 .daily-section-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 .daily-section-heading h3 {
   margin: 0;
@@ -3163,27 +3182,22 @@ tr.changed-since-read {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-left: auto;
 }
 .daily-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: grid;
-  gap: 8px;
 }
 .daily-line {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-subtle);
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
   min-width: 0;
 }
 .daily-line-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  gap: 4px 10px;
 }
 .daily-title {
   color: var(--ink);
@@ -3194,13 +3208,27 @@ tr.changed-since-read {
   font-size: 13px;
 }
 .daily-summary {
-  margin: 6px 0 0;
+  margin-top: 6px;
   color: var(--text);
   overflow-wrap: anywhere;
 }
+.daily-part + .daily-part {
+  margin-top: 4px;
+}
+.daily-part-label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.daily-bullets {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
 .daily-digest-mark {
   display: inline-block;
-  margin-left: 6px;
+  margin-top: 6px;
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -3220,8 +3248,22 @@ tr.changed-since-read {
   margin: 6px 0 0;
   padding-left: 18px;
 }
+.daily-blocker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.daily-blocker-list > li {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+@media (min-width: 1100px) {
+  .daily-columns {
+    grid-template-columns: repeat(2, minmax(0, 70ch));
+  }
+}
 @media (max-width: 600px) {
-  .daily-days {
-    margin-left: 0;
+  .daily-header-tools {
+    justify-content: flex-start;
   }
 }

@@ -11,7 +11,7 @@ internal static class UnknownFieldValidation
     public static string? Find(CallToolRequestParams? request)
     {
         if (request?.Name == "save_digest")
-            return request.Arguments?.Keys.FirstOrDefault(key => key is not ("entryIds" or "text"));
+            return request.Arguments?.Keys.FirstOrDefault(key => key is not ("entryIds" or "done" or "next" or "blockers" or "text"));
         var (argumentName, argumentType) = request?.Name switch
         {
             "log_work" => ("entry", typeof(LogRequest)),

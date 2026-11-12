@@ -109,8 +109,15 @@ public sealed class McpTests
         AssertDescription(entryInput, "summary", LoggingGuidance.SummaryStatus);
         var digestTool = Assert.Single(tools, tool => tool.Name == "save_digest");
         var digestInput = digestTool.ProtocolTool.InputSchema;
-        AssertDescription(digestInput, "text", LoggingGuidance.ContentRule);
-        AssertDescription(digestInput, "text", $"at most {LoggingGuidance.DigestLimit} characters");
+        AssertDescription(digestInput, "done", LoggingGuidance.DigestDoneDescription);
+        AssertDescription(digestInput, "next", LoggingGuidance.DigestNextDescription);
+        AssertDescription(digestInput, "blockers", LoggingGuidance.DigestBlockersDescription);
+        AssertDescription(digestInput, "text", LoggingGuidance.DigestTextDescription);
+        AssertDescription(digestInput, "done", LoggingGuidance.ContentRule);
+        AssertDescription(digestInput, "next", "same content rule as done");
+        AssertDescription(digestInput, "blockers", "same content rule as done");
+        AssertDescription(digestInput, "entryIds", "1 to 30");
+        Assert.Contains("digestRequest", digestTool.ProtocolTool.Description);
         Assert.DoesNotContain("summary", entryInput.GetProperty("required").EnumerateArray().Select(item => item.GetString()));
 
         var reportSchema = Assert.Single(tools, tool => tool.Name == "query_work").ProtocolTool.OutputSchema!.Value;

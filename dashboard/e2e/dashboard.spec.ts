@@ -1,4 +1,4 @@
-import { test, expect, Page, BrowserContext, Route, Request, TestInfo } from "@playwright/test";
+import { test, expect, Page, BrowserContext, Route, Request, TestInfo, Locator } from "@playwright/test";
 import { readFile, writeFile, mkdir, rename, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, resolve, join } from "node:path";
@@ -2038,7 +2038,7 @@ test.describe("Daily view", () => {
       // Done first, with the earlier observation of the ticket collapsed.
       const first = page.getByTestId("daily-yesterday").getByTestId("daily-line").first();
       await expect(first).toContainText("DEMO-1");
-      await expect(first.getByTestId("daily-summary")).toHaveText("Retry policy for export jobs merged.");
+      await expect(first.getByTestId("daily-part-done").locator("li")).toHaveText("Retry policy for export jobs merged.");
       await expect(first.locator("details summary")).toHaveText("1 other observation");
       await page.getByTestId("daily-previous").click();
       await expect(page).toHaveURL(/\/daily\?day=2026-01-06$/);
@@ -2070,7 +2070,7 @@ test.describe("Daily view", () => {
           "- DEMO-2",
           "- DEMO-3",
           "Blockers:",
-          "-",
+          "- No blockers recorded",
         ].join("\n"),
       );
       await page.getByLabel("Copy format").selectOption("markdown");
@@ -2103,11 +2103,11 @@ test.describe("Daily view", () => {
       expect(logged.status, logged.stdout + logged.stderr).toBe(0);
       await page.getByRole("button", { name: "Refresh dashboard" }).click();
       const line = page.getByTestId("daily-today-line").filter({ hasText: "DEMO-2" });
-      await expect(line.getByTestId("daily-today-summary")).toHaveText("Export retries wired to the job scheduler; load test remains.");
+      await expect(line.getByTestId("daily-part-done").locator("li")).toHaveText("Export retries wired to the job scheduler; load test remains.");
       await expect(line).toContainText("In progress");
       // Yesterday keeps Friday's summary for the same ticket.
       const yesterday = page.getByTestId("daily-yesterday").getByTestId("daily-line").filter({ hasText: "DEMO-2" });
-      await expect(yesterday.getByTestId("daily-summary")).toHaveText("Wired the scheduler hook; load test remains.");
+      await expect(yesterday.getByTestId("daily-part-done").locator("li")).toHaveText("Wired the scheduler hook; load test remains.");
       // A card with nothing recorded today shows its title and ticket only.
       const quiet = page.getByTestId("daily-today-line").filter({ hasText: "DEMO-3" });
       await expect(quiet).toHaveCount(1);
@@ -2137,7 +2137,7 @@ test.describe("Daily view", () => {
           "Today:",
           "- DGT-2 — in progress — Retention sweep runs in batches.",
           "Blockers:",
-          "-",
+          "- No blockers recorded",
         ].join("\n"),
       );
       await page.getByLabel("Copy format").selectOption("markdown");
@@ -2165,7 +2165,7 @@ test.describe("Daily view", () => {
       );
       expect(logged.status, logged.stdout + logged.stderr).toBe(0);
       await page.getByRole("button", { name: "Refresh dashboard" }).click();
-      await expect(today.getByTestId("daily-today-summary")).toHaveText("Added the retention dry-run flag.");
+      await expect(today.getByTestId("daily-part-done").locator("li")).toHaveText("Added the retention dry-run flag.");
       await expect(today.getByTestId("daily-digest-mark")).toHaveCount(0);
       await expect(today.locator("details summary")).toHaveText("2 other observations today");
       // Friday's digest still matches its own, unchanged observations.
@@ -2196,12 +2196,48 @@ test.describe("Daily view", () => {
       run(["--dashboard-log", isolated.info.root, "example/digest-demo", "in_progress", "-", "DGT-3", "2026-01-12T12:10:00.000Z", "Trail records every export."]);
       await page.getByRole("button", { name: "Refresh dashboard" }).click();
       const line = page.getByTestId("daily-today-line").filter({ hasText: "DGT-3" });
-      await expect(line.getByTestId("daily-today-summary")).toHaveText("Trail records every export.");
+      await expect(line.getByTestId("daily-part-done").locator("li")).toHaveText("Trail records every export.");
       await expect(line.getByTestId("daily-digest-mark")).toHaveCount(0);
       run(["--dashboard-digest", isolated.info.root, "example/digest-demo", "DGT-3", "Export audit trail records every export."]);
       await expect(line.getByTestId("daily-today-summary")).toContainText("Export audit trail records every export.", { timeout: 10_000 });
       await expect(line.getByTestId("daily-digest-mark")).toHaveText("agent digest");
       expect(await copied(page)).toContain("- DGT-3 — in progress — Export audit trail records every export.");
+    } finally {
+      try {
+        await reset(page, isolated.baseUrl);
+      } finally {
+        await isolated.close();
+      }
+    }
+  });
+
+  test("a structured digest with a blocker shows its Done, Next and Blockers lists, lists the item under Blockers and is copied with labelled bullets", async ({ page, context }) => {
+    const isolated = await isolatedDailyServer();
+    try {
+      await open(page, context, "example/digest-demo", isolated.baseUrl, isolated.info);
+      const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
+      const run = (args: string[]) => {
+        const done = spawnSync("dotnet", [smoke, ...args], { encoding: "utf8", windowsHide: true });
+        expect(done.status, done.stdout + done.stderr).toBe(0);
+      };
+      run(["--dashboard-log", isolated.info.root, "example/digest-demo", "started", "-", "DGT-4", "2026-01-12T12:05:00.000Z", "Started the billing export."]);
+      run(["--dashboard-log", isolated.info.root, "example/digest-demo", "in_progress", "-", "DGT-4", "2026-01-12T12:10:00.000Z", "Export covers invoices."]);
+      run([
+        "--dashboard-digest-structured", isolated.info.root, "example/digest-demo", "DGT-4",
+        "Invoices export to CSV|Credit notes included", "Add the PDF layout", "Waiting for the finance sign-off",
+      ]);
+      const line = page.getByTestId("daily-today-line").filter({ hasText: "DGT-4" });
+      await expect(line.getByTestId("daily-digest-mark")).toHaveText("agent digest", { timeout: 10_000 });
+      await expect(line.getByTestId("daily-part-done").locator("li")).toHaveText(["Invoices export to CSV", "Credit notes included"]);
+      await expect(line.getByTestId("daily-part-next").locator("li")).toHaveText("Add the PDF layout");
+      await expect(line.getByTestId("daily-part-blockers").locator("li")).toHaveText("Waiting for the finance sign-off");
+      const blocker = page.getByTestId("daily-blockers").getByTestId("daily-blocker");
+      await expect(blocker).toHaveCount(1);
+      await expect(blocker).toContainText("DGT-4");
+      await expect(blocker).toContainText("Waiting for the finance sign-off");
+      const text = await copied(page);
+      expect(text).toContain("- DGT-4 — in progress\n  Done:\n  - Invoices export to CSV\n  - Credit notes included\n  Next:\n  - Add the PDF layout\n  Blockers:\n  - Waiting for the finance sign-off");
+      expect(text).toMatch(/\nBlockers:\n- DGT-4 — Waiting for the finance sign-off$/);
     } finally {
       try {
         await reset(page, isolated.baseUrl);
@@ -2231,6 +2267,126 @@ test.describe("Daily view", () => {
       // Visiting Daily saved nothing about the order beyond what the board saved.
       const order = (await (await page.request.get("/api/state")).json()).board.order;
       expect(order).toHaveLength(2);
+    } finally {
+      await reset(page);
+    }
+  });
+
+  const box = async (locator: Locator) => {
+    const found = await locator.boundingBox();
+    expect(found).not.toBeNull();
+    return found!;
+  };
+  const noHorizontalScroll = (page: Page) =>
+    page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+
+  test("at 1440px, in both themes, Today and Yesterday sit side by side, Today first and visible without scrolling, with Blockers below spanning both", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      await page.setViewportSize({ width: 1440, height: 1000 });
+      for (const theme of ["dark", "light"]) {
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        const today = box(page.getByTestId("daily-today"));
+        const yesterday = box(page.getByTestId("daily-yesterday"));
+        const [t, y, b] = [await today, await yesterday, await box(page.getByTestId("daily-blockers"))];
+        expect(t.x).toBeLessThan(y.x);
+        expect(Math.abs(t.y - y.y)).toBeLessThan(4);
+        expect(t.x + t.width).toBeLessThanOrEqual(y.x + 1);
+        // Each column keeps a readable line length (about 70ch).
+        expect(t.width).toBeLessThan(760);
+        expect(y.width).toBeLessThan(760);
+        expect(b.y).toBeGreaterThanOrEqual(Math.max(t.y + t.height, y.y + y.height) - 1);
+        expect(b.width).toBeGreaterThan(t.width + y.width - 1);
+        await expect(page.getByTestId("daily-today-line").first()).toBeInViewport({ ratio: 1 });
+        expect(await noHorizontalScroll(page)).toBe(true);
+        // Day navigation and the copy controls stay in the header, above both columns.
+        expect((await box(page.getByTestId("daily-previous"))).y).toBeLessThan(t.y);
+        expect((await box(page.getByTestId("copy-daily"))).y).toBeLessThan(t.y);
+      }
+    } finally {
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+      await reset(page);
+    }
+  });
+
+  test("at 390px, in both themes, there is no horizontal scroll and Today is above Yesterday in one column", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      await page.setViewportSize({ width: 390, height: 800 });
+      for (const theme of ["dark", "light"]) {
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        await expect(page.getByTestId("daily-today")).toBeVisible();
+        expect(await noHorizontalScroll(page)).toBe(true);
+        const t = await box(page.getByTestId("daily-today"));
+        const y = await box(page.getByTestId("daily-yesterday"));
+        const b = await box(page.getByTestId("daily-blockers"));
+        expect(t.y + t.height).toBeLessThanOrEqual(y.y + 1);
+        expect(y.y + y.height).toBeLessThanOrEqual(b.y + 1);
+        expect(Math.abs(t.x - y.x)).toBeLessThan(2);
+      }
+    } finally {
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+      await reset(page);
+    }
+  });
+
+  test("at 768px the columns are stacked with Today first, in both themes, and text stays legible", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      await page.setViewportSize({ width: 768, height: 900 });
+      for (const theme of ["dark", "light"]) {
+        await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), theme);
+        const t = await box(page.getByTestId("daily-today"));
+        const y = await box(page.getByTestId("daily-yesterday"));
+        expect(t.y + t.height, `${theme}: Today above Yesterday`).toBeLessThanOrEqual(y.y + 1);
+        expect(await noHorizontalScroll(page), `${theme}: no horizontal scroll`).toBe(true);
+        const contrast = await page.getByTestId("daily-line").first().locator(".daily-bullets li").evaluate((el) => {
+          const channels = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 4).map(Number);
+          const luminance = ([r, g, b]: number[]) => {
+            const lin = (c: number) => ((c /= 255) <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+            return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+          };
+          let background = [0, 0, 0, 0];
+          for (let node: Element | null = el; node && background[3] === 0; node = node.parentElement) {
+            const next = channels(getComputedStyle(node).backgroundColor);
+            if (next.length === 3) background = [...next, 1];
+            else if (next.length === 4 && next[3] > 0) background = next;
+          }
+          const [a, b] = [luminance(channels(getComputedStyle(el).color)), luminance(background)];
+          return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        });
+        expect(contrast, `${theme}: bullet text contrast`).toBeGreaterThanOrEqual(4.5);
+      }
+    } finally {
+      await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+      await reset(page);
+    }
+  });
+
+  test("the day navigation and each row's collapsed observations are reachable and operable with the keyboard", async ({ page, context }) => {
+    await open(page, context);
+    try {
+      const active = () => page.evaluate(() => {
+        const el = document.activeElement as HTMLElement | null;
+        return { testid: el?.getAttribute("data-testid") ?? "", tag: el?.tagName ?? "", inYesterday: !!el?.closest('[data-testid="daily-yesterday"]') };
+      });
+      const tabUntil = async (key: string, matches: (state: Awaited<ReturnType<typeof active>>) => boolean) => {
+        for (let i = 0; i < 60; i++) {
+          await page.keyboard.press(key);
+          if (matches(await active())) return;
+        }
+        throw new Error("The keyboard never reached the expected control.");
+      };
+      await page.locator("#daily-title").click();
+      await tabUntil("Tab", (s) => s.testid === "daily-previous");
+      await tabUntil("Tab", (s) => s.tag === "SUMMARY" && s.inYesterday);
+      const details = page.getByTestId("daily-yesterday").locator("details").first();
+      await expect(details).not.toHaveAttribute("open", "");
+      await page.keyboard.press("Enter");
+      await expect(details).toHaveAttribute("open", "");
+      await tabUntil("Shift+Tab", (s) => s.testid === "daily-previous");
+      await page.keyboard.press("Enter");
+      await expect(page).toHaveURL(/\/daily\?day=2026-01-06$/);
     } finally {
       await reset(page);
     }

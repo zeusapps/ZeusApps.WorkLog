@@ -218,6 +218,8 @@ Final local validation passed the Release build with zero warnings/errors, all 1
 
 ## Day digests (`add-day-digests`, server side)
 
+> Superseded in part: the statements below that a digest is requested from the second observation and that `save_digest` takes only a text of at most 280 characters describe the earlier release. See "Stand-up-ready digests (standup-ready-digests)" for the current behavior.
+
 `log_work` may now return an optional `digestRequest`, and a third tool, `save_digest`, stores the agent-written day digest. The tool contract is client-neutral, so every check below covers Claude Code and Codex alike; the managed instruction paragraph is shared text in `AgentInstructions.Render` and is checked for both clients' owned blocks in the unit tests.
 
 | Check | Result |
@@ -287,6 +289,28 @@ The script verifies the preserved executable SHA-256 `cf11ef5faae749ca76259ee057
 A historical four-fixture run on 2026-11-09 passed dashboard and digest operations for baseline/current executables under the Claude Code/Codex fixture labels. Its raw record is `artifacts/realtime-dashboard-updates/mcp-compat/2026-11-09T08-52-11-830Z-839b460f.json`. A later independent review found the recorded per-child signal/error metadata still read from the global Node process in that runner version. Treat that run as historical; the corrected runner has since been executed separately.
 
 The corrected runner passed all four fixtures on 2026-11-09 in `artifacts/realtime-dashboard-updates/mcp-compat/2026-11-09T15-51-32-139Z-57010dca.json`. All 12 owned wrappers exited with code 0, no signal and no timeout; each preserved/current executable passed dashboard MCP and digest checks under both protocol labels. Baseline and current executable hashes matched before and after the run. The current apphost SHA-256 was `1d1316d4af203c7a20feba4e3abebcd9ed1ccc6a8d4e08b051d2bd26c6b47fb9`, paired with managed `worklog.dll` SHA-256 `37dc9e451ec42b94a0a58ef89679566fcc41ebd5ff489852a3f1ca2d57445f84` and `WorkLog.Smoke.dll` SHA-256 `f9650189267bdbd8dfb6d9226d1ed91b4d0db432847536d49e99417531c8b749`. The preserved package SHA-256 remains `cf11ef5faae749ca76259ee05745ed8f4e8aa42590bd3a0f4f8c951e5d5e7f46`, and the corrected runner SHA-256 is `dd007a7e664720cd8fcb2f32e0e6717f5c3471ed055b284b81e1e56dc7bc2484`. The ignored paired identity manifest is `artifacts/realtime-dashboard-updates/mcp-compat/dev027-identities-20261109.json`. These results establish protocol-fixture compatibility only; no authenticated native Claude Code or Codex sessions were run.
+
+## Stand-up-ready digests (`standup-ready-digests`)
+
+Server-side evidence. This section supersedes the "second observation" and text-only statements in the day-digest sections above. Both clients use the same MCP server and the same `LoggingGuidance` constants, so the results apply to Claude Code and Codex alike; no live agent was run.
+
+- **Request from the first observation.** `DigestService.Request` asks for a digest from an item's first observation of the day. A retry replay, an unlinked entry, more than 30 observations and an unavailable store still give none (`DigestTests`).
+- **Structured `save_digest`.** The input is `entryIds` (1 to 30), `done` (1 to 4), `next` (0 to 3) and `blockers` (0 to 2) bullets of at most 120 characters after trimming and replacing line breaks, or the legacy `text` (at most 280), which is stored as the readable text only and shown by the dashboard as the only Done bullet. Exactly one form is required; both or neither fail without writing. The content rule is stated once, on the `done` input description. Stale, unknown, mixed-item and mixed-day sets are still rejected. The stored `text` is the derived `Done: a; b. Next: c. Blockers: d.` form.
+- **Schema shape.** Only `entryIds` is required. The optional `done`, `next`, `blockers` and `text` are advertised as nullable types (`["array","null"]`, `["string","null"]`). `UnknownFieldValidation` allows those keys and rejects any other. The `SavedDigest` output is unchanged. The over-stdio contract test saves a structured digest and rejects a call with both forms.
+- **`digest_parts` compatibility.** The additive `digest_parts` table is created if absent and `user_version` stays 1, so a v0.4.1 process keeps reading and writing `digests` without being disabled. A structured save writes both rows in one transaction. A read returns the parts only when `digest_parts.covers` equals `digests.covers` and `digest_parts.saved` equals the `digests` row's `saved` stamp (the earlier text comparison was removed); an older process that rewrites the digest, even with the same covers, therefore supersedes the parts and its own text is shown. A legacy `text` save writes no parts row, and removes earlier parts of that item and day, and repeated identical saves leave one `digests` row and one `digest_parts` row. The dashboard's read-only reader copes with a store that has no `digest_parts` table.
+- **Daily API.** `DailyService` returns each digest as `{ covers, text, done?, next?, blockers? }` in camelCase, with the lists omitted unless the parts match.
+
+| Test class | Passed |
+| --- | --- |
+| `DigestTests` | 29 passed |
+| `DigestContractTests` | 3 passed |
+| `DigestStoreTests` | 16 passed |
+| `LoggingGuidanceTests` | 29 passed |
+| `InstructionOptionsTests` | 19 passed |
+| `McpTests` | 3 passed |
+| `DailyDigestResponseTests` | 4 passed |
+
+Final run on 2026-11-12 (Release build, 0 warnings): the full .NET suite passed 500/500. The packaged update smoke (`--updates-only`) was not run for this section.
 
 ## Sources
 
