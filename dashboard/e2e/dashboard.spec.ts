@@ -58,15 +58,25 @@ async function stopIsolatedServer(child: ReturnType<typeof spawn>, port: number)
     child.kill();
     let timeout: NodeJS.Timeout | undefined;
     try {
-      await Promise.race([exited, new Promise<void>((_, fail) => { timeout = setTimeout(() => fail(new Error("The isolated Daily dashboard did not stop during teardown.")), 5000); })]);
+      await Promise.race([exited, new Promise<void>((_, fail) => { timeout = setTimeout(() => fail(new Error("The isolated Daily dashboard did not stop during teardown.")), 15000); })]);
     } finally {
       if (timeout) clearTimeout(timeout);
     }
   }
   if (!exitObserved) throw new Error("The isolated Daily dashboard process is still running after teardown.");
-  const released = createServer();
-  await new Promise<void>((done, fail) => released.once("error", fail).listen(port, "127.0.0.1", done));
-  await new Promise<void>((done, fail) => released.close((error) => error ? fail(error) : done()));
+  // The operating system can take a moment to release the port after the process exits, so retry for up to 5 seconds.
+  for (let attempt = 0; ; attempt++) {
+    const released = createServer();
+    try {
+      await new Promise<void>((done, fail) => released.once("error", fail).listen(port, "127.0.0.1", done));
+      await new Promise<void>((done, fail) => released.close((error) => error ? fail(error) : done()));
+      return;
+    } catch (error) {
+      released.close();
+      if (attempt >= 9) throw error;
+      await new Promise((done) => setTimeout(done, 500));
+    }
+  }
 }
 async function isolatedDailyServer() {
   const fixtureParent = resolve("../artifacts/dashboard-e2e/daily-real-write-" + randomUUID());
@@ -75,7 +85,7 @@ async function isolatedDailyServer() {
   const smoke = resolve("../tools/WorkLog.Smoke/bin/Release/net10.0/WorkLog.Smoke.dll");
   const generated = spawnSync("dotnet", [smoke, "--dashboard-fixture", fixtureRoot], { encoding: "utf8", windowsHide: true });
   if (generated.status !== 0) {
-    await rm(fixtureParent, { recursive: true, force: true });
+    await rm(fixtureParent, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     throw new Error("Could not create the isolated Daily acceptance fixture.");
   }
   const info = JSON.parse(await readFile(join(fixtureRoot, "fixture.json"), "utf8")) as Awaited<ReturnType<typeof fixture>>;
@@ -120,7 +130,7 @@ async function isolatedDailyServer() {
         } catch {
           throw new Error(`Could not stop the isolated Daily dashboard on port ${port}; its fixture was retained at ${fixtureParent} to protect possible live journal data.`);
         }
-        await rm(fixtureParent, { recursive: true, force: true });
+        await rm(fixtureParent, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       },
     };
   } catch (error) {
@@ -129,7 +139,7 @@ async function isolatedDailyServer() {
     } catch {
       throw new Error(`Could not stop the isolated Daily dashboard on port ${port}; its fixture was retained at ${fixtureParent} to protect possible live journal data.`);
     }
-    await rm(fixtureParent, { recursive: true, force: true });
+    await rm(fixtureParent, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     throw error;
   }
 }
